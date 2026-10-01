@@ -47,6 +47,28 @@ The terminal prints two addresses:
 
 > Tip: in your router, give the server a fixed IP (a "DHCP reservation") so the address never changes.
 
+### Android app (APK)
+
+`android/` contains a small native app that wraps the web app (package `ro.budgetplanner.app`, Android 7.0+).
+
+1. Copy `Budget.apk` to the phone and open it. Android asks you to allow installing apps from that source (your browser or file manager); allow it. Play Protect may warn about an app from an "unknown developer"; tap *Install anyway*.
+2. Open **Budget**, enter the address the server prints (`http://192.168.x.x:8080`), then log in with your `APP_PASSWORD`.
+
+How the app behaves:
+- **At home** it shows the live data.
+- **Away from home** it opens with the last data it saved. Changes you make are queued and sent when you're back on your Wi-Fi.
+- **Bank login** opens in your normal browser, because many banks block logins inside apps. When the browser says the bank is linked, switch back to the app.
+- **CSV import** uses the phone's file picker. **Export** opens Android's "Save to…" dialog.
+- To point the app at a different server, go to **Settings → Server address → Change**.
+
+To rebuild it you need Linux or macOS with a JDK 11+, python3, git and curl. No Android Studio is required:
+
+```bash
+cd android && ./build.sh          # → android/build/Budget.apk
+```
+
+The first build downloads the tools it needs into `android/.tools/` and creates a signing key in `android/keystore/`. **Keep that key.** An update only installs over the existing app if it is signed with the same key. If you lose the key, uninstall the old app first. Your data lives on the server, so nothing is lost; you only need to log in again.
+
 **Try it with demo data first:** `npm run demo` loads 4 months of realistic transactions and 3 goals into a separate `demo-data/` folder. Your real data is not touched.
 
 ### Keep it running

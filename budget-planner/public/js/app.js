@@ -365,6 +365,7 @@ const views = {
                   <select id="bank-select"><option value="">${ui.banks ? 'Choose your bank…' : 'Loading banks…'}</option>${(ui.banks || []).map((x) => `<option>${esc(x.name)}</option>`).join('')}</select>
                 </label>
                 <button class="btn primary" type="button" data-action="link-bank">Connect bank</button>
+                ${window.BudgetApp ? '<p class="muted small" style="margin:0">Your bank login opens in the browser. When it says the bank is linked, come back to this app.</p>' : ''}
                 <details><summary class="muted small">Redirect didn't come back to the app?</summary>
                   <p class="muted small">Register <code class="inline">${esc(b.redirectUrl)}</code> as a redirect URL in the Enable Banking control panel. If your bank sent you to a different page, paste its full address here:</p>
                   <div style="display:flex;gap:8px"><input id="bank-landed" placeholder="https://…?code=…"><button class="btn" type="button" data-action="complete-bank">Finish</button></div>
@@ -385,7 +386,8 @@ const views = {
           <div class="card">
             <div class="card-head"><h2>📱 App</h2></div>
             <div class="settings-list">
-              <div class="setting"><span>Install on this device</span>${ui.installPrompt ? '<button class="btn small primary" type="button" data-action="install">Install</button>' : '<span class="muted small" style="text-align:right">iPhone: Share → Add to Home Screen<br>Android: ⋮ → Add to Home screen</span>'}</div>
+              ${window.BudgetApp ? `<div class="setting"><span>Server address<div class="muted small num">${esc(window.BudgetApp.getServer())}</div></span><button class="btn small" type="button" data-action="change-server">Change</button></div>`
+                : `<div class="setting"><span>Install on this device</span>${ui.installPrompt ? '<button class="btn small primary" type="button" data-action="install">Install</button>' : '<span class="muted small" style="text-align:right">iPhone: Share → Add to Home Screen<br>Android: get the app (see README) or ⋮ → Add to Home screen</span>'}</div>`}
               <div class="setting"><span>Theme</span><select data-action="theme" style="width:auto">${['system', 'light', 'dark'].map((t) => `<option value="${t}" ${t === theme ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div>
               <div class="setting"><span>Export all data (JSON)</span><button class="btn small" type="button" data-action="export">Download</button></div>
               <div class="setting"><span>Sign out of this device</span><button class="btn small" type="button" data-action="logout">Sign out</button></div>
@@ -728,12 +730,17 @@ const actions = {
   'delete-rule': (el) => data.deleteRule(el.dataset.pattern),
   install: async () => { ui.installPrompt?.prompt(); ui.installPrompt = null; render(); },
   export: () => {
+    if (window.BudgetApp?.saveFile) {
+      window.BudgetApp.saveFile(`budget-${todayISO()}.json`, 'application/json', JSON.stringify(S(), null, 2));
+      return;
+    }
     const blob = new Blob([JSON.stringify(S(), null, 2)], { type: 'application/json' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `budget-${todayISO()}.json` });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   },
   logout: () => data.logout(),
+  'change-server': () => window.BudgetApp?.changeServer(),
 };
 
 document.addEventListener('click', (e) => {
