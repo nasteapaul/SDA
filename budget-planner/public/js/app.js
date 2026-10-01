@@ -6,6 +6,7 @@ import {
 import { SAVINGS_CATEGORY, merchantKey } from './shared/categories.js';
 import { analyzeHistory, buildPlan, goalSaved, INTENSITY } from './shared/planner.js';
 import { csvToTransactions } from './shared/csv.js';
+import { ACCOUNT_KINDS, accountView, bankTotals, balanceMeaning } from './shared/accounts.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -141,7 +142,7 @@ const views = {
     const s = summary(key);
     const rows = spendingByCategory(key);
     const accounts = S().bank.connections.flatMap((c) => c.accounts).filter((a) => a.balance);
-    const bankTotal = accounts.reduce((sum, a) => sum + a.balance.amount, 0);
+    const bank = bankTotals(accounts);
     const used = s.income ? Math.min((s.spend + s.saved) / s.income, 1) : 0;
     const daysLeft = isCurrent ? daysInMonth(key) - Number(todayISO().slice(8, 10)) + 1 : 0;
     const perDay = isCurrent && s.left > 0 ? s.left / daysLeft : 0;
@@ -161,7 +162,7 @@ const views = {
           <span class="stat-label">${isCurrent ? 'Left to spend this month' : 'Left over that month'}</span>
           <span class="stat-value big num">${formatRON(s.left)}</span>
           <div class="meter" aria-hidden="true"><i style="width:${(used * 100).toFixed(1)}%"></i></div>
-          <span class="stat-sub">${s.income ? `${Math.round(used * 100)}% of income used` : 'No income recorded yet'}${perDay ? ` · ≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} days` : ''}${accounts.length ? ` · Bank: ${formatRON(bankTotal)}` : ''}</span>
+          <span class="stat-sub">${s.income ? `${Math.round(used * 100)}% of income used` : 'No income recorded yet'}${perDay ? ` · ≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} days` : ''}${accounts.length ? ` · In the bank: ${formatRON(bank.cash)}` : ''}${bank?.owed ? ` · Card owed: ${formatRON(bank.owed)}` : ''}</span>
         </div>
         <div class="card"><span class="stat-label">Income</span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${pctChange(s.income, summary(addMonths(key, -1)).income)}</span></div>
         <div class="card"><span class="stat-label">Spending</span><span class="stat-value num">${formatRON(s.spend)}</span><span class="stat-sub">${budgetTotal ? `Budget ${formatRON(budgetTotal, { short: true })}` : pctChange(s.spend, summary(addMonths(key, -1)).spend)}</span></div>
@@ -299,6 +300,7 @@ const views = {
           <div class="card"><span class="stat-label">Free each month today</span><span class="stat-value num ${plan.surplus < 0 ? 'neg' : ''}">${formatRON(plan.surplus, { short: true })}</span><span class="stat-sub">goals need ${formatRON(plan.totalRequired, { short: true })}/mo</span></div>
           <div class="card"><span class="stat-label">Save each month</span><span class="stat-value num">${formatRON(plan.monthlySaving, { short: true })}</span><span class="stat-sub">≈ ${formatRON(plan.perWeek, { short: true })}/week · ${formatRON(plan.perDay, { short: true })}/day</span></div>
         </div>
+        ${debtBanner()}
         ${banner ? `<div class="banner"><span class="banner-ico" aria-hidden="true">${banner[0]}</span><div><b>${esc(banner[1])}</b><div class="muted small">${esc(banner[2])}</div></div></div>` : ''}
         ${plan.goals.length ? `<div class="card">
           <div class="card-head"><h2>Goal timeline</h2></div>
@@ -354,10 +356,18 @@ const views = {
             ${flash === 'error' ? `<div class="banner" style="margin-bottom:12px"><span class="banner-ico">⚠️</span><div><b>Bank linking didn't finish.</b> <span class="muted">${esc(ui.params.get('reason') || '')}</span></div></div>` : ''}
             ${!b.configured ? `<p>Bank sync runs on your home server through <b>Enable Banking</b> (PSD2 open banking, free for your own accounts — supports BT, BCR, BRD, ING, Raiffeisen, CEC, Revolut…).</p>
               <p class="muted small">To turn it on, set <code class="inline">EB_APP_ID</code> and <code class="inline">EB_PRIVATE_KEY_PATH</code> in the server's <code class="inline">.env</code> file and restart it. The README has a 5-minute walkthrough.</p>` : `
-              ${accounts.length ? accounts.map((a) => `<div class="acct">
-                  <div><b>${esc(a.name || 'Account')}</b> <span class="muted small">${esc(a.bank)}</span><div class="muted small num">${esc(a.iban || '')}</div></div>
-                  <div style="text-align:right"><b class="num">${a.balance ? formatRON(a.balance.amount) : '—'}</b><div class="muted small">consent until ${fmtDate(a.validUntil?.slice(0, 10))}</div></div>
-                </div>`).join('') : '<p class="muted">No bank linked yet.</p>'}
+              ${accounts.length ? accounts.map((a) => {
+                const v = accountView(a);
+                const amount = !v.known ? '—' : v.kind === 'credit' ? `Owed ${formatRON(v.owed)}` : formatRON(v.cash);
+                const sub = v.kind === 'credit'
+                  ? (v.limit ? `${formatRON(v.available)} available of ${formatRON(v.limit, { short: true })}` : 'Set the credit limit →')
+                  : `consent until ${fmtDate(a.validUntil?.slice(0, 10))}`;
+                return `<div class="acct">
+                  <div><b>${esc(a.nickname || a.name || 'Account')}</b> <span class="badge">${esc(ACCOUNT_KINDS[v.kind])}</span> <span class="muted small">${esc(a.bank)}</span><div class="muted small num">${esc(a.iban || '')}</div></div>
+                  <div style="text-align:right"><b class="num">${amount}</b><div class="muted small">${sub}</div>
+                    <button class="btn small" type="button" data-action="edit-account" data-id="${esc(a.uid)}" style="margin-top:4px">Edit</button></div>
+                </div>`;
+              }).join('') : '<p class="muted">No bank linked yet.</p>'}
               <p class="muted small">${b.lastSync ? `Last sync ${new Date(b.lastSync).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}.` : ''} The server syncs automatically every few hours, and whenever you open the app on your home Wi-Fi.</p>
               ${b.lastError ? `<div class="banner"><span class="banner-ico">⚠️</span><div><b>Last sync failed</b><div class="muted small">${esc(b.lastError)}</div></div></div>` : ''}
               <div class="stack" style="gap:8px;margin-top:8px">
@@ -629,6 +639,68 @@ function openContributionModal(goal, withdraw = false) {
   });
 }
 
+function debtBanner() {
+  const { owed } = bankTotals(S().bank.connections.flatMap((c) => c.accounts));
+  if (!owed) return '';
+  const hasGoal = S().goals.some((g) => /card/i.test(g.name));
+  return `<div class="banner"><span class="banner-ico" aria-hidden="true">💳</span><div style="flex:1">
+    <b>You owe ${formatRON(owed)} on your credit card.</b>
+    <div class="muted small">Card interest is usually much higher than anything savings earn, so paying it off first is the best “saving” there is. Repay the full statement balance before the grace period ends to pay no interest at all.</div>
+    ${hasGoal ? '' : '<button class="btn small primary" type="button" data-action="debt-goal" style="margin-top:8px">Make paying it off a goal</button>'}
+  </div></div>`;
+}
+
+function openAccountModal(accUid) {
+  const a = S().bank.connections.flatMap((c) => c.accounts).find((x) => x.uid === accUid);
+  if (!a) return;
+  const v = accountView(a);
+  const raw = a.balance ? Number(a.balance.amount) : 0;
+  const meaning = a.balanceMeaning || 'auto';
+  openModal(`
+    <h2 id="modal-title">Account settings</h2>
+    <p class="muted small" style="margin:0">${esc(a.name || '')} · <span class="num">${esc(a.iban || '')}</span><br>The bank reports <b class="num">${formatRON(raw)}</b> for this account.</p>
+    <label class="field">Name<input name="nickname" maxlength="40" value="${esc(a.nickname || '')}" placeholder="${esc(a.name || 'e.g. ING card')}"></label>
+    <label class="field">Type<select name="kind">${Object.entries(ACCOUNT_KINDS).map(([k, label]) => `<option value="${k}" ${k === v.kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    <div id="credit-fields" class="stack" style="gap:14px" ${v.kind === 'credit' ? '' : 'hidden'}>
+      <label class="field">Credit limit (RON)<input name="creditLimit" inputmode="decimal" value="${a.creditLimit ? String(a.creditLimit).replace('.', ',') : ''}" placeholder="9.900"></label>
+      <div class="field">What does the bank's number (${formatRON(raw)}) mean?
+        <label class="checkbox"><input type="radio" name="balanceMeaning" value="owed" ${balanceMeaning(a) === 'owed' && meaning !== 'auto' ? 'checked' : ''}> <span id="opt-owed"></span></label>
+        <label class="checkbox"><input type="radio" name="balanceMeaning" value="available" ${meaning === 'available' ? 'checked' : ''}> <span id="opt-available"></span></label>
+        <label class="checkbox"><input type="radio" name="balanceMeaning" value="auto" ${meaning === 'auto' ? 'checked' : ''}> <span>Let the app decide</span></label>
+      </div>
+      <p class="muted small" style="margin:0">Pick the option that matches what your banking app shows. Card debt is never counted as money you have, and the Plan suggests paying it off.</p>
+    </div>
+    <p class="form-error" role="alert"></p>
+    <div class="modal-actions"><span class="spacer"></span>
+      <button class="btn" type="button" data-modal="cancel">Cancel</button>
+      <button class="btn primary" type="submit">Save</button>
+    </div>`, async (_, fd) => {
+    const kind = fd.get('kind');
+    const limit = round2(parseAmount(fd.get('creditLimit') || '0')) || 0;
+    if (kind === 'credit' && !(limit > 0)) throw new Error('Enter the card’s credit limit.');
+    const body = {
+      nickname: fd.get('nickname') || '',
+      kind,
+      creditLimit: kind === 'credit' ? limit : 0,
+      balanceMeaning: kind === 'credit' ? fd.get('balanceMeaning') || 'auto' : 'auto',
+    };
+    await data.fetch(`/api/bank/accounts/${encodeURIComponent(a.uid)}`, { method: 'PUT', body });
+    await data.refresh();
+    toast('Account updated');
+    return false;
+  });
+  const form = modalForm;
+  const preview = () => {
+    const limit = round2(parseAmount(form.creditLimit.value || '0')) || 0;
+    const owedIfOwed = raw < 0 ? -raw : raw;
+    $('#opt-owed', form).innerHTML = `It's what I've spent / owe → owed <b class="num">${formatRON(owedIfOwed)}</b>${limit ? `, available ${formatRON(Math.max(limit - owedIfOwed, 0))}` : ''}`;
+    $('#opt-available', form).innerHTML = `It's what I can still spend → ${limit ? `owed <b class="num">${formatRON(Math.max(limit - raw, 0))}</b>, available ${formatRON(raw)}` : 'enter the limit to see what you owe'}`;
+  };
+  preview();
+  form.creditLimit.addEventListener('input', preview);
+  form.kind.addEventListener('change', () => { $('#credit-fields', form).hidden = form.kind.value !== 'credit'; });
+}
+
 function openCategoryModal() {
   openModal(`
     <h2 id="modal-title">New category</h2>
@@ -728,6 +800,12 @@ const actions = {
     data.setCategories(S().categories.filter((_, i) => i !== Number(el.dataset.index)));
   },
   'delete-rule': (el) => data.deleteRule(el.dataset.pattern),
+  'edit-account': (el) => openAccountModal(el.dataset.id),
+  'debt-goal': () => {
+    const { owed } = bankTotals(S().bank.connections.flatMap((c) => c.accounts));
+    data.upsertGoal({ id: uid(), name: 'Pay off credit card', icon: '💳', target: owed, initialSaved: 0, deadline: null, priority: 'high' });
+    toast('Goal added — the plan now includes paying off the card');
+  },
   install: async () => { ui.installPrompt?.prompt(); ui.installPrompt = null; render(); },
   export: () => {
     if (window.BudgetApp?.saveFile) {

@@ -95,6 +95,10 @@ export class EnableBanking {
     return this.request('DELETE', `/sessions/${encodeURIComponent(sessionId)}`);
   }
 
+  async accountDetails(accountUid) {
+    return this.request('GET', `/accounts/${encodeURIComponent(accountUid)}/details`);
+  }
+
   async balances(accountUid) {
     const data = await this.request('GET', `/accounts/${encodeURIComponent(accountUid)}/balances`);
     return data.balances || [];
@@ -124,5 +128,10 @@ export function pickBalance(balances) {
   });
   const b = sorted[0];
   if (!b) return null;
-  return { amount: Number(b.balance_amount?.amount), currency: b.balance_amount?.currency, type: b.balance_type };
+  return {
+    amount: Number(b.balance_amount?.amount),
+    currency: b.balance_amount?.currency,
+    type: b.balance_type,
+    creditLimitIncluded: Boolean(b.credit_limit_included),
+  };
 }

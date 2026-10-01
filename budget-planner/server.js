@@ -12,7 +12,7 @@ import os from 'node:os';
 
 import { Store } from './lib/store.js';
 import { EnableBanking } from './lib/enablebanking.js';
-import { syncBank } from './lib/sync.js';
+import { syncBank, accountInfo } from './lib/sync.js';
 import { categorize, escapeForRule, merchantKey } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
 
@@ -145,7 +145,10 @@ function publicState(s) {
         sessionId: c.sessionId,
         bank: c.bank,
         validUntil: c.validUntil,
-        accounts: c.accounts.map((a) => ({ uid: a.uid, name: a.name, iban: a.iban, currency: a.currency, balance: a.balance, lastSyncDate: a.lastSyncDate })),
+        accounts: c.accounts.map((a) => ({
+          uid: a.uid, name: a.name, nickname: a.nickname, iban: a.iban, currency: a.currency, balance: a.balance, lastSyncDate: a.lastSyncDate,
+          kind: a.kind, cashAccountType: a.cashAccountType, creditLimit: a.creditLimit, balanceMeaning: a.balanceMeaning, product: a.product,
+        })),
       })),
     },
   };
@@ -190,6 +193,8 @@ async function completeBankLink(code, state) {
         name: a.name || a.product || a.details || 'Account',
         iban: a.account_id?.iban || null,
         currency: a.currency || 'RON',
+        ...accountInfo(a),
+        detailsFetched: Boolean(a.cash_account_type),
         balance: null,
         lastSyncDate: null,
       })),
@@ -404,6 +409,21 @@ async function api(req, res, url) {
   if (pathname === '/api/bank/sync' && method === 'POST') {
     const { force = true } = await readBody(req);
     return send(res, 200, await runSync({ force }));
+  }
+  // Your own settings for a linked account: type, credit limit, how to read the balance.
+  if (parts[0] === 'bank' && parts[1] === 'accounts' && parts[2] && method === 'PUT') {
+    const accUid = decodeURIComponent(parts[2]);
+    const body = await readBody(req);
+    const updated = await store.mutate((s) => {
+      const acc = s.bank.connections.flatMap((c) => c.accounts).find((a) => a.uid === accUid);
+      if (!acc) throw new HttpError(404, 'Account not found');
+      if (body.kind !== undefined) acc.kind = ['current', 'savings', 'credit'].includes(body.kind) ? body.kind : undefined;
+      if (body.creditLimit !== undefined) acc.creditLimit = Number(body.creditLimit) > 0 ? round2(Number(body.creditLimit)) : undefined;
+      if (body.balanceMeaning !== undefined) acc.balanceMeaning = ['available', 'owed'].includes(body.balanceMeaning) ? body.balanceMeaning : undefined;
+      if (body.nickname !== undefined) acc.nickname = String(body.nickname).trim().slice(0, 40) || undefined;
+      return acc;
+    });
+    return send(res, 200, { ok: true, uid: updated.uid });
   }
   if (parts[0] === 'bank' && parts[1] === 'connections' && parts[2] && method === 'DELETE') {
     const sessionId = decodeURIComponent(parts[2]);

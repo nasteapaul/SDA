@@ -211,3 +211,40 @@ test('maps Enable Banking transactions', () => {
   const noId = { ...raw, entry_reference: undefined };
   assert.equal(bankRef('acc1', noId), bankRef('acc1', { ...noId }), 'fingerprint is stable');
 });
+
+import { accountView, bankTotals } from '../public/js/shared/accounts.js';
+
+test('credit card balance reported as amount owed', () => {
+  const card = { kind: 'credit', creditLimit: 9900, balanceMeaning: 'owed', balance: { amount: 9881.62 } };
+  const v = accountView(card);
+  assert.equal(v.owed, 9881.62);
+  assert.equal(v.available, 18.38);
+  assert.equal(v.cash, 0);
+});
+
+test('credit card balance reported as available credit', () => {
+  const v = accountView({ kind: 'credit', creditLimit: 9900, balanceMeaning: 'available', balance: { amount: 9881.62 } });
+  assert.equal(v.owed, 18.38);
+  assert.equal(v.available, 9881.62);
+});
+
+test('auto: credit_limit_included means available; negative means owed', () => {
+  assert.equal(accountView({ cashAccountType: 'CARD', creditLimit: 5000, balance: { amount: 4000, creditLimitIncluded: true } }).owed, 1000);
+  assert.equal(accountView({ cashAccountType: 'CARD', creditLimit: 5000, balance: { amount: -1200 } }).owed, 1200);
+});
+
+test('bank totals never count card money as cash', () => {
+  const t = bankTotals([
+    { balance: { amount: 1214.43 } },
+    { balance: { amount: 0 } },
+    { kind: 'credit', creditLimit: 9900, balanceMeaning: 'owed', balance: { amount: 9881.62 } },
+  ]);
+  assert.deepEqual(t, { cash: 1214.43, owed: 9881.62, net: -8667.19 });
+});
+
+test('payments between your own accounts become transfers', () => {
+  const own = new Set(['RO31INGB0000999918061462']);
+  const raw = { entry_reference: 'r1', transaction_amount: { amount: '500', currency: 'RON' }, credit_debit_indicator: 'DBIT', booking_date: '2026-09-20', creditor: { name: 'Dan' }, creditor_account: { iban: 'RO31 INGB 0000 9999 1806 1462' } };
+  assert.equal(mapBankTransaction('acc', raw, { rules: [], categories: cats }, own).category, 'Transfers');
+  assert.notEqual(mapBankTransaction('acc', raw, { rules: [], categories: cats }).category, 'Transfers');
+});

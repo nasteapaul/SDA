@@ -7,6 +7,17 @@ import { categorize } from '../public/js/shared/categories.js';
 import { round2, todayISO, uid } from '../public/js/shared/money.js';
 import { pickBalance } from './enablebanking.js';
 
+// Fields we keep from an Enable Banking account resource. Only defined values,
+// so a sparse /details response never wipes what the session already gave us.
+export function accountInfo(a = {}) {
+  const info = {
+    cashAccountType: a.cash_account_type,
+    creditLimit: a.credit_limit?.amount != null ? Number(a.credit_limit.amount) : undefined,
+    product: a.product,
+  };
+  return Object.fromEntries(Object.entries(info).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+}
+
 export function bankRef(accountUid, t) {
   const id = t.entry_reference || t.transaction_id;
   if (id) return `${accountUid}:${id}`;
@@ -20,20 +31,25 @@ export function bankRef(accountUid, t) {
   return `${accountUid}:h${createHash('sha1').update(fingerprint).digest('hex').slice(0, 16)}`;
 }
 
-export function mapBankTransaction(accountUid, t, { rules, categories }) {
+export function mapBankTransaction(accountUid, t, { rules, categories }, ownIbans = new Set()) {
   if (t.status && t.status !== 'BOOK') return null; // skip pending
   const amount = round2(Math.abs(Number(t.transaction_amount?.amount)));
   if (!amount) return null;
   const type = t.credit_debit_indicator === 'CRDT' ? 'income' : 'expense';
   const counterparty = (type === 'income' ? t.debtor?.name : t.creditor?.name) || '';
   const remittance = (t.remittance_information || []).join(' ').replace(/\s+/g, ' ').trim();
+  // Money moving between your own linked accounts (e.g. paying off the credit
+  // card from the current account) is a transfer, not income or spending.
+  const counterpartyIban = ((type === 'income' ? t.debtor_account?.iban : t.creditor_account?.iban) || '').replace(/\s/g, '').toUpperCase();
+  const own = counterpartyIban && ownIbans.has(counterpartyIban);
   const description = (counterparty || remittance || t.bank_transaction_code?.description || 'Bank transaction').slice(0, 140);
   const now = new Date().toISOString();
   return {
     id: uid(),
     type,
     amount,
-    category: categorize({ description: `${description} ${remittance}`, counterparty, type }, rules, categories),
+    category: own ? 'Transfers' : categorize({ description: `${description} ${remittance}`, counterparty, type }, rules, categories),
+    counterpartyIban: counterpartyIban || undefined,
     description,
     note: remittance && remittance !== description ? remittance.slice(0, 280) : '',
     date: t.booking_date || t.value_date || t.transaction_date || todayISO(),
@@ -65,7 +81,10 @@ export async function syncBank(store, client, { lookbackDays = 90 } = {}) {
         ? todayISO(new Date(new Date(acc.lastSyncDate).getTime() - 5 * 86400 * 1000)) // small overlap for late bookings
         : todayISO(new Date(Date.now() - lookbackDays * 86400 * 1000));
       const [balances, txs] = await Promise.all([client.balances(acc.uid), client.transactions(acc.uid, since)]);
-      fetched.push({ conn, acc, balance: pickBalance(balances), txs });
+      // Account type and credit limit (to tell credit cards apart); fetched once.
+      let details = null;
+      if (!acc.detailsFetched) details = await client.accountDetails(acc.uid).catch(() => ({}));
+      fetched.push({ conn, acc, balance: pickBalance(balances), txs, details });
     }
   }
 
@@ -73,19 +92,29 @@ export async function syncBank(store, client, { lookbackDays = 90 } = {}) {
     const known = new Set(s.transactions.filter((t) => t.bankRef).map((t) => t.bankRef));
     for (const ref of s.deletedBankRefs) known.add(ref);
     let added = 0;
-    for (const { conn, acc, balance, txs } of fetched) {
+    const ownIbans = new Set(s.bank.connections.flatMap((c) => c.accounts).map((a) => (a.iban || '').replace(/\s/g, '').toUpperCase()).filter(Boolean));
+    for (const { conn, acc, balance, txs, details } of fetched) {
+      const target = s.bank.connections.find((c) => c.sessionId === conn.sessionId)?.accounts.find((a) => a.uid === acc.uid);
+      if (target && details) Object.assign(target, accountInfo(details), { detailsFetched: true });
       for (const raw of txs) {
-        const t = mapBankTransaction(acc.uid, raw, s);
+        const t = mapBankTransaction(acc.uid, raw, s, ownIbans);
         if (!t || known.has(t.bankRef)) continue;
         known.add(t.bankRef);
         s.transactions.push(t);
         added += 1;
       }
-      const target = s.bank.connections.find((c) => c.sessionId === conn.sessionId)?.accounts.find((a) => a.uid === acc.uid);
       if (target) {
         target.balance = balance;
         target.lastSyncDate = todayISO();
       }
+    }
+    const ibanOf = new Map(s.bank.connections.flatMap((c) => c.accounts).map((a) => [a.uid, (a.iban || '').replace(/\s/g, '').toUpperCase()]));
+    // Older imports between your own accounts (never edited by you) → Transfers.
+    for (const t of s.transactions) {
+      if (t.source !== 'bank' || t.category === 'Transfers' || t.goalId || t.updatedAt !== t.createdAt) continue;
+      const text = `${t.description} ${t.note || ''}`.replace(/\s/g, '').toUpperCase();
+      const self = ibanOf.get(t.accountId);
+      if ([...ownIbans].some((iban) => iban !== self && text.includes(iban))) t.category = 'Transfers';
     }
     s.bank.lastSync = new Date().toISOString();
     s.bank.lastError = null;

@@ -259,7 +259,7 @@ input[type=checkbox], input[type=radio] { width: auto; min-height: 0; padding: 0
 input[type=file] { padding: 8px; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .filters input, .filters select { width: auto; }
-label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-2); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-2); }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .checkbox { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--text); }
 .checkbox input { width: 18px; height: 18px; min-height: 0; }

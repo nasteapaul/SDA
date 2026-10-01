@@ -36,7 +36,7 @@ export const SAVINGS_CATEGORY = 'Savings';
 // (lowercase, no diacritics) description + counterparty name.
 export const DEFAULT_RULES = [
   // Transfers between own accounts / to savings deposits
-  { pattern: 'transfer intre conturi proprii|transfer propriu|own account|depozit|economisire|round up|roundup', category: 'Transfers' },
+  { pattern: 'transfer intre conturi proprii|transfer propriu|own account|depozit|economisire|round up|roundup|rambursare card|card de credit|plata card credit|credit card (re)?payment', category: 'Transfers' },
   // Income
   { pattern: 'salariu|salary|payroll|drepturi salariale|avans salariu', category: 'Salary', kind: 'income' },
   { pattern: 'refund|rambursare|retur|storno|cashback', category: 'Refunds', kind: 'income' },
