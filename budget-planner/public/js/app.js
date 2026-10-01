@@ -58,13 +58,14 @@ const icon = (name) => cat(name).icon || '•';
 
 function summary(key) {
   let income = 0; let spend = 0; let saved = 0; let count = 0; let ownIn = 0;
+  const own = ownContext(S());
   for (const t of S().transactions) {
     if (keyOf(t.date) !== key) continue;
     const c = counts(t);
     if (!c) continue;
     count += 1;
     if (c === 'saved') saved += t.type === 'expense' ? t.amount : -t.amount;
-    else if (c === 'income') { income += t.amount; if (cat(t.category).role === 'transfer') ownIn += t.amount; }
+    else if (c === 'income') { income += t.amount; if (isOwnTransfer(t, own) || /depunere numerar|cash deposit/i.test(`${t.description} ${t.note || ''}`)) ownIn += t.amount; }
     else spend += t.amount;
   }
   return { income: round2(income), spend: round2(spend), saved: round2(saved), left: round2(income - spend - saved), count, ownIn: round2(ownIn) };
@@ -96,7 +97,9 @@ function goalsWithProgress() {
 function currentPlan(goalIds = ui.planGoals) {
   // With a payday, habits are measured per pay period instead of per calendar month.
   const p = P();
-  const counted = S().transactions.filter((t) => counts(t));
+  // Money into the current account is income even if it carries a savings/transfer category.
+  const counted = S().transactions.filter((t) => counts(t)).map((t) => (
+    L().mode === 'cashflow' && counts(t) === 'income' && cat(t.category).role ? { ...t, category: 'Other income' } : t));
   const txs = p.payday ? counted.map((t) => ({ ...t, date: p.pseudoDate(t.date) })) : counted;
   const analysis = analyzeHistory(txs, S().categories, { today: p.payday ? p.pseudoDate(todayISO()) : todayISO() });
   const goals = goalsWithProgress().filter((g) => !g.done && (!goalIds || goalIds.includes(g.id)));
@@ -173,10 +176,8 @@ const views = {
     const s = summary(key);
     const rows = spendingByCategory(key);
     const accounts = S().bank.connections.flatMap((c) => c.accounts).filter((a) => a.balance);
-    const bank = bankTotals(accounts);
     const used = s.income ? Math.min((s.spend + s.saved) / s.income, 1) : 0;
     const daysLeft = isCurrent ? P().daysLeft(key) : 0;
-    const perDay = isCurrent && s.left > 0 ? s.left / daysLeft : 0;
     const months = Array.from({ length: 6 }, (_, i) => addMonths(key, i - 5)).map((k) => ({ key: k, ...summary(k) }));
     const goals = goalsWithProgress().filter((g) => !g.archived).slice(0, 4);
     const recent = sortTx(S().transactions.filter((t) => keyOf(t.date) === key)).slice(0, 6);
@@ -191,16 +192,12 @@ const views = {
       ${P().payday ? `<button class="btn small" type="button" data-action="edit-payday" data-key="${esc(key)}" style="margin-left:8px">💼 Salary on ${esc(new Date(P().start(key)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}${S().settings?.paydays?.[key] ? ' (set by you)' : ''} ✎</button>` : ''}
       ${unassignedBanner()}
       <div class="hero">
-        <div class="card balance">
-          <span class="stat-label">${isCurrent ? (P().payday ? 'Left to spend until payday' : 'Left to spend this month') : (P().payday ? 'Left over that pay period' : 'Left over that month')}</span>
-          <span class="stat-value big num">${formatRON(s.left)}</span>
-          <div class="meter" aria-hidden="true"><i style="width:${(used * 100).toFixed(1)}%"></i></div>
-          <span class="stat-sub">${s.income ? `${Math.round(used * 100)}% of income used` : 'No income recorded yet'}${perDay ? ` · ≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} days` : ''}${accounts.length ? ` · In the bank: ${formatRON(bank.cash)}` : ''}${bank?.owed ? ` · Card owed: ${formatRON(bank.owed)}` : ''}</span>
-        </div>
+        ${heroCard({ s, key, isCurrent, used, daysLeft, accounts })}
         <div class="card"><span class="stat-label">Income</span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${s.ownIn ? `${formatRON(s.income - s.ownIn, { short: true })} earned + ${formatRON(s.ownIn, { short: true })} from your own accounts / cash` : pctChange(s.income, summary(addMonths(key, -1)).income)}</span></div>
         <div class="card"><span class="stat-label">Spending</span><span class="stat-value num">${formatRON(s.spend)}</span><span class="stat-sub">${budgetTotal ? `Budget ${formatRON(budgetTotal, { short: true })}` : pctChange(s.spend, summary(addMonths(key, -1)).spend)}</span></div>
         <div class="card"><span class="stat-label">Saved to goals</span><span class="stat-value num">${formatRON(s.saved)}</span><span class="stat-sub">${s.income ? `${Math.round((s.saved / s.income) * 100)}% savings rate` : '—'}</span></div>
       </div>
+      ${creditCardPanel(key)}
       <div class="grid two">
         <div class="stack">
           <div class="card">
@@ -448,6 +445,14 @@ const views = {
                 <input type="number" min="1" max="28" inputmode="numeric" data-action="payday-day" value="${S().settings?.payday || 10}" style="width:70px;min-height:34px;padding:4px 8px" aria-label="Payday"></label>
               <p class="muted small" style="margin:6px 0 0">If the day falls on a Saturday the period starts on Friday, on a Sunday it starts on Monday. When the salary has arrived, its real date is used.${S().settings?.payday ? ` Current period: <b>${esc(P().rangeLabel(P().current()))}</b>.` : ''}</p>
             </div>
+            ${S().settings?.payday ? `<div class="card-head" style="margin:14px 0 6px"><h2 class="small">Salary date for each month</h2></div>
+              <p class="muted small" style="margin:0 0 6px">Set the exact day the salary came in. Each month runs from that day until the day before the next salary.</p>
+              <div class="settings-list">${Array.from({ length: 12 }, (_, i) => addMonths(P().current(), 1 - i)).map((k) => {
+                const set = S().settings?.paydays?.[k];
+                return `<div class="setting"><span>${esc(P().label(k))}<div class="muted small">${set ? 'set by you' : 'automatic'} · runs until ${esc(new Date(P().end(k)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}</div></span>
+                  <span style="display:flex;gap:6px;align-items:center"><input type="date" data-action="salary-date" data-key="${k}" value="${esc(P().start(k))}" style="width:auto;min-height:34px;padding:4px 8px" aria-label="Salary date ${esc(P().label(k))}">
+                  ${set ? `<button class="btn small" type="button" data-action="salary-auto" data-key="${k}" title="Back to automatic">↺</button>` : ''}</span></div>`;
+              }).join('')}</div>` : ''}
           </div>
           <div class="card">
             <div class="card-head"><h2>📱 App</h2></div>
@@ -456,6 +461,7 @@ const views = {
                 : `<div class="setting"><span>Install on this device</span>${ui.installPrompt ? '<button class="btn small primary" type="button" data-action="install">Install</button>' : '<span class="muted small" style="text-align:right">iPhone: Share → Add to Home Screen<br>Android: get the app (see README) or ⋮ → Add to Home screen</span>'}</div>`}
               <div class="setting"><span>Theme</span><select data-action="theme" style="width:auto">${['system', 'light', 'dark'].map((t) => `<option value="${t}" ${t === theme ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div>
               <div class="setting"><span>Export all data (JSON)</span><button class="btn small" type="button" data-action="export">Download</button></div>
+              <div class="setting"><span>App version</span><span class="muted small num">${esc(S().appVersion || '?')}</span></div>
               <div class="setting"><span>Sign out of this device</span><button class="btn small" type="button" data-action="logout">Sign out</button></div>
             </div>
           </div>
@@ -590,7 +596,7 @@ function openTxModal(tx) {
       <label class="field" id="goal-field" ${cat(t.category).role === 'savings' ? '' : 'hidden'}>Goal<select name="goalId"><option value="">—</option>${S().goals.map((g) => `<option value="${esc(g.id)}" ${g.id === t.goalId ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
     </div>
     <label class="field">Note<input name="note" maxlength="280" value="${esc(t.note || '')}" placeholder="Optional"></label>
-    ${t.source !== 'bank' && S().bank.connections.length ? `<label class="field">Account<select name="accountId">${S().bank.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === t.accountId ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))}</option>`).join('')}<option value="" ${!t.accountId ? 'selected' : ''}>Not linked (cash / other)</option></select></label>` : ''}
+    ${t.source !== 'bank' && S().bank.connections.length ? `<label class="field">Account<select name="accountId">${S().bank.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === (L().accountOf(t)?.uid) ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))}</option>`).join('')}<option value="" ${!L().accountOf(t) ? 'selected' : ''}>Not linked (cash / other)</option></select></label>` : ''}
     ${!isNew && t.category !== 'Transfers' && isOwnTransfer(t, ownContext(S())) ? `<div class="banner"><span class="banner-ico" aria-hidden="true">🔁</span><div class="small"><b>This looks like money moving between your own accounts.</b> As “${esc(t.category)}” it is counted as ${t.type === 'income' ? 'income' : 'spending'} — and again on the other account. Choose <b>Transfers</b> so it isn’t counted twice.</div></div>` : ''}
     ${fromBank ? `<div id="learn-row" class="stack" style="gap:8px" hidden>
       <label class="checkbox"><input type="checkbox" name="learn"> Also use this category for other transactions containing:</label>
@@ -618,7 +624,7 @@ function openTxModal(tx) {
       note: (fd.get('note') || '').trim(),
       goalId: cat(category).role === 'savings' ? (fd.get('goalId') || null) : null,
       ...(category !== originalCategory ? { manualCategory: true } : {}),
-      ...(fd.has('accountId') ? { accountId: fd.get('accountId') || null } : {}),
+      ...(fd.has('accountId') && (fd.get('accountId') || null) !== (t.accountId || null) ? { accountId: fd.get('accountId') || null, accountManual: true } : {}),
     };
     const keyword = (fd.get('keyword') || '').trim().toLowerCase();
     const learn = fromBank && category !== originalCategory && fd.get('learn');
@@ -789,6 +795,67 @@ function openContributionModal(goal, withdraw = false) {
   });
 }
 
+// Main card. For the period you're in, the real balance of your current account
+// is the truth ("what I have until payday"); past periods show what was left over.
+function heroCard({ s, key, isCurrent, used, daysLeft, accounts }) {
+  const currentAccounts = accounts.filter((a) => accountView(a).kind === 'current' && accountView(a).known);
+  const balance = currentAccounts.reduce((sum, a) => sum + accountView(a).cash, 0);
+  const until = P().payday ? 'until payday' : 'until the end of the month';
+  if (isCurrent && currentAccounts.length) {
+    const perDay = balance > 0 && daysLeft ? balance / daysLeft : 0;
+    return `<div class="card balance">
+      <span class="stat-label">In your current account now</span>
+      <span class="stat-value big num">${formatRON(balance)}</span>
+      <div class="meter" aria-hidden="true"><i style="width:${(used * 100).toFixed(1)}%"></i></div>
+      <span class="stat-sub">${perDay ? `≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} day${daysLeft === 1 ? '' : 's'} ${until}` : `${daysLeft} days ${until}`} · this period so far: ${formatRON(s.income - s.spend, { sign: true })} (in ${formatRON(s.income, { short: true })}, out ${formatRON(s.spend, { short: true })})</span>
+    </div>`;
+  }
+  const perDay = isCurrent && s.left > 0 && daysLeft ? s.left / daysLeft : 0;
+  return `<div class="card balance">
+    <span class="stat-label">${isCurrent ? `Left to spend ${until}` : (P().payday ? 'Left over that pay period' : 'Left over that month')}</span>
+    <span class="stat-value big num">${formatRON(s.left)}</span>
+    <div class="meter" aria-hidden="true"><i style="width:${(used * 100).toFixed(1)}%"></i></div>
+    <span class="stat-sub">${s.income ? `${Math.round(used * 100)}% of income used` : 'No income recorded'}${perDay ? ` · ≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} days` : ''}${L().mode === 'cashflow' ? ' · money in − money out of the current account' : ''}</span>
+  </div>`;
+}
+
+// Credit card: what was spent on it, what was paid back, what's still owed,
+// and when it's cleared at the current pace.
+function creditCardPanel(key) {
+  const cards = S().bank.connections.flatMap((c) => c.accounts).filter((a) => accountView(a).kind === 'credit');
+  if (!cards.length) return '';
+  const owed = cards.reduce((sum, a) => sum + accountView(a).owed, 0);
+  const onCard = (t) => L().kindOf(t) === 'credit';
+  const period = (k) => {
+    let spent = 0; let repaid = 0; const cats = {};
+    for (const t of S().transactions) {
+      if (keyOf(t.date) !== k || !onCard(t)) continue;
+      if (t.type === 'expense') { spent += t.amount; cats[t.category] = (cats[t.category] || 0) + t.amount; } else repaid += t.amount;
+    }
+    return { spent, repaid, cats };
+  };
+  const now = period(key);
+  const past = [1, 2, 3].map((i) => period(addMonths(P().current(), -i)));
+  const avgSpent = past.reduce((x, p) => x + p.spent, 0) / 3;
+  const avgRepaid = past.reduce((x, p) => x + p.repaid, 0) / 3;
+  const net = avgRepaid - avgSpent; // debt paid down per period
+  const top = Object.entries(now.cats).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const in12 = owed / 12 + avgSpent;
+  let pace;
+  if (!owed) pace = 'Nothing owed 🎉';
+  else if (net > 1 && owed / net <= 120) pace = `At your pace of the last 3 periods (repaid ${formatRON(avgRepaid, { short: true })}, spent ${formatRON(avgSpent, { short: true })} on the card), it's cleared in about <b>${Math.ceil(owed / net)} months</b>.`;
+  else pace = `In the last 3 periods you spent ${formatRON(avgSpent, { short: true })} a month on the card and repaid ${formatRON(avgRepaid, { short: true })} — <b>the debt isn't going down</b>.`;
+  return `<div class="card" style="margin:16px 0">
+    <div class="card-head"><h2>💳 Credit card${(() => { const d = [...L().byDigits].filter(([, a]) => cards.some((c) => c.uid === a.uid)).map(([x]) => x); return d.length ? ` · card **** ${esc(d.join(', '))}` : ''; })()}</h2><a class="link" href="#transactions">Card transactions →</a></div>
+    <div class="plan-summary" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div><span class="stat-label">Owed now</span><div class="stat-value num">${formatRON(owed)}</div></div>
+      <div><span class="stat-label">Spent on the card this period</span><div class="stat-value num">${formatRON(now.spent)}</div><div class="stat-sub">${top.map(([c, v]) => `${esc(icon(c))} ${esc(c)} ${formatRON(v, { short: true })}`).join(' · ') || '—'}</div></div>
+      <div><span class="stat-label">Paid back this period</span><div class="stat-value num pos">${formatRON(now.repaid)}</div></div>
+    </div>
+    <p class="small" style="margin:12px 0 0">${pace}${owed ? ` To be debt-free in 12 months: repay about <b>${formatRON(in12, { short: true })}</b> a month and keep card spending around ${formatRON(avgSpent, { short: true })} (or less).` : ''}</p>
+  </div>`;
+}
+
 function unassignedBanner() {
   const accounts = S().bank.connections.flatMap((c) => c.accounts);
   if (accounts.length < 2) return '';
@@ -818,6 +885,7 @@ function openAccountModal(accUid) {
     <h2 id="modal-title">Account settings</h2>
     <p class="muted small" style="margin:0">${esc(a.name || '')} · <span class="num">${esc(a.iban || '')}</span><br>The bank reports <b class="num">${formatRON(raw)}</b> for this account.</p>
     <label class="field">Name<input name="nickname" maxlength="40" value="${esc(a.nickname || '')}" placeholder="${esc(a.name || 'e.g. ING card')}"></label>
+    <label class="field">Card numbers on this account (last 4 digits)<input name="cardDigits" inputmode="numeric" value="${esc((a.cardDigits || [...L().byDigits].filter(([, x]) => x.uid === a.uid).map(([d]) => d)).join(', '))}" placeholder="e.g. 7204"></label>
     <label class="field">Type<select name="kind">${Object.entries(ACCOUNT_KINDS).map(([k, label]) => `<option value="${k}" ${k === v.kind ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
     <div id="credit-fields" class="stack" style="gap:14px" ${v.kind === 'credit' ? '' : 'hidden'}>
       <label class="field">Credit limit (RON)<input name="creditLimit" inputmode="decimal" value="${a.creditLimit ? String(a.creditLimit).replace('.', ',') : ''}" placeholder="9.900"></label>
@@ -837,6 +905,7 @@ function openAccountModal(accUid) {
     const limit = round2(parseAmount(fd.get('creditLimit') || '0')) || 0;
     if (kind === 'credit' && !(limit > 0)) throw new Error('Enter the card’s credit limit.');
     const body = {
+      cardDigits: String(fd.get('cardDigits') || '').match(/\d{4}/g) || [],
       nickname: fd.get('nickname') || '',
       kind,
       creditLimit: kind === 'credit' ? limit : 0,
@@ -960,6 +1029,11 @@ const actions = {
   'delete-rule': (el) => data.deleteRule(el.dataset.pattern),
   'add-rule': () => openRuleModal(),
   'edit-payday': (el) => openPaydayModal(el.dataset.key),
+  'salary-auto': (el) => {
+    const paydays = { ...(S().settings?.paydays || {}) };
+    delete paydays[el.dataset.key];
+    data.setSettings({ paydays });
+  },
   'delete-imported': async () => {
     if (!confirm('Delete every transaction that came from a CSV import? Bank-synced and manual ones stay.')) return;
     try {
@@ -1030,6 +1104,15 @@ view.addEventListener('change', async (e) => {
     }
     case 'theme': applyTheme(el.value); break;
     case 'csv-account': ui.csvAccount = el.value; break;
+    case 'salary-date': {
+      const k = el.dataset.key;
+      const [y, m] = k.split('-').map(Number);
+      const d = new Date(el.value);
+      if (!el.value || Math.abs((d.getFullYear() - y) * 12 + d.getMonth() - (m - 1)) > 1) { toast('Pick a date close to that month'); render(); break; }
+      data.setSettings({ paydays: { ...(S().settings?.paydays || {}), [k]: el.value } });
+      toast(`${P().label(k)}: salary on ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`);
+      break;
+    }
     case 'count-mode': data.setSettings({ countMode: el.value }); toast('Totals updated'); break;
     case 'period-mode':
     case 'payday-day': {

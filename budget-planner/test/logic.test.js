@@ -403,6 +403,8 @@ test('cash-flow ledger: only the current account counts', () => {
   assert.equal(L.counts({ accountId: 'card', type: 'income', category: 'Transfers' }), null);
   assert.equal(L.counts({ accountId: 'cur', type: 'income', category: 'Transfers' }), 'income', 'money moved into the current account counts');
   assert.equal(L.counts({ type: 'expense', category: 'Groceries' }), 'expense', 'manual entries count');
+  assert.equal(L.counts({ accountId: 'cur', source: 'bank', type: 'income', category: 'Savings' }), 'income', 'money in is income whatever the category');
+  assert.equal(L.counts({ source: 'import', type: 'expense', category: 'Groceries', note: 'Numar card:**** 8391' }), 'expense', 'unknown card number → current account');
   const all = makeLedger({ ...s, settings: { countMode: 'all' } });
   assert.equal(all.counts({ accountId: 'card', type: 'expense', category: 'Groceries' }), 'expense');
   assert.equal(all.counts({ accountId: 'cur', type: 'expense', category: 'Credit card repayment' }), null);
@@ -431,4 +433,24 @@ test('salary date set for one month overrides the automatic one', () => {
   assert.equal(p.keyOf('2026-09-07'), '2026-08');
   assert.equal(p.keyOf('2026-09-30'), '2026-10', 'October salary that came on 30 Sep starts October');
   assert.equal(p.end('2026-09'), '2026-09-29');
+});
+
+test('card numbers decide the account of imported rows', () => {
+  const s = twoAccounts();
+  s.transactions = [
+    { source: 'bank', accountId: 'card', type: 'expense', description: 'X', note: 'Card number, **** 8391, Transaction at, X' },
+    { source: 'bank', accountId: 'cur', type: 'expense', description: 'Y', note: 'Card number, **** 7204, Transaction at, Y' },
+  ];
+  const L = makeLedger(s);
+  const imp = (note, extra = {}) => ({ source: 'import', type: 'expense', description: 'Z', note, ...extra });
+  assert.equal(L.kindOf(imp('Numar card:**** 8391', { accountId: 'cur' })), 'credit', 'card number beats a wrong guess');
+  assert.equal(L.kindOf(imp('Numar card:**** 7204', { accountId: 'card' })), 'current');
+  assert.equal(L.kindOf(imp('Numar card:**** 8391', { accountId: 'cur', accountManual: true })), 'current', 'your manual choice wins');
+  assert.equal(L.kindOf({ source: 'import', type: 'income', description: 'Rambursare rata card credit' }), 'credit');
+  assert.equal(L.kindOf({ source: 'import', type: 'income', description: 'Incasare H Essers' }), 'current');
+  assert.equal(L.counts(imp('Numar card:**** 8391')), null);
+  const withDigits = makeLedger({ ...twoAccounts(), transactions: [] });
+  assert.equal(withDigits.kindOf(imp('Numar card:**** 8391')), 'current', 'nothing known yet → current');
+  const s2 = twoAccounts(); s2.bank.connections[0].accounts[1].cardDigits = ['8391'];
+  assert.equal(makeLedger({ ...s2, transactions: [] }).kindOf(imp('Numar card:**** 8391')), 'credit', 'digits set on the account');
 });

@@ -173,6 +173,7 @@ function cleanTransaction(input, existing = {}) {
   if (input.goalId !== undefined) t.goalId = input.goalId || null;
   if (input.manualCategory !== undefined) t.manualCategory = Boolean(input.manualCategory);
   if (input.accountId !== undefined && existing.source !== 'bank') t.accountId = input.accountId || null;
+  if (input.accountManual !== undefined) t.accountManual = Boolean(input.accountManual);
   if (!t.type || !t.amount || !t.date) throw new HttpError(400, 'type, amount and date are required');
   t.category ||= t.type === 'income' ? 'Other income' : 'Other';
   t.description ||= t.category;
@@ -197,9 +198,12 @@ function cleanGoal(input, existing = {}) {
   return g;
 }
 
+const APP_VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+
 function publicState(s) {
   return {
     ...s,
+    appVersion: APP_VERSION,
     deletedBankRefs: undefined,
     bank: {
       configured: bank.configured,
@@ -213,7 +217,7 @@ function publicState(s) {
         validUntil: c.validUntil,
         accounts: c.accounts.map((a) => ({
           uid: a.uid, name: a.name, nickname: a.nickname, iban: a.iban, currency: a.currency, balance: a.balance, lastSyncDate: a.lastSyncDate,
-          kind: a.kind, cashAccountType: a.cashAccountType, creditLimit: a.creditLimit, balanceMeaning: a.balanceMeaning, product: a.product,
+          kind: a.kind, cashAccountType: a.cashAccountType, creditLimit: a.creditLimit, balanceMeaning: a.balanceMeaning, product: a.product, cardDigits: a.cardDigits,
         })),
       })),
     },
@@ -324,7 +328,7 @@ async function api(req, res, url) {
         for (const raw of items.slice(0, 5000)) {
           let t;
           try { t = cleanTransaction(raw); } catch { continue; }
-          if (account) t.accountId = account.uid;
+          if (account) { t.accountId = account.uid; t.accountChosen = true; }
           // The note holds the bank's details (authorisation no., reference), so two genuine
           // identical-looking payments on the same day keep different fingerprints.
           const bare = `${t.date}|${t.type}|${t.amount}|${(raw.description || '').toLowerCase()}|${(raw.note || '').toLowerCase()}`;
@@ -516,6 +520,7 @@ async function api(req, res, url) {
       if (body.creditLimit !== undefined) acc.creditLimit = Number(body.creditLimit) > 0 ? round2(Number(body.creditLimit)) : undefined;
       if (body.balanceMeaning !== undefined) acc.balanceMeaning = ['available', 'owed'].includes(body.balanceMeaning) ? body.balanceMeaning : undefined;
       if (body.nickname !== undefined) acc.nickname = String(body.nickname).trim().slice(0, 40) || undefined;
+      if (Array.isArray(body.cardDigits)) acc.cardDigits = body.cardDigits.map(String).filter((d) => /^\d{4}$/.test(d)).slice(0, 6);
       return acc;
     });
     return send(res, 200, { ok: true, uid: updated.uid });
