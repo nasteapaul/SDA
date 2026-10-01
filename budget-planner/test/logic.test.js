@@ -168,10 +168,10 @@ test('CSV import: BT style with debit/credit columns and preamble', () => {
   ].join('\n');
   const { items } = csvToTransactions(csv);
   assert.equal(items.length, 2);
-  assert.deepEqual(items[0], { date: '2026-09-01', type: 'expense', amount: 123.45, description: 'Plata la POS KAUFLAND' });
+  assert.deepEqual(items[0], { date: '2026-09-01', type: 'expense', amount: 123.45, description: 'Plata la POS KAUFLAND', note: '' });
   assert.equal(items[1].type, 'income');
   assert.equal(items[1].amount, 7500);
-  assert.match(items[1].description, /continuare/);
+  assert.match(items[1].note, /continuare/);
 });
 
 test('CSV import: Revolut style with signed amount', () => {
@@ -243,7 +243,7 @@ test('bank totals never count card money as cash', () => {
 });
 
 test('payments between your own accounts become transfers', () => {
-  const own = new Set(['RO31INGB0000999918061462']);
+  const own = { ibans: new Set(['RO31INGB0000999918061462']), names: new Set(), ibanOf: new Map([['acc', 'RO34INGB0000999908415340']]) };
   const raw = { entry_reference: 'r1', transaction_amount: { amount: '500', currency: 'RON' }, credit_debit_indicator: 'DBIT', booking_date: '2026-09-20', creditor: { name: 'Dan' }, creditor_account: { iban: 'RO31 INGB 0000 9999 1806 1462' } };
   assert.equal(mapBankTransaction('acc', raw, { rules: [], categories: cats }, own).category, 'Transfers');
   assert.notEqual(mapBankTransaction('acc', raw, { rules: [], categories: cats }).category, 'Transfers');
@@ -295,7 +295,7 @@ test('recategorize respects manual choices and own-account transfers', () => {
   const s = {
     rules: [{ pattern: 'carrefour', category: 'Eating out' }],
     categories: cats,
-    bank: { connections: [{ accounts: [{ iban: 'RO11' }] }] },
+    bank: { connections: [{ accounts: [{ uid: 'acc0', iban: 'RO11' }] }] },
     transactions: [
       { id: 'a', source: 'bank', type: 'expense', category: 'Transport', description: 'CARREFOUR EXPRESS' },
       { id: 'b', source: 'bank', type: 'expense', category: 'Shopping', description: 'CARREFOUR MARKET', manualCategory: true },
@@ -304,4 +304,24 @@ test('recategorize respects manual choices and own-account transfers', () => {
   };
   assert.equal(recategorize(s), 1);
   assert.deepEqual(s.transactions.map((t) => t.category), ['Eating out', 'Shopping', 'Transfers']);
+});
+
+import { ownContext, isOwnTransfer } from '../public/js/shared/own.js';
+
+test('own transfers: card repayment, Revolut to yourself, cash deposit', () => {
+  const state = { bank: { connections: [{ accounts: [
+    { uid: 'cur', iban: 'RO34INGB0000999908415340', name: 'Dan Paul Nastea' },
+    { uid: 'card', iban: 'RO31INGB0000999918061462', name: 'Dan Paul Nastea' },
+  ] }] } };
+  const own = ownContext(state);
+  const tx = (accountId, description, note = '') => ({ accountId, description, note });
+  assert.ok(isOwnTransfer(tx('card', 'Rambursare rata card credit', 'Din contul:RO34INGB0000999908415340'), own));
+  assert.ok(isOwnTransfer(tx('cur', "Transfer Home'Bank", 'Beneficiar:Dan Paul Nastea In contul:RO31INGB0000999918061462'), own));
+  assert.ok(isOwnTransfer(tx('cur', 'Ordering party, Dan Paul Nastea, From account, RO08REVO0000186228939087, Details, Trimis prin Revolut'), own));
+  assert.ok(!isOwnTransfer(tx('cur', 'Ordering party, H Essers SRL, From account, RO66INGB0007008192218926'), own));
+  assert.ok(!isOwnTransfer(tx('cur', 'KAUFLAND', 'RO34INGB0000999908415340'), own), "the account's own IBAN in its own text is not a transfer");
+  const c = (d, type = 'expense') => categorize({ description: d, type }, [], cats);
+  assert.equal(c('Depunere numerar', 'income'), 'Transfers');
+  assert.equal(c('Card number, **** 8391, Transaction at, Revolut**1304* IE Dublin'), 'Transfers');
+  assert.equal(c('Rambursare rata card credit', 'income'), 'Transfers');
 });

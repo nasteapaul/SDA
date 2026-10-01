@@ -4,7 +4,7 @@
 // columns and understands Romanian number and date formats.
 
 import { parseAmount, round2 } from './money.js';
-import { normalize } from './categories.js';
+import { normalize, extractMerchant } from './categories.js';
 
 export function parseCSV(text) {
   const firstLines = text.split(/\r?\n/).slice(0, 30).join('\n');
@@ -90,12 +90,15 @@ export function csvToTransactions(text) {
   const items = [];
   let skipped = 0;
   let lastItem = null;
+  const headerKey = rows[headerIdx].join('|');
   for (const r of rows.slice(headerIdx + 1)) {
     const date = parseDate(r[cols.date] || '');
     if (!date) {
-      // Some banks (e.g. BT) wrap long descriptions onto continuation rows.
-      const extra = r.filter(Boolean).join(' ');
-      if (lastItem && extra && !/sold|total/i.test(extra)) lastItem.description = `${lastItem.description} ${extra}`.slice(0, 140);
+      // Banks such as ING and BT put the details (merchant, IBAN, …) on extra
+      // rows under the transaction. Only the description column belongs to it;
+      // page footers and repeated headers are ignored.
+      const extra = cols.description !== -1 ? (r[cols.description] || '').trim() : '';
+      if (lastItem && extra && r.join('|') !== headerKey && !/^(sold|total)/i.test(extra)) lastItem.raw.push(extra);
       else skipped += 1;
       continue;
     }
@@ -113,9 +116,18 @@ export function csvToTransactions(text) {
       date,
       type: amount > 0 ? 'income' : 'expense',
       amount: round2(Math.abs(amount)),
-      description: description.replace(/\s+/g, ' ').trim().slice(0, 140) || 'Imported',
+      raw: [description.replace(/\s+/g, ' ').trim()],
     };
     items.push(lastItem);
+  }
+  // "Cumparare POS" + "Tranzactie la:KAUFLAND 1270 ORADEA" → description "KAUFLAND 1270 ORADEA",
+  // with the full bank text kept as the note.
+  for (const it of items) {
+    const full = it.raw.filter(Boolean).join(', ').replace(/\s+/g, ' ');
+    const merchant = it.raw.length > 1 ? extractMerchant(it.raw.slice(1).join(', ')) : '';
+    it.description = (merchant && merchant !== it.raw.slice(1).join(', ') ? merchant : it.raw[0] || full).slice(0, 140) || 'Imported';
+    it.note = full !== it.description ? full.slice(0, 280) : '';
+    delete it.raw;
   }
   return { items, skipped, columns: cols };
 }

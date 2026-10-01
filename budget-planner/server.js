@@ -14,6 +14,7 @@ import { Store } from './lib/store.js';
 import { EnableBanking } from './lib/enablebanking.js';
 import { syncBank, accountInfo, recategorize } from './lib/sync.js';
 import { mergeDuplicates } from './public/js/shared/dedupe.js';
+import { ownContext, isOwnTransfer } from './public/js/shared/own.js';
 import { categorize, escapeForRule, merchantKey, extractMerchant, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
 
@@ -48,6 +49,22 @@ if (store.get().rules.some((r) => isUselessKeyword(r.keyword || r.pattern))) {
     }
     const changed = recategorize(s);
     console.log(`  Removed ${before - s.rules.length} rule(s) that matched too much; re-categorised ${changed} transaction(s)`);
+  });
+}
+
+// v3: recognise transfers between your own accounts (card repayments, Revolut,
+// cash deposits) and use the cleaner merchant names. Runs once.
+if (!store.get().settings?.ownTransfersFixed) {
+  await store.mutate((s) => {
+    for (const t of s.transactions) {
+      if (t.source === 'bank' && /^ordering party|^beneficiary/i.test(t.description)) {
+        if (!t.note) t.note = t.description;
+        t.description = extractMerchant(t.description) || t.description;
+      }
+    }
+    const changed = recategorize(s);
+    s.settings = { ...s.settings, ownTransfersFixed: true };
+    if (changed) console.log(`  Re-categorised ${changed} transaction(s) (transfers between your own accounts are no longer income/spending)`);
   });
 }
 
@@ -276,14 +293,19 @@ async function api(req, res, url) {
       const { items = [] } = await readBody(req);
       const result = await store.mutate((s) => {
         const seen = new Set(s.transactions.map((t) => t.importHash).filter(Boolean));
+        const own = ownContext(s);
         let added = 0;
         for (const raw of items.slice(0, 5000)) {
           let t;
           try { t = cleanTransaction(raw); } catch { continue; }
-          t.importHash = `${t.date}|${t.type}|${t.amount}|${(raw.description || '').toLowerCase()}`;
+          // The note holds the bank's details (authorisation no., reference), so two genuine
+          // identical-looking payments on the same day keep different fingerprints.
+          t.importHash = `${t.date}|${t.type}|${t.amount}|${(raw.description || '').toLowerCase()}|${(raw.note || '').toLowerCase()}`;
           if (seen.has(t.importHash)) continue;
           seen.add(t.importHash);
-          if (!raw.category) t.category = categorize({ description: t.description, type: t.type }, s.rules, s.categories);
+          if (!raw.category) {
+            t.category = isOwnTransfer(t, own) ? 'Transfers' : categorize({ description: `${t.description} ${t.note || ''}`, type: t.type }, s.rules, s.categories);
+          }
           const now = new Date().toISOString();
           s.transactions.push({ ...t, id: uid(), source: 'import', createdAt: now, updatedAt: now });
           added += 1;

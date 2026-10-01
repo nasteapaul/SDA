@@ -36,15 +36,15 @@ export const SAVINGS_CATEGORY = 'Savings';
 // (lowercase, no diacritics) description + counterparty name.
 export const DEFAULT_RULES = [
   // Transfers between own accounts / to savings deposits
-  { pattern: 'transfer intre conturi proprii|transfer propriu|own account|depozit|economisire|round up|roundup|rambursare card|card de credit|plata card credit|credit card (re)?payment', category: 'Transfers' },
+  { pattern: 'transfer intre conturi proprii|transfer propriu|own account|depozit|economisire|round up|roundup|rambursare (rata )?card|card de credit|plata card credit|credit card (re)?payment|depunere numerar|cash deposit|transfer fonduri|revolut\\*|trimis prin revolut|top.?up', category: 'Transfers' },
   // Income
-  { pattern: 'salariu|salary|payroll|drepturi salariale|avans salariu', category: 'Salary', kind: 'income' },
+  { pattern: 'salariu|salary|payroll|drepturi salariale|avans salariu|lichidare|chenzina', category: 'Salary', kind: 'income' },
   { pattern: 'refund|rambursare|retur|storno|cashback', category: 'Refunds', kind: 'income' },
   { pattern: 'dividend|dobanda|interest|bonus|\\bprima\\b|factura emisa', category: 'Extra income', kind: 'income' },
   // Groceries
   { pattern: 'kaufland|lidl|mega image|carrefour|\\bprofi\\b|auchan|\\bpenny\\b|\\bcora\\b|selgros|\\bmetro\\b|la doi pasi|annabella|freshful|sezamo|bringo', category: 'Groceries' },
   // Eating out & delivery
-  { pattern: 'glovo|tazz|bolt food|foodpanda|mcdonald|kfc|burger king|starbucks|5 to go|tucano|restaurant|pizza|bistro|cafenea|coffee|cafe|shaorma|salad box|spartan', category: 'Eating out' },
+  { pattern: 'glovo|tazz|bolt food|foodpanda|mcdonald|kfc|burger king|starbucks|5 to go|tucano|restaurant|pizza|bistro|cafenea|coffee|cafe|shaorma|salad box|spartan|gelat|cofetari|patiser|food|sandwich|kebab|burger', category: 'Eating out' },
   // Transport
   { pattern: '\\bomv\\b|petrom|rompetrol|\\bmol\\b|lukoil|socar|gazprom|benzinarie|\\buber\\b|\\bbolt\\b|\\bstb\\b|metrorex|ratb|\\bctp\\b|\\bcfr\\b|parcare|parking|rovinieta|vigneta|\\bitp\\b|service auto|autonet|tpark', category: 'Transport' },
   // Utilities & telecom
@@ -119,6 +119,7 @@ const NOISE = new Set(`
 export function extractMerchant(text) {
   const s = String(text ?? '');
   const m = s.match(/transaction at,?\s*([^,;]+)/i)
+    || s.match(/(?:ordering party|beneficiary|ordonator|beneficiar)\s*[:,]\s*([^,;]+)/i)
     || s.match(/tranzac[tț]i[ea] la:?\s*([^,;]+)/i)
     || s.match(/comerciant:?\s*([^,;]+)/i)
     || s.match(/(?:plata|cumparare) (?:la )?pos\s+([^,;]+)/i);

@@ -7,6 +7,7 @@ import { SAVINGS_CATEGORY, merchantKey, escapeForRule, isUselessKeyword, ruleMat
 import { analyzeHistory, buildPlan, goalSaved, INTENSITY } from './shared/planner.js';
 import { csvToTransactions } from './shared/csv.js';
 import { ACCOUNT_KINDS, accountView, bankTotals, balanceMeaning } from './shared/accounts.js';
+import { ownContext, isOwnTransfer } from './shared/own.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -530,6 +531,7 @@ function openTxModal(tx) {
       <label class="field" id="goal-field" ${cat(t.category).role === 'savings' ? '' : 'hidden'}>Goal<select name="goalId"><option value="">—</option>${S().goals.map((g) => `<option value="${esc(g.id)}" ${g.id === t.goalId ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
     </div>
     <label class="field">Note<input name="note" maxlength="280" value="${esc(t.note || '')}" placeholder="Optional"></label>
+    ${!isNew && t.category !== 'Transfers' && isOwnTransfer(t, ownContext(S())) ? `<div class="banner"><span class="banner-ico" aria-hidden="true">🔁</span><div class="small"><b>This looks like money moving between your own accounts.</b> As “${esc(t.category)}” it is counted as ${t.type === 'income' ? 'income' : 'spending'} — and again on the other account. Choose <b>Transfers</b> so it isn’t counted twice.</div></div>` : ''}
     ${fromBank ? `<div id="learn-row" class="stack" style="gap:8px" hidden>
       <label class="checkbox"><input type="checkbox" name="learn"> Also use this category for other transactions containing:</label>
       <input name="keyword" maxlength="60" value="${esc(merchantKey(`${t.description} ${t.note || ''}`))}" placeholder="shop name, e.g. carrefour" aria-label="Keyword">
