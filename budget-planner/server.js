@@ -12,9 +12,9 @@ import os from 'node:os';
 
 import { Store } from './lib/store.js';
 import { EnableBanking } from './lib/enablebanking.js';
-import { syncBank, accountInfo } from './lib/sync.js';
+import { syncBank, accountInfo, recategorize } from './lib/sync.js';
 import { mergeDuplicates } from './public/js/shared/dedupe.js';
-import { categorize, escapeForRule, merchantKey } from './public/js/shared/categories.js';
+import { categorize, escapeForRule, merchantKey, extractMerchant, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +33,24 @@ const PUBLIC_URL = (env.PUBLIC_URL || `${TLS ? 'https' : 'http'}://localhost:${P
 const REDIRECT_URL = env.EB_REDIRECT_URL || `${PUBLIC_URL}/bank/callback`;
 
 const store = await new Store(path.join(DATA_DIR, 'budget.json')).load();
+// Earlier versions could learn rules from bank boilerplate (e.g. "number transaction"),
+// which matched almost every card payment. Drop them and redo the categories.
+if (store.get().rules.some((r) => isUselessKeyword(r.keyword || r.pattern))) {
+  await store.mutate((s) => {
+    const before = s.rules.length;
+    s.rules = s.rules.filter((r) => !isUselessKeyword(r.keyword || r.pattern));
+    // Cleaner descriptions for card payments: "CARREFOUR EXPRESS" instead of "Card number, **** …".
+    for (const t of s.transactions) {
+      if (t.source === 'bank' && /^(card number|cumparare pos)/i.test(t.description)) {
+        if (!t.note) t.note = t.description;
+        t.description = extractMerchant(t.description) || t.description;
+      }
+    }
+    const changed = recategorize(s);
+    console.log(`  Removed ${before - s.rules.length} rule(s) that matched too much; re-categorised ${changed} transaction(s)`);
+  });
+}
+
 // Clean up duplicates left by earlier versions (CSV import + bank sync of the same purchase).
 const existingDuplicates = mergeDuplicates(structuredClone({ transactions: store.get().transactions }));
 if (existingDuplicates) {
@@ -115,6 +133,7 @@ function cleanTransaction(input, existing = {}) {
     if (input[key] !== undefined) t[key] = String(input[key]).slice(0, key === 'note' ? 280 : 140);
   }
   if (input.goalId !== undefined) t.goalId = input.goalId || null;
+  if (input.manualCategory !== undefined) t.manualCategory = Boolean(input.manualCategory);
   if (!t.type || !t.amount || !t.date) throw new HttpError(400, 'type, amount and date are required');
   t.category ||= t.type === 'income' ? 'Other income' : 'Other';
   t.description ||= t.category;
@@ -329,30 +348,34 @@ async function api(req, res, url) {
 
   // Learn a rule from an edit: "always put <merchant> in <category>".
   if (pathname === '/api/rules' && method === 'POST') {
-    const { description, category, apply = true } = await readBody(req);
-    const key = merchantKey(description) || description;
-    if (!key || !category) throw new HttpError(400, 'description and category are required');
-    const pattern = escapeForRule(key);
+    const { keyword: rawKeyword, description, category, apply = true, replace } = await readBody(req);
+    const keyword = String(rawKeyword || merchantKey(description) || '').trim().toLowerCase().slice(0, 60);
+    if (!keyword || !category) throw new HttpError(400, 'keyword and category are required');
+    if (keyword.length < 3 || isUselessKeyword(keyword)) throw new HttpError(400, `“${keyword}” is too generic — use the shop's name, e.g. “carrefour”.`);
+    const pattern = escapeForRule(keyword);
     const result = await store.mutate((s) => {
+      if (replace) s.rules = s.rules.filter((r) => r.pattern !== replace);
       s.rules = s.rules.filter((r) => r.pattern !== pattern);
-      s.rules.unshift({ pattern, category, createdAt: new Date().toISOString() });
-      let updated = 0;
-      if (apply) {
-        const cat = s.categories.find((c) => c.name === category);
-        for (const t of s.transactions) {
-          if (t.goalId || t.category === category) continue;
-          if (cat && cat.kind !== 'both' && cat.kind !== t.type) continue;
-          if (merchantKey(t.description) === key) { t.category = category; t.updatedAt = new Date().toISOString(); updated += 1; }
-        }
-      }
+      const rule = { pattern, keyword, category, createdAt: new Date().toISOString() };
+      s.rules.unshift(rule);
+      // Transactions the old rule had changed get re-evaluated too.
+      let updated = replace ? recategorize(s, (t) => ruleMatches({ pattern: replace }, t)) : 0;
+      if (apply) updated += recategorize(s, (t) => ruleMatches(rule, t));
       return { pattern, updated };
     });
     return send(res, 200, result);
   }
   if (parts[0] === 'rules' && parts[1] && method === 'DELETE') {
     const pattern = decodeURIComponent(parts[1]);
-    await store.mutate((s) => { s.rules = s.rules.filter((r) => r.pattern !== pattern); });
-    return send(res, 200, { ok: true });
+    const updated = await store.mutate((s) => {
+      s.rules = s.rules.filter((r) => r.pattern !== pattern);
+      return recategorize(s, (t) => ruleMatches({ pattern }, t)); // undo what the rule did
+    });
+    return send(res, 200, { ok: true, updated });
+  }
+  if (pathname === '/api/recategorize' && method === 'POST') {
+    const updated = await store.mutate((s) => recategorize(s));
+    return send(res, 200, { updated });
   }
 
   if (pathname === '/api/categories' && method === 'PUT') {

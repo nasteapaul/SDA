@@ -3,7 +3,7 @@
 // transactions you deleted.
 
 import { createHash } from 'node:crypto';
-import { categorize } from '../public/js/shared/categories.js';
+import { categorize, extractMerchant, ruleText } from '../public/js/shared/categories.js';
 import { round2, todayISO, uid } from '../public/js/shared/money.js';
 import { pickBalance } from './enablebanking.js';
 import { mergeDuplicates } from '../public/js/shared/dedupe.js';
@@ -17,6 +17,31 @@ export function accountInfo(a = {}) {
     product: a.product,
   };
   return Object.fromEntries(Object.entries(info).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+}
+
+function ownIbanSet(s) {
+  return new Set(s.bank.connections.flatMap((c) => c.accounts).map((a) => (a.iban || '').replace(/\s/g, '').toUpperCase()).filter(Boolean));
+}
+
+/**
+ * Re-run automatic categorisation (your rules first, then the built-in ones)
+ * on imported/bank transactions whose category you did not pick by hand.
+ * `only` optionally limits it to some transactions. Returns how many changed.
+ */
+export function recategorize(s, only = () => true) {
+  const own = ownIbanSet(s);
+  let changed = 0;
+  for (const t of s.transactions) {
+    if (t.manualCategory || t.goalId || t.source === 'manual' || !only(t)) continue;
+    if (t.counterpartyIban && own.has(t.counterpartyIban)) continue; // own-account transfer
+    const category = categorize({ description: ruleText(t), type: t.type }, s.rules, s.categories);
+    if (category !== t.category) {
+      t.category = category;
+      t.updatedAt = new Date().toISOString();
+      changed += 1;
+    }
+  }
+  return changed;
 }
 
 export function bankRef(accountUid, t) {
@@ -43,7 +68,7 @@ export function mapBankTransaction(accountUid, t, { rules, categories }, ownIban
   // card from the current account) is a transfer, not income or spending.
   const counterpartyIban = ((type === 'income' ? t.debtor_account?.iban : t.creditor_account?.iban) || '').replace(/\s/g, '').toUpperCase();
   const own = counterpartyIban && ownIbans.has(counterpartyIban);
-  const description = (counterparty || remittance || t.bank_transaction_code?.description || 'Bank transaction').slice(0, 140);
+  const description = (counterparty || extractMerchant(remittance) || remittance || t.bank_transaction_code?.description || 'Bank transaction').slice(0, 140);
   const now = new Date().toISOString();
   return {
     id: uid(),

@@ -105,15 +105,50 @@ export function categorize({ description = '', counterparty = '', type = 'expens
   return type === 'income' ? FALLBACK_INCOME : FALLBACK_EXPENSE;
 }
 
-// Builds a stable merchant "key" from a description, used to learn rules
-// ("always put KAUFLAND in Groceries") and to detect recurring payments.
+// Bank boilerplate that is never part of a merchant's name.
+const NOISE = new Set(`
+  plata cumparare pos card nr numar tranzactie tranzactia comerciant la in ref referinta ro data finalizarii decontarii
+  autorizare autorizarii suma valoare detalii number transaction transactions at authorization authorisation date
+  payment purchase contactless online terminal id the of to from
+  bucuresti sector cluj napoca iasi timisoara constanta brasov
+`.trim().split(/\s+/));
+
+// Pulls the merchant out of statement text such as
+//   "Card number, **** 7204, Transaction at, CARREFOUR EXPRESS BAILE, Authorization date, ..."
+//   "Cumparare POS ... Tranzactie la:NETFLIX INTERNATIONAL B.V NL Amsterdam"
+export function extractMerchant(text) {
+  const s = String(text ?? '');
+  const m = s.match(/transaction at,?\s*([^,;]+)/i)
+    || s.match(/tranzac[tț]i[ea] la:?\s*([^,;]+)/i)
+    || s.match(/comerciant:?\s*([^,;]+)/i)
+    || s.match(/(?:plata|cumparare) (?:la )?pos\s+([^,;]+)/i);
+  const name = (m ? m[1] : s).replace(/\*+\s*\d+/g, ' ').replace(/\s+/g, ' ').trim();
+  return name.slice(0, 80);
+}
+
+// Short, stable key for a merchant ("carrefour express"), used to suggest
+// rules and to detect recurring payments.
 export function merchantKey(description) {
-  const n = normalize(description)
-    .replace(/\b(plata|cumparare|pos|card|nr|tranzactie|comerciant|la|in|ref|referinta|ro|bucuresti|cluj|iasi|timisoara|constanta|brasov)\b/g, ' ')
-    .replace(/[0-9*#/\\:._-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return n.split(' ').filter((w) => w.length > 2).slice(0, 2).join(' ');
+  const words = normalize(extractMerchant(description))
+    .replace(/[^a-z& ]+/g, ' ')
+    .split(' ')
+    .filter((w) => w.length > 2 && !NOISE.has(w));
+  return words.slice(0, 2).join(' ');
+}
+
+// A keyword that is only bank boilerplate would match almost everything.
+export function isUselessKeyword(keyword) {
+  const words = normalize(keyword).replace(/\\/g, '').split(/[^a-z]+/).filter(Boolean);
+  return !words.length || words.every((w) => NOISE.has(w));
+}
+
+export function ruleText(t) {
+  return normalize(`${t.description || ''} ${t.note || ''}`);
+}
+
+export function ruleMatches(rule, t) {
+  if (!rule?.pattern) return false;
+  return toRegex(rule.pattern).test(ruleText(t));
 }
 
 export function escapeForRule(text) {

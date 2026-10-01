@@ -278,3 +278,30 @@ test('your category edit survives the merge', () => {
   mergeDuplicates(state);
   assert.equal(state.transactions[0].category, 'Entertainment');
 });
+
+import { extractMerchant, isUselessKeyword } from '../public/js/shared/categories.js';
+import { recategorize } from '../lib/sync.js';
+
+test('merchant is extracted from ING card text', () => {
+  const d = 'Card number, **** 7204, Transaction at, CARREFOUR EXPRESS BAILE, Authorization date, 27-09-2026';
+  assert.equal(extractMerchant(d), 'CARREFOUR EXPRESS BAILE');
+  assert.equal(merchantKey(d), 'carrefour express');
+  assert.ok(isUselessKeyword('number transaction'));
+  assert.ok(isUselessKeyword('card number'));
+  assert.ok(!isUselessKeyword('carrefour'));
+});
+
+test('recategorize respects manual choices and own-account transfers', () => {
+  const s = {
+    rules: [{ pattern: 'carrefour', category: 'Eating out' }],
+    categories: cats,
+    bank: { connections: [{ accounts: [{ iban: 'RO11' }] }] },
+    transactions: [
+      { id: 'a', source: 'bank', type: 'expense', category: 'Transport', description: 'CARREFOUR EXPRESS' },
+      { id: 'b', source: 'bank', type: 'expense', category: 'Shopping', description: 'CARREFOUR MARKET', manualCategory: true },
+      { id: 'c', source: 'bank', type: 'expense', category: 'Transfers', description: 'Dan', counterpartyIban: 'RO11' },
+    ],
+  };
+  assert.equal(recategorize(s), 1);
+  assert.deepEqual(s.transactions.map((t) => t.category), ['Eating out', 'Shopping', 'Transfers']);
+});

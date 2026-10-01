@@ -3,7 +3,7 @@ import { esc, categoryBars, trendChart, attachTooltips } from './charts.js';
 import {
   formatRON, parseAmount, round2, todayISO, monthKey, addMonths, monthLabel, daysInMonth, monthsBetween, uid,
 } from './shared/money.js';
-import { SAVINGS_CATEGORY, merchantKey } from './shared/categories.js';
+import { SAVINGS_CATEGORY, merchantKey, escapeForRule, isUselessKeyword, ruleMatches } from './shared/categories.js';
 import { analyzeHistory, buildPlan, goalSaved, INTENSITY } from './shared/planner.js';
 import { csvToTransactions } from './shared/csv.js';
 import { ACCOUNT_KINDS, accountView, bankTotals, balanceMeaning } from './shared/accounts.js';
@@ -416,9 +416,14 @@ const views = {
             </div>`).join('')}
           </div>
           <div class="card">
-            <div class="card-head"><h2>🧠 Learned rules</h2></div>
-            <p class="muted small" style="margin-top:0">When you change the category of a bank transaction you can tell the app to remember it. Those rules apply to future syncs.</p>
-            ${S().rules.length ? S().rules.map((r) => `<div class="setting"><span><code class="inline">${esc(r.pattern)}</code> → ${esc(icon(r.category))} ${esc(r.category)}</span><button class="btn small danger" type="button" data-action="delete-rule" data-pattern="${esc(r.pattern)}">✕</button></div>`).join('') : '<p class="muted small">None yet.</p>'}
+            <div class="card-head"><h2>🧠 Category rules</h2><button class="btn small" type="button" data-action="add-rule">+ Add</button></div>
+            <p class="muted small" style="margin-top:0">“When the bank text contains <i>carrefour</i>, use <i>Groceries</i>.” Your rules win over the built-in ones and apply to every sync. Transactions you categorised by hand are never changed.</p>
+            ${S().rules.length ? S().rules.map((r, i) => {
+              const n = S().transactions.filter((t) => ruleMatches(r, t)).length;
+              return `<div class="setting"><span><code class="inline">${esc(r.keyword || r.pattern)}</code> → ${esc(icon(r.category))} ${esc(r.category)} <span class="muted small">· ${n} match${n === 1 ? '' : 'es'}</span></span>
+                <button class="btn small" type="button" data-action="edit-rule" data-index="${i}">Edit</button></div>`;
+            }).join('') : '<p class="muted small">None yet.</p>'}
+            <div class="setting"><span class="small">Re-run automatic categories on bank transactions<div class="muted small">Useful after changing rules. Your manual choices are kept.</div></span><button class="btn small" type="button" data-action="recategorize">Re-run</button></div>
           </div>
         </div>
       </div>`;
@@ -525,7 +530,11 @@ function openTxModal(tx) {
       <label class="field" id="goal-field" ${cat(t.category).role === 'savings' ? '' : 'hidden'}>Goal<select name="goalId"><option value="">—</option>${S().goals.map((g) => `<option value="${esc(g.id)}" ${g.id === t.goalId ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
     </div>
     <label class="field">Note<input name="note" maxlength="280" value="${esc(t.note || '')}" placeholder="Optional"></label>
-    ${fromBank ? `<label class="checkbox" id="learn-row" hidden><input type="checkbox" name="learn" checked> Always put “${esc(merchantKey(t.description) || t.description)}” in this category</label>` : ''}
+    ${fromBank ? `<div id="learn-row" class="stack" style="gap:8px" hidden>
+      <label class="checkbox"><input type="checkbox" name="learn"> Also use this category for other transactions containing:</label>
+      <input name="keyword" maxlength="60" value="${esc(merchantKey(`${t.description} ${t.note || ''}`))}" placeholder="shop name, e.g. carrefour" aria-label="Keyword">
+      <p class="muted small" id="learn-preview" style="margin:0"></p>
+    </div>` : ''}
     <p class="form-error" role="alert"></p>
     <div class="modal-actions">
       ${isNew ? '' : '<button class="btn danger" type="button" data-modal="delete">Delete</button>'}
@@ -546,11 +555,15 @@ function openTxModal(tx) {
       date: fd.get('date') || todayISO(),
       note: (fd.get('note') || '').trim(),
       goalId: cat(category).role === 'savings' ? (fd.get('goalId') || null) : null,
+      ...(category !== originalCategory ? { manualCategory: true } : {}),
     };
+    const keyword = (fd.get('keyword') || '').trim().toLowerCase();
+    const learn = fromBank && category !== originalCategory && fd.get('learn');
+    if (learn && (keyword.length < 3 || isUselessKeyword(keyword))) throw new Error('That keyword is too generic. Use the shop’s name, e.g. “carrefour”.');
     data.upsertTransaction(next);
-    if (fromBank && category !== originalCategory && fd.get('learn')) {
-      data.addRule(t.description, category);
-      toast(`Learned: “${merchantKey(t.description) || t.description}” → ${category}`);
+    if (learn) {
+      data.addRule(keyword, category);
+      toast(`Rule saved: “${keyword}” → ${category}`);
     } else toast(isNew ? 'Transaction added' : 'Saved');
     return false;
   });
@@ -565,8 +578,53 @@ function openTxModal(tx) {
   form.category.addEventListener('change', () => {
     $('#goal-field', form).hidden = cat(form.category.value).role !== 'savings';
     const learn = $('#learn-row', form);
-    if (learn) learn.hidden = form.category.value === originalCategory;
+    if (learn) { learn.hidden = form.category.value === originalCategory; updateLearnPreview(); }
   });
+  const updateLearnPreview = () => {
+    const out = $('#learn-preview', form);
+    if (!out) return;
+    out.innerHTML = rulePreview(form.keyword.value, t.id);
+  };
+  if (form.keyword) form.keyword.addEventListener('input', updateLearnPreview);
+}
+
+// "Matches 4 other transactions: CARREFOUR EXPRESS, CARREFOUR MARKET, …"
+function rulePreview(keyword, exceptId) {
+  const k = String(keyword || '').trim();
+  if (k.length < 3 || isUselessKeyword(k)) return '⚠️ Too generic. Type the shop’s name, e.g. “carrefour”.';
+  const rule = { pattern: escapeForRule(k) };
+  const hits = S().transactions.filter((x) => x.id !== exceptId && !x.goalId && ruleMatches(rule, x));
+  if (!hits.length) return 'No other transactions match yet; future ones will.';
+  const names = [...new Set(hits.map((x) => x.description))].slice(0, 3).map(esc).join(', ');
+  return `Matches <b>${hits.length}</b> other transaction${hits.length === 1 ? '' : 's'}: ${names}${hits.length > 3 ? '…' : ''}. Ones you categorised by hand stay as they are.`;
+}
+
+function openRuleModal(rule) {
+  const isNew = !rule;
+  const r = rule || { keyword: '', category: 'Groceries' };
+  const kw = r.keyword || r.pattern.replace(/\\(.)/g, '$1');
+  openModal(`
+    <h2 id="modal-title">${isNew ? 'New rule' : 'Edit rule'}</h2>
+    <label class="field">When the bank text contains<input name="keyword" maxlength="60" value="${esc(kw)}" placeholder="e.g. carrefour" autofocus></label>
+    <p class="muted small" id="rule-preview" style="margin:0"></p>
+    <label class="field">put it in<select name="category">${S().categories.filter((c) => !c.role || c.role === 'transfer').map((c) => `<option value="${esc(c.name)}" ${c.name === r.category ? 'selected' : ''}>${esc(c.icon)} ${esc(c.name)}</option>`).join('')}</select></label>
+    <p class="form-error" role="alert"></p>
+    <div class="modal-actions">
+      ${isNew ? '' : '<button class="btn danger" type="button" data-modal="delete">Delete</button>'}
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-modal="cancel">Cancel</button>
+      <button class="btn primary" type="submit">Save</button>
+    </div>`, async (action, fd) => {
+    if (action === 'delete') { data.deleteRule(r.pattern); toast('Rule deleted — its transactions were re-categorised'); return false; }
+    const keyword = (fd.get('keyword') || '').trim().toLowerCase();
+    if (keyword.length < 3 || isUselessKeyword(keyword)) throw new Error('That keyword is too generic. Use the shop’s name, e.g. “carrefour”.');
+    data.addRule(keyword, fd.get('category'), isNew ? undefined : r.pattern);
+    toast('Rule saved');
+    return false;
+  });
+  const update = () => { $('#rule-preview', modalForm).innerHTML = rulePreview(modalForm.keyword.value); };
+  modalForm.keyword.addEventListener('input', update);
+  update();
 }
 
 function deleteTx(id) {
@@ -800,6 +858,9 @@ const actions = {
     data.setCategories(S().categories.filter((_, i) => i !== Number(el.dataset.index)));
   },
   'delete-rule': (el) => data.deleteRule(el.dataset.pattern),
+  'add-rule': () => openRuleModal(),
+  'edit-rule': (el) => openRuleModal(S().rules[Number(el.dataset.index)]),
+  recategorize: () => { data.recategorizeAll(); toast('Categories updated'); },
   'edit-account': (el) => openAccountModal(el.dataset.id),
   'debt-goal': () => {
     const { owed } = bankTotals(S().bank.connections.flatMap((c) => c.accounts));

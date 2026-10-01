@@ -183,8 +183,13 @@ export class Data extends EventTarget {
     return this.mutate({ method: 'PUT', path: '/api/settings', body: settings }, (s) => { s.settings = { ...s.settings, ...settings }; });
   }
 
-  addRule(description, category) {
-    return this.mutate({ method: 'POST', path: '/api/rules', body: { description, category, apply: true } });
+  // replace: pattern of an existing rule this one supersedes (editing a rule).
+  addRule(keyword, category, replace) {
+    return this.mutate({ method: 'POST', path: '/api/rules', body: { keyword, category, apply: true, replace } });
+  }
+
+  recategorizeAll() {
+    return this.mutate({ method: 'POST', path: '/api/recategorize' });
   }
 
   deleteRule(pattern) {
