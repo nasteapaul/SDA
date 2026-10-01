@@ -4,6 +4,7 @@
 // (and the month's "left over") by the same amount.
 
 import { normalize } from './categories.js';
+import { accountKind } from './accounts.js';
 
 const IBAN_RE = /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g;
 
@@ -34,7 +35,32 @@ export function ownContext(state) {
   const names = new Set(accounts.map((a) => a.name).filter(looksLikePersonName).map(nameKey));
   for (const n of state.settings?.ownNames || []) names.add(nameKey(n));
   const ibanOf = new Map(accounts.map((a) => [a.uid, (a.iban || '').replace(/\s/g, '').toUpperCase()]));
-  return { ibans, names, ibanOf };
+  const byIban = new Map(accounts.map((a) => [(a.iban || '').replace(/\s/g, '').toUpperCase(), a]));
+  return { ibans, names, ibanOf, byIban };
+}
+
+// Which of your accounts the money went to / came from (null if not one of the linked ones).
+function otherOwnAccount(t, ctx) {
+  const self = ctx.ibanOf?.get(t.accountId);
+  const candidates = [t.counterpartyIban, ...ibansIn(`${t.description || ''} ${t.note || ''}`)];
+  const iban = candidates.find((i) => i && i !== self && ctx.ibans.has(i));
+  return iban ? ctx.byIban?.get(iban) : null;
+}
+
+/**
+ * Category for money moving between your own accounts, or null if it isn't.
+ *   current → credit card : "Credit card repayment" (spending from the current account)
+ *   current → savings     : "Savings"
+ *   anything else         : "Transfers" (not counted)
+ */
+export function ownTransferCategory(t, ctx) {
+  if (!isOwnTransfer(t, ctx)) return null;
+  if (t.type !== 'expense') return 'Transfers';
+  const to = otherOwnAccount(t, ctx);
+  const kind = to ? accountKind(to) : null;
+  if (kind === 'credit') return 'Credit card repayment';
+  if (kind === 'savings') return 'Savings';
+  return 'Transfers';
 }
 
 export function isOwnTransfer(t, ctx) {

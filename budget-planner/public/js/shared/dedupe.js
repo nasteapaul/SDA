@@ -88,6 +88,7 @@ function mergeIntoBank(state) {
     let best = null;
     for (const y of bank) {
       if (used.has(y.id) || !isSameTransaction(x, y)) continue;
+      if (x.accountId && y.accountId && x.accountId !== y.accountId) continue;
       if (!best || dayDiff(x.date, y.date) < dayDiff(x.date, best.date)) best = y;
     }
     if (!best) continue;

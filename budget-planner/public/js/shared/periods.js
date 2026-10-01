@@ -29,7 +29,7 @@ export function expectedPayday(key, day) {
   return iso(d);
 }
 
-export function makePeriods({ payday = null, transactions = [], salaryCategory = 'Salary' } = {}) {
+export function makePeriods({ payday = null, transactions = [], salaryCategory = 'Salary', overrides = {} } = {}) {
   const day = Number(payday) || 0;
   const salaries = day
     ? transactions.filter((t) => t.type === 'income' && t.category === salaryCategory)
@@ -38,6 +38,7 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
 
   function start(key) {
     if (!day) return `${key}-01`;
+    if (overrides[key]) return overrides[key]; // salary date you set for that month
     if (startCache.has(key)) return startCache.get(key);
     const expected = expectedPayday(key, day);
     const e = parse(expected).getTime();
@@ -54,6 +55,7 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
 
   function keyOf(date) {
     const k = monthKey(date);
+    if (date >= start(addMonths(k, 1))) return addMonths(k, 1); // next salary came early
     return date >= start(k) ? k : addMonths(k, -1);
   }
 

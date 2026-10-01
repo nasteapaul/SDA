@@ -20,6 +20,7 @@ export const DEFAULT_CATEGORIES = [
   { name: 'Gifts', kind: 'expense', icon: '🎁', essential: false },
   { name: 'Cash', kind: 'expense', icon: '💵', essential: false },
   { name: 'Sent to people', kind: 'expense', icon: '👥', essential: false },
+  { name: 'Credit card repayment', kind: 'expense', icon: '💳', essential: true, role: 'repayment' },
   { name: 'Other', kind: 'expense', icon: '📦', essential: false },
   { name: 'Savings', kind: 'both', icon: '🐷', essential: false, role: 'savings' },
   { name: 'Salary', kind: 'income', icon: '💼' },
@@ -36,6 +37,8 @@ export const SAVINGS_CATEGORY = 'Savings';
 // Ordered: first match wins. Patterns are matched against a normalised
 // (lowercase, no diacritics) description + counterparty name.
 export const DEFAULT_RULES = [
+  // Paying off the credit card from the current account (the card side of it is a transfer)
+  { pattern: 'alimentare card( de)? credit|plata card( de)? credit|rambursare (rata )?card|credit card (re)?payment', category: 'Credit card repayment', kind: 'expense' },
   // Transfers between own accounts / to savings deposits
   { pattern: 'transfer intre conturi proprii|transfer propriu|own account|depozit|economisire|round up|roundup|rambursare (rata )?card|card de credit|plata card credit|credit card (re)?payment|depunere numerar|cash deposit|transfer fonduri|revolut\\*|trimis prin revolut|top.?up', category: 'Transfers' },
   // Income

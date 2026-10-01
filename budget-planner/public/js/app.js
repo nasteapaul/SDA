@@ -9,6 +9,7 @@ import { csvToTransactions } from './shared/csv.js';
 import { ACCOUNT_KINDS, accountView, bankTotals, balanceMeaning } from './shared/accounts.js';
 import { ownContext, isOwnTransfer } from './shared/own.js';
 import { makePeriods } from './shared/periods.js';
+import { makeLedger, COUNT_MODES } from './shared/ledger.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -34,36 +35,45 @@ const S = () => data.state;
 let periodsCache = null;
 let periodsKey = '';
 function P() {
-  const k = `${S().updatedAt}|${S().settings?.payday || ''}|${S().transactions.length}`;
+  const k = `${S().updatedAt}|${S().settings?.payday || ''}|${JSON.stringify(S().settings?.paydays || {})}|${S().transactions.length}`;
   if (k !== periodsKey) {
-    periodsCache = makePeriods({ payday: S().settings?.payday, transactions: S().transactions });
+    periodsCache = makePeriods({ payday: S().settings?.payday, transactions: S().transactions, overrides: S().settings?.paydays || {} });
     periodsKey = k;
   }
   return periodsCache;
 }
+
+// How each transaction counts (current-account cash flow by default).
+let ledgerCache = null;
+let ledgerKey = '';
+function L() {
+  const k = `${S().updatedAt}|${S().settings?.countMode || ''}`;
+  if (k !== ledgerKey) { ledgerCache = makeLedger(S()); ledgerKey = k; }
+  return ledgerCache;
+}
+const counts = (t) => L().counts(t);
 const keyOf = (date) => P().keyOf(date);
 const cat = (name) => S().categories.find((c) => c.name === name) || { name, icon: '•', kind: 'expense' };
-const role = (t) => cat(t.category).role;
 const icon = (name) => cat(name).icon || '•';
 
 function summary(key) {
-  let income = 0; let spend = 0; let saved = 0; let count = 0;
+  let income = 0; let spend = 0; let saved = 0; let count = 0; let ownIn = 0;
   for (const t of S().transactions) {
     if (keyOf(t.date) !== key) continue;
-    const r = role(t);
-    if (r === 'transfer') continue;
+    const c = counts(t);
+    if (!c) continue;
     count += 1;
-    if (r === 'savings') saved += t.type === 'expense' ? t.amount : -t.amount;
-    else if (t.type === 'income') income += t.amount;
+    if (c === 'saved') saved += t.type === 'expense' ? t.amount : -t.amount;
+    else if (c === 'income') { income += t.amount; if (cat(t.category).role === 'transfer') ownIn += t.amount; }
     else spend += t.amount;
   }
-  return { income: round2(income), spend: round2(spend), saved: round2(saved), left: round2(income - spend - saved), count };
+  return { income: round2(income), spend: round2(spend), saved: round2(saved), left: round2(income - spend - saved), count, ownIn: round2(ownIn) };
 }
 
 function spendingByCategory(key) {
   const map = new Map();
   for (const t of S().transactions) {
-    if (keyOf(t.date) !== key || t.type !== 'expense' || role(t)) continue;
+    if (keyOf(t.date) !== key || counts(t) !== 'expense') continue;
     const m = map.get(t.category) || { name: t.category, icon: icon(t.category), value: 0, count: 0 };
     m.value += t.amount; m.count += 1;
     map.set(t.category, m);
@@ -86,7 +96,8 @@ function goalsWithProgress() {
 function currentPlan(goalIds = ui.planGoals) {
   // With a payday, habits are measured per pay period instead of per calendar month.
   const p = P();
-  const txs = p.payday ? S().transactions.map((t) => ({ ...t, date: p.pseudoDate(t.date) })) : S().transactions;
+  const counted = S().transactions.filter((t) => counts(t));
+  const txs = p.payday ? counted.map((t) => ({ ...t, date: p.pseudoDate(t.date) })) : counted;
   const analysis = analyzeHistory(txs, S().categories, { today: p.payday ? p.pseudoDate(todayISO()) : todayISO() });
   const goals = goalsWithProgress().filter((g) => !g.done && (!goalIds || goalIds.includes(g.id)));
   return { analysis, plan: buildPlan(analysis, goals, { today: todayISO(), intensity: S().settings?.planIntensity || 'balanced' }) };
@@ -139,7 +150,9 @@ function txIcon(t) {
 }
 
 function txRow(t, { showDelete = true } = {}) {
-  const meta = [t.category, t.source === 'bank' ? 'Bank' : t.source === 'import' ? 'Imported' : null].filter(Boolean).join(' · ');
+  const acc = L().accountOf(t);
+  const accLabel = acc && accountView(acc).kind !== 'current' ? ACCOUNT_KINDS[accountView(acc).kind] : null;
+  const meta = [t.category, accLabel, t.source === 'bank' ? 'Bank' : t.source === 'import' ? 'Imported' : null, counts(t) ? null : 'not counted'].filter(Boolean).join(' · ');
   return `<div class="tx" role="button" tabindex="0" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="tx-ico" aria-hidden="true">${esc(txIcon(t))}</span>
     <span class="tx-main"><span class="tx-desc">${esc(t.description)}</span><span class="tx-meta">${esc(meta)}${t.note ? ` · ${esc(t.note)}` : ''}</span></span>
@@ -175,6 +188,8 @@ const views = {
         <span>${esc(P().label(key))}${P().payday ? `<small class="muted" style="display:block;font-weight:400;font-size:11.5px">${esc(P().rangeLabel(key))}</small>` : ''}</span>
         <button type="button" data-action="month" data-delta="1" aria-label="Next month">›</button>
       </div>
+      ${P().payday ? `<button class="btn small" type="button" data-action="edit-payday" data-key="${esc(key)}" style="margin-left:8px">💼 Salary on ${esc(new Date(P().start(key)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}${S().settings?.paydays?.[key] ? ' (set by you)' : ''} ✎</button>` : ''}
+      ${unassignedBanner()}
       <div class="hero">
         <div class="card balance">
           <span class="stat-label">${isCurrent ? (P().payday ? 'Left to spend until payday' : 'Left to spend this month') : (P().payday ? 'Left over that pay period' : 'Left over that month')}</span>
@@ -182,7 +197,7 @@ const views = {
           <div class="meter" aria-hidden="true"><i style="width:${(used * 100).toFixed(1)}%"></i></div>
           <span class="stat-sub">${s.income ? `${Math.round(used * 100)}% of income used` : 'No income recorded yet'}${perDay ? ` · ≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} days` : ''}${accounts.length ? ` · In the bank: ${formatRON(bank.cash)}` : ''}${bank?.owed ? ` · Card owed: ${formatRON(bank.owed)}` : ''}</span>
         </div>
-        <div class="card"><span class="stat-label">Income</span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${pctChange(s.income, summary(addMonths(key, -1)).income)}</span></div>
+        <div class="card"><span class="stat-label">Income</span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${s.ownIn ? `${formatRON(s.income - s.ownIn, { short: true })} earned + ${formatRON(s.ownIn, { short: true })} from your own accounts / cash` : pctChange(s.income, summary(addMonths(key, -1)).income)}</span></div>
         <div class="card"><span class="stat-label">Spending</span><span class="stat-value num">${formatRON(s.spend)}</span><span class="stat-sub">${budgetTotal ? `Budget ${formatRON(budgetTotal, { short: true })}` : pctChange(s.spend, summary(addMonths(key, -1)).spend)}</span></div>
         <div class="card"><span class="stat-label">Saved to goals</span><span class="stat-value num">${formatRON(s.saved)}</span><span class="stat-sub">${s.income ? `${Math.round((s.saved / s.income) * 100)}% savings rate` : '—'}</span></div>
       </div>
@@ -224,15 +239,15 @@ const views = {
       && (!f.type || t.type === f.type)
       && (!f.category || t.category === f.category)
       && (!q || `${t.description} ${t.note || ''} ${t.category}`.toLowerCase().includes(q))));
-    const income = list.filter((t) => t.type === 'income' && !role(t)).reduce((s, t) => s + t.amount, 0);
-    const spend = list.filter((t) => t.type === 'expense' && !role(t)).reduce((s, t) => s + t.amount, 0);
+    const income = list.filter((t) => counts(t) === 'income').reduce((s, t) => s + t.amount, 0);
+    const spend = list.filter((t) => counts(t) === 'expense').reduce((s, t) => s + t.amount, 0);
     const monthsWithData = [...new Set([P().current(), ...S().transactions.map((t) => keyOf(t.date))])].sort().reverse();
 
     let html = '';
     let lastDay = '';
     for (const t of list.slice(0, f.limit)) {
       if (t.date !== lastDay) {
-        const dayTotal = list.filter((x) => x.date === t.date && x.type === 'expense' && !role(x)).reduce((s, x) => s + x.amount, 0);
+        const dayTotal = list.filter((x) => x.date === t.date && counts(x) === 'expense').reduce((s, x) => s + x.amount, 0);
         html += `<div class="tx-day"><span>${esc(dayHeading(t.date))}</span><span class="num">${dayTotal ? `−${formatRON(dayTotal)}` : ''}</span></div>`;
         lastDay = t.date;
       }
@@ -410,8 +425,19 @@ const views = {
             ${ui.csvPreview ? `<div class="stack" style="gap:8px;margin-top:12px">
               <p style="margin:0"><b>${ui.csvPreview.items.length}</b> transactions found (${ui.csvPreview.items.filter((i) => i.type === 'income').length} income, ${ui.csvPreview.items.filter((i) => i.type === 'expense').length} expenses)${ui.csvPreview.skipped ? `, ${ui.csvPreview.skipped} rows skipped` : ''}.</p>
               <div class="tx-list">${ui.csvPreview.items.slice(0, 4).map((i) => `<div class="setting"><span>${esc(i.date)} · ${esc(i.description)}</span><span class="num ${i.type === 'income' ? 'pos' : ''}">${i.type === 'income' ? '+' : '−'}${formatRON(i.amount)}</span></div>`).join('')}</div>
+              ${b.connections.length ? `<label class="field">Which account is this statement from?
+                <select data-action="csv-account">${b.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === ui.csvAccount ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))} · ${esc(a.nickname || a.name || '')}</option>`).join('')}<option value="" ${!ui.csvAccount ? 'selected' : ''}>Other / not linked</option></select></label>` : ''}
               <button class="btn primary" type="button" data-action="csv-import">Import ${ui.csvPreview.items.length} transactions</button>
             </div>` : ''}
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>🧮 What counts as income and spending</h2></div>
+            <div class="settings-list">
+              ${Object.entries(COUNT_MODES).map(([k, label]) => `<label class="checkbox"><input type="radio" name="count-mode" data-action="count-mode" value="${k}" ${L().mode === k ? 'checked' : ''}> ${esc(label)}</label>`).join('')}
+              <p class="muted small" style="margin:6px 0 0">${L().mode === 'cashflow'
+                ? 'Income is everything coming into your current account; spending is everything leaving it — including paying off the credit card. “Left over” is then exactly how much your current account balance changed. Card and savings-account transactions are listed (marked “not counted”) but not added up, so nothing is counted twice.'
+                : 'Every account is added up: credit-card purchases are spending, and paying off the card is a transfer.'}</p>
+            </div>
           </div>
           <div class="card">
             <div class="card-head"><h2>📅 Budget month</h2></div>
@@ -564,6 +590,7 @@ function openTxModal(tx) {
       <label class="field" id="goal-field" ${cat(t.category).role === 'savings' ? '' : 'hidden'}>Goal<select name="goalId"><option value="">—</option>${S().goals.map((g) => `<option value="${esc(g.id)}" ${g.id === t.goalId ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
     </div>
     <label class="field">Note<input name="note" maxlength="280" value="${esc(t.note || '')}" placeholder="Optional"></label>
+    ${t.source !== 'bank' && S().bank.connections.length ? `<label class="field">Account<select name="accountId">${S().bank.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === t.accountId ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))}</option>`).join('')}<option value="" ${!t.accountId ? 'selected' : ''}>Not linked (cash / other)</option></select></label>` : ''}
     ${!isNew && t.category !== 'Transfers' && isOwnTransfer(t, ownContext(S())) ? `<div class="banner"><span class="banner-ico" aria-hidden="true">🔁</span><div class="small"><b>This looks like money moving between your own accounts.</b> As “${esc(t.category)}” it is counted as ${t.type === 'income' ? 'income' : 'spending'} — and again on the other account. Choose <b>Transfers</b> so it isn’t counted twice.</div></div>` : ''}
     ${fromBank ? `<div id="learn-row" class="stack" style="gap:8px" hidden>
       <label class="checkbox"><input type="checkbox" name="learn"> Also use this category for other transactions containing:</label>
@@ -591,6 +618,7 @@ function openTxModal(tx) {
       note: (fd.get('note') || '').trim(),
       goalId: cat(category).role === 'savings' ? (fd.get('goalId') || null) : null,
       ...(category !== originalCategory ? { manualCategory: true } : {}),
+      ...(fd.has('accountId') ? { accountId: fd.get('accountId') || null } : {}),
     };
     const keyword = (fd.get('keyword') || '').trim().toLowerCase();
     const learn = fromBank && category !== originalCategory && fd.get('learn');
@@ -632,6 +660,35 @@ function rulePreview(keyword, exceptId) {
   if (!hits.length) return 'No other transactions match yet; future ones will.';
   const names = [...new Set(hits.map((x) => x.description))].slice(0, 3).map(esc).join(', ');
   return `Matches <b>${hits.length}</b> other transaction${hits.length === 1 ? '' : 's'}: ${names}${hits.length > 3 ? '…' : ''}. Ones you categorised by hand stay as they are.`;
+}
+
+function openPaydayModal(key) {
+  const current = S().settings?.paydays?.[key];
+  openModal(`
+    <h2 id="modal-title">Salary for ${esc(P().label(key))}</h2>
+    <p class="muted small" style="margin:0">The budget month runs from this date until the day before the next salary. Leave it automatic to use the salary found in your transactions (or day ${esc(String(P().payday))}, moved off weekends).</p>
+    <label class="field">Salary arrived on<input type="date" name="date" value="${esc(current || P().start(key))}" required></label>
+    <p class="form-error" role="alert"></p>
+    <div class="modal-actions">
+      ${current ? '<button class="btn" type="button" data-modal="delete">Back to automatic</button>' : ''}
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-modal="cancel">Cancel</button>
+      <button class="btn primary" type="submit">Save</button>
+    </div>`, async (action, fd) => {
+    const paydays = { ...(S().settings?.paydays || {}) };
+    if (action === 'delete') delete paydays[key];
+    else {
+      const date = fd.get('date');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Pick a date.');
+      const [y, m] = key.split('-').map(Number);
+      const d = new Date(date);
+      const monthsAway = (d.getFullYear() - y) * 12 + d.getMonth() - (m - 1);
+      if (Math.abs(monthsAway) > 1) throw new Error('Pick a date close to that month.');
+      paydays[key] = date;
+    }
+    data.setSettings({ paydays });
+    return false;
+  });
 }
 
 function openRuleModal(rule) {
@@ -730,6 +787,14 @@ function openContributionModal(goal, withdraw = false) {
     toast(withdraw ? 'Withdrawn' : `${formatRON(amount)} added to ${goal.name}`);
     return false;
   });
+}
+
+function unassignedBanner() {
+  const accounts = S().bank.connections.flatMap((c) => c.accounts);
+  if (accounts.length < 2) return '';
+  const n = S().transactions.filter((t) => t.source === 'import' && !t.accountId).length;
+  if (!n) return '';
+  return `<div class="banner" style="margin-top:12px"><span class="banner-ico" aria-hidden="true">⚠️</span><div class="small"><b>${n} imported transactions don't know which account they're from</b>, so card purchases may be counted as current-account spending. For exact totals: Settings → Import → <i>Delete imported</i>, then import each statement again and pick its account.</div></div>`;
 }
 
 function debtBanner() {
@@ -880,7 +945,7 @@ const actions = {
   },
   'csv-import': async () => {
     try {
-      const r = await data.fetch('/api/transactions/import', { method: 'POST', body: { items: ui.csvPreview.items } });
+      const r = await data.fetch('/api/transactions/import', { method: 'POST', body: { items: ui.csvPreview.items, accountId: ui.csvAccount || undefined } });
       ui.csvPreview = null;
       toast(`Imported ${r.added} transactions${r.skipped ? ` (${r.skipped} duplicates skipped)` : ''}`);
       await data.refresh();
@@ -894,6 +959,7 @@ const actions = {
   },
   'delete-rule': (el) => data.deleteRule(el.dataset.pattern),
   'add-rule': () => openRuleModal(),
+  'edit-payday': (el) => openPaydayModal(el.dataset.key),
   'delete-imported': async () => {
     if (!confirm('Delete every transaction that came from a CSV import? Bank-synced and manual ones stay.')) return;
     try {
@@ -963,6 +1029,8 @@ view.addEventListener('change', async (e) => {
       data.setCategories(cats); break;
     }
     case 'theme': applyTheme(el.value); break;
+    case 'csv-account': ui.csvAccount = el.value; break;
+    case 'count-mode': data.setSettings({ countMode: el.value }); toast('Totals updated'); break;
     case 'period-mode':
     case 'payday-day': {
       const mode = view.querySelector('[data-action="period-mode"]:checked')?.value;
@@ -979,6 +1047,10 @@ view.addEventListener('change', async (e) => {
       let text = new TextDecoder('utf-8').decode(buf);
       if (text.includes('�')) text = new TextDecoder('windows-1250').decode(buf); // older Romanian exports
       try { ui.csvPreview = csvToTransactions(text); } catch (err) { ui.csvPreview = null; toast(err.message); }
+      // Guess the account: a credit-card statement mentions card repayments.
+      const accounts = S().bank.connections.flatMap((c) => c.accounts);
+      const isCard = /rambursare rata card|card(ul)? de credit|credit card/i.test(text);
+      ui.csvAccount = (accounts.find((a) => accountView(a).kind === (isCard ? 'credit' : 'current')) || accounts[0])?.uid || '';
       render();
       break;
     }

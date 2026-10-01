@@ -373,3 +373,62 @@ test('the same statement imported twice by different app versions is merged', ()
   assert.equal(mergeDuplicates(state), 2);
   assert.deepEqual(state.transactions.map((t) => t.id).sort(), ['n1', 'n2', 'n3']);
 });
+
+import { makeLedger } from '../public/js/shared/ledger.js';
+import { ownTransferCategory } from '../public/js/shared/own.js';
+import { assignImportAccounts } from '../lib/sync.js';
+
+const twoAccounts = () => ({ bank: { connections: [{ accounts: [
+  { uid: 'cur', iban: 'RO34INGB0000999908415340', name: 'Dan Paul Nastea', kind: 'current' },
+  { uid: 'card', iban: 'RO31INGB0000999918061462', name: 'Dan Paul Nastea', kind: 'credit', creditLimit: 9900 },
+  { uid: 'sav', iban: 'RO37INGB0000999913581021', name: 'Dan Paul Nastea', kind: 'savings' },
+] }] }, categories: cats, settings: {} });
+
+test('current → card is a card repayment (spending); the card side is a transfer', () => {
+  const s = twoAccounts();
+  const own = ownContext(s);
+  assert.equal(ownTransferCategory({ accountId: 'cur', type: 'expense', description: 'Dan Paul Nastea', note: "Transfer Home'Bank In contul:RO31INGB0000999918061462" }, own), 'Credit card repayment');
+  assert.equal(ownTransferCategory({ accountId: 'card', type: 'income', description: 'Rambursare rata card credit', note: 'Din contul:RO34INGB0000999908415340' }, own), 'Transfers');
+  assert.equal(ownTransferCategory({ accountId: 'cur', type: 'expense', description: 'x', note: 'In contul:RO37INGB0000999913581021' }, own), 'Savings');
+  assert.equal(ownTransferCategory({ accountId: 'cur', type: 'income', description: 'Ordering party, Dan Paul Nastea, Trimis prin Revolut' }, own), 'Transfers');
+  assert.equal(ownTransferCategory({ accountId: 'cur', type: 'income', description: 'Ordering party, H Essers SRL' }, own), null);
+});
+
+test('cash-flow ledger: only the current account counts', () => {
+  const s = twoAccounts();
+  const L = makeLedger(s);
+  assert.equal(L.counts({ accountId: 'cur', type: 'income', category: 'Salary' }), 'income');
+  assert.equal(L.counts({ accountId: 'cur', type: 'expense', category: 'Credit card repayment' }), 'expense');
+  assert.equal(L.counts({ accountId: 'card', type: 'expense', category: 'Groceries' }), null, 'card purchase is paid via the repayment');
+  assert.equal(L.counts({ accountId: 'card', type: 'income', category: 'Transfers' }), null);
+  assert.equal(L.counts({ accountId: 'cur', type: 'income', category: 'Transfers' }), 'income', 'money moved into the current account counts');
+  assert.equal(L.counts({ type: 'expense', category: 'Groceries' }), 'expense', 'manual entries count');
+  const all = makeLedger({ ...s, settings: { countMode: 'all' } });
+  assert.equal(all.counts({ accountId: 'card', type: 'expense', category: 'Groceries' }), 'expense');
+  assert.equal(all.counts({ accountId: 'cur', type: 'expense', category: 'Credit card repayment' }), null);
+});
+
+test('older imports are assigned to the right account', () => {
+  const s = twoAccounts();
+  const t = (id, description, type = 'expense', extra = {}) => ({ id, source: 'import', type, amount: 10, date: '2026-09-01', description, note: '', createdAt: '2026-10-01T18:00:00Z', ...extra });
+  s.transactions = [
+    { id: 'b1', source: 'bank', accountId: 'card', type: 'expense', amount: 1, date: '2026-09-01', description: 'X', note: 'Card number, **** 8391, Transaction at, X' },
+    { id: 'b2', source: 'bank', accountId: 'cur', type: 'expense', amount: 1, date: '2026-09-01', description: 'Y', note: 'Card number, **** 7204, Transaction at, Y' },
+    t('i1', 'KAUFLAND', 'expense', { note: 'Numar card:**** 8391' }),
+    t('i2', 'LIDL', 'expense', { note: 'Numar card:**** 7204' }),
+    t('i3', 'Rambursare rata card credit', 'income'),
+    t('i4', 'Ema Purda', 'expense', { createdAt: '2026-10-01T19:00:00Z' }),
+  ];
+  assignImportAccounts(s);
+  const acc = Object.fromEntries(s.transactions.map((x) => [x.id, x.accountId]));
+  assert.deepEqual([acc.i1, acc.i2, acc.i3, acc.i4], ['card', 'cur', 'card', 'cur']);
+});
+
+test('salary date set for one month overrides the automatic one', () => {
+  const p = makePeriods({ payday: 10, overrides: { '2026-09': '2026-09-08', '2026-10': '2026-09-30' } });
+  assert.equal(p.start('2026-09'), '2026-09-08');
+  assert.equal(p.keyOf('2026-09-08'), '2026-09');
+  assert.equal(p.keyOf('2026-09-07'), '2026-08');
+  assert.equal(p.keyOf('2026-09-30'), '2026-10', 'October salary that came on 30 Sep starts October');
+  assert.equal(p.end('2026-09'), '2026-09-29');
+});

@@ -12,9 +12,9 @@ import os from 'node:os';
 
 import { Store } from './lib/store.js';
 import { EnableBanking } from './lib/enablebanking.js';
-import { syncBank, accountInfo, recategorize } from './lib/sync.js';
+import { syncBank, accountInfo, recategorize, assignImportAccounts } from './lib/sync.js';
 import { mergeDuplicates } from './public/js/shared/dedupe.js';
-import { ownContext, isOwnTransfer } from './public/js/shared/own.js';
+import { ownContext, ownTransferCategory } from './public/js/shared/own.js';
 import { categorize, escapeForRule, merchantKey, extractMerchant, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
 
@@ -75,6 +75,17 @@ if (!store.get().settings?.importsDeduped) {
     const changed = recategorize(s);
     s.settings = { ...s.settings, importsDeduped: true };
     if (merged || changed) console.log(`  Removed ${merged} duplicate(s) from repeated imports; re-categorised ${changed} transaction(s)`);
+  });
+}
+
+// v5: imported transactions get the account they belong to (card vs current), then
+// money between own accounts is re-categorised (current → card = card repayment).
+if (!store.get().settings?.importAccountsAssigned) {
+  await store.mutate((s) => {
+    const assigned = assignImportAccounts(s);
+    const changed = recategorize(s);
+    s.settings = { ...s.settings, importAccountsAssigned: true, countMode: s.settings?.countMode || 'cashflow' };
+    if (assigned || changed) console.log(`  Linked ${assigned} imported transaction(s) to their account; re-categorised ${changed}`);
   });
 }
 
@@ -161,6 +172,7 @@ function cleanTransaction(input, existing = {}) {
   }
   if (input.goalId !== undefined) t.goalId = input.goalId || null;
   if (input.manualCategory !== undefined) t.manualCategory = Boolean(input.manualCategory);
+  if (input.accountId !== undefined && existing.source !== 'bank') t.accountId = input.accountId || null;
   if (!t.type || !t.amount || !t.date) throw new HttpError(400, 'type, amount and date are required');
   t.category ||= t.type === 'income' ? 'Other income' : 'Other';
   t.description ||= t.category;
@@ -300,22 +312,31 @@ async function api(req, res, url) {
   if (parts[0] === 'transactions') {
     const id = parts[1];
     if (id === 'import' && method === 'POST') {
-      const { items = [] } = await readBody(req);
+      const { items = [], accountId } = await readBody(req);
       const result = await store.mutate((s) => {
         const seen = new Set(s.transactions.map((t) => t.importHash).filter(Boolean));
         const own = ownContext(s);
         const batchId = uid();
+        const occurrences = new Map();
+        const account = accountId ? s.bank.connections.flatMap((c) => c.accounts).find((a) => a.uid === accountId) : null;
+        if (accountId && !account) throw new HttpError(400, 'Unknown account');
         let added = 0;
         for (const raw of items.slice(0, 5000)) {
           let t;
           try { t = cleanTransaction(raw); } catch { continue; }
+          if (account) t.accountId = account.uid;
           // The note holds the bank's details (authorisation no., reference), so two genuine
           // identical-looking payments on the same day keep different fingerprints.
-          t.importHash = `${t.date}|${t.type}|${t.amount}|${(raw.description || '').toLowerCase()}|${(raw.note || '').toLowerCase()}`;
-          if (seen.has(t.importHash)) continue;
+          const bare = `${t.date}|${t.type}|${t.amount}|${(raw.description || '').toLowerCase()}|${(raw.note || '').toLowerCase()}`;
+          // Identical rows inside one statement are real (two equal transfers on the same day):
+          // number them, so a re-import of the same file still matches row by row.
+          const nth = (occurrences.get(bare) || 0) + 1;
+          occurrences.set(bare, nth);
+          t.importHash = `${t.accountId || ''}|${bare}${nth > 1 ? `#${nth}` : ''}`;
+          if (seen.has(t.importHash) || seen.has(bare)) continue; // `bare`: imported by the previous version
           seen.add(t.importHash);
           if (!raw.category) {
-            t.category = isOwnTransfer(t, own) ? 'Transfers' : categorize({ description: `${t.description} ${t.note || ''}`, type: t.type }, s.rules, s.categories);
+            t.category = ownTransferCategory(t, own) || categorize({ description: `${t.description} ${t.note || ''}`, type: t.type }, s.rules, s.categories);
           }
           const now = new Date().toISOString();
           s.transactions.push({ ...t, id: uid(), source: 'import', batchId, createdAt: now, updatedAt: now });
