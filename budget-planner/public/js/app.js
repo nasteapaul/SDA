@@ -191,7 +191,7 @@ const views = {
       </div>
       ${P().payday ? `<button class="btn small" type="button" data-action="edit-payday" data-key="${esc(key)}" style="margin-left:8px">💼 Salary on ${esc(new Date(P().start(key)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}${S().settings?.paydays?.[key] ? ' (set by you)' : ''} ✎</button>` : ''}
       ${unassignedBanner()}
-      ${s.count ? '' : `<div class="banner" style="margin-top:12px"><span class="banner-ico" aria-hidden="true">📭</span><div class="small"><b>No current-account transactions in this period.</b> The bank connection only goes back about 90 days — for older months import the current account statement (CSV) in Settings and pick the current account. Settings → <i>Data check</i> shows which months are covered.</div></div>`}
+      ${s.count ? '' : `<div class="banner" style="margin-top:12px"><span class="banner-ico" aria-hidden="true">📭</span><div class="small"><b>No current-account transactions in this period.</b> The bank connection only goes back about 90 days — for older months import the current account statement (CSV) in Settings and pick the current account.</div></div>`}
       <div class="hero">
         ${heroCard({ s, key, isCurrent, used, daysLeft, accounts })}
         <div class="card"><span class="stat-label">Income</span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${s.ownIn ? `${formatRON(s.income - s.ownIn, { short: true })} earned + ${formatRON(s.ownIn, { short: true })} from your own accounts / cash` : pctChange(s.income, summary(addMonths(key, -1)).income)}</span></div>
@@ -455,7 +455,6 @@ const views = {
                   ${set ? `<button class="btn small" type="button" data-action="salary-auto" data-key="${k}" title="Back to automatic">↺</button>` : ''}</span></div>`;
               }).join('')}</div>` : ''}
           </div>
-          ${dataCheckCard()}
           <div class="card">
             <div class="card-head"><h2>📱 App</h2></div>
             <div class="settings-list">
@@ -855,37 +854,6 @@ function creditCardPanel(key) {
       <div><span class="stat-label">Paid back this period</span><div class="stat-value num pos">${formatRON(now.repaid)}</div></div>
     </div>
     <p class="small" style="margin:12px 0 0">${pace}${owed ? ` To be debt-free in 12 months: repay about <b>${formatRON(in12, { short: true })}</b> a month and keep card spending around ${formatRON(avgSpent, { short: true })} (or less).` : ''}</p>
-  </div>`;
-}
-
-// Per period: what's in the data, by account and by source — so gaps are visible.
-function dataCheckCard() {
-  if (!S().transactions.length) return '';
-  const keys = Array.from({ length: 13 }, (_, i) => addMonths(P().current(), -i));
-  const rows = keys.map((k) => {
-    const r = { cur: 0, card: 0, other: 0, bank: 0, import: 0, manual: 0, inc: 0, out: 0 };
-    for (const t of S().transactions) {
-      if (keyOf(t.date) !== k) continue;
-      const kind = L().kindOf(t);
-      if (kind === 'current') r.cur += 1; else if (kind === 'credit') r.card += 1; else r.other += 1;
-      r[t.source] = (r[t.source] || 0) + 1;
-      const c = counts(t);
-      if (c === 'income') r.inc += t.amount; else if (c === 'expense') r.out += t.amount;
-    }
-    return { k, ...r };
-  });
-  const gaps = rows.filter((r) => !r.cur).map((r) => P().label(r.k, { month: 'short', year: 'numeric' }));
-  return `<div class="card">
-    <div class="card-head"><h2>🔎 Data check</h2></div>
-    <p class="muted small" style="margin-top:0">What the app has for each ${P().payday ? 'pay period' : 'month'}. “In” and “out” should match your current account statement.</p>
-    ${gaps.length ? `<div class="banner" style="margin-bottom:10px"><span class="banner-ico">📭</span><div class="small"><b>No current-account transactions for: ${esc(gaps.join(', '))}.</b> Import the current account statement for those months (and pick the current account).</div></div>` : ''}
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Period</th><th class="r">Current acc.</th><th class="r">Card</th><th class="r hide-sm">From bank / CSV / manual</th><th class="r">In</th><th class="r">Out</th></tr></thead>
-      <tbody>${rows.map((r) => `<tr><td>${esc(P().label(r.k, { month: 'short', year: 'numeric' }))}</td>
-        <td class="r ${r.cur ? '' : 'neg'}">${r.cur || '0 ⚠️'}</td><td class="r">${r.card}</td>
-        <td class="r hide-sm muted">${r.bank} / ${r.import} / ${r.manual}</td>
-        <td class="r">${formatRON(r.inc, { short: true })}</td><td class="r">${formatRON(r.out, { short: true })}</td></tr>`).join('')}</tbody>
-    </table></div>
   </div>`;
 }
 
