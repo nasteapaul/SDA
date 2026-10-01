@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Budget Planner</title>
+  <meta name="description" content="Track income and spending in RON, sync your bank, and plan your savings goals.">
+  <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111110" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Budget">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <form class="login-card" id="login-form">
+      <img src="/icons/icon.svg" alt="" width="56" height="56">
+      <h1>Budget Planner</h1>
+      <p class="muted">Enter the password set on your home server.</p>
+      <input type="password" name="password" autocomplete="current-password" placeholder="Password" required>
+      <button class="btn primary" type="submit">Unlock</button>
+      <p class="form-error" id="login-error" role="alert"></p>
+    </form>
+  </div>
+
+  <div class="shell" id="app" hidden>
+    <nav class="sidebar" aria-label="Main">
+      <div class="brand"><img src="/icons/icon.svg" alt="" width="28" height="28"><span>Budget</span></div>
+      <a href="#overview" data-nav="overview"><span class="nav-ico" aria-hidden="true">◧</span><span>Overview</span></a>
+      <a href="#transactions" data-nav="transactions"><span class="nav-ico" aria-hidden="true">≡</span><span>Transactions</span></a>
+      <a href="#goals" data-nav="goals"><span class="nav-ico" aria-hidden="true">◎</span><span>Goals</span></a>
+      <a href="#plan" data-nav="plan"><span class="nav-ico" aria-hidden="true">↗</span><span>Plan</span></a>
+      <a href="#settings" data-nav="settings"><span class="nav-ico" aria-hidden="true">⚙</span><span>Settings</span></a>
+      <div class="sync-pill" id="sync-pill" role="status" aria-live="polite"></div>
+    </nav>
+
+    <main class="content">
+      <header class="topbar">
+        <h1 id="view-title">Overview</h1>
+        <div class="topbar-actions">
+          <span class="sync-pill compact" id="sync-pill-mobile" role="status"></span>
+          <button class="btn primary add-btn" data-action="add-tx" type="button">+ Add</button>
+        </div>
+      </header>
+      <section id="view" class="view" tabindex="-1"></section>
+    </main>
+
+    <button class="fab" data-action="add-tx" type="button" aria-label="Add transaction">+</button>
+  </div>
+
+  <dialog id="modal" class="modal" aria-labelledby="modal-title">
+    <form method="dialog" id="modal-form" novalidate></form>
+  </dialog>
+
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# systemd unit — keeps the budget server running on a Raspberry Pi / home PC.
+#   sudo cp budget-planner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now budget-planner
+#   journalctl -u budget-planner -f      # logs
+[Unit]
+Description=Budget Planner (RON) with bank sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/budget-planner
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/pi/budget-planner/data
+
+[Install]
+WantedBy=multi-user.target
