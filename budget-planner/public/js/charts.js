@@ -57,6 +57,7 @@ export function trendChart(months) {
       if (h > 0) svg += `<path d="${roundedTop(x, y(v), barW, h, Math.min(4, h))}" fill="${color}"/>`;
     }
     svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${esc(monthLabel(m.key, { month: 'short' }))}</text>`;
+    if (m.noData) svg += `<text x="${cx}" y="${y(0) - 8}" text-anchor="middle">no data</text>`;
     const net = m.income - m.spend;
     const tip = `<b>${esc(monthLabel(m.key, { month: 'long', year: 'numeric' }))}</b><br>Income ${formatRON(m.income)}<br>Spending ${formatRON(m.spend)}<br>Net ${formatRON(net, { sign: true })}`;
     svg += `<rect class="hit" x="${padL + groupW * i}" y="${padT}" width="${groupW}" height="${innerH}" data-tip="${esc(tip)}" tabindex="0" aria-label="${esc(`${monthLabel(m.key, { month: 'long', year: 'numeric' })}: income ${formatRON(m.income)}, spending ${formatRON(m.spend)}`)}"/>`;
