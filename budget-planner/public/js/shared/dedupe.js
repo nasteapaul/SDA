@@ -37,6 +37,48 @@ export function isSameTransaction(a, b) {
  * Returns the number of duplicates removed.
  */
 export function mergeDuplicates(state) {
+  return mergeRepeatedImports(state) + mergeIntoBank(state);
+}
+
+// The same CSV statement imported twice — e.g. before and after an update that
+// changed how descriptions are read — must not double everything. Entries from
+// different import batches with the same date, direction, amount and a shared
+// merchant word are one transaction; the newest import (best description) wins.
+// Within one batch identical rows are genuine (two 5 RON parking tickets).
+function mergeRepeatedImports(state) {
+  const imports = state.transactions.filter((t) => t.source === 'import');
+  if (imports.length < 2) return 0;
+  // Imports made before batch ids existed: one import call = one minute.
+  const batchOf = (t) => t.batchId || `legacy:${(t.createdAt || '').slice(0, 16)}`;
+  const newestFirst = [...imports].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const byKey = new Map();
+  for (const t of newestFirst) {
+    const k = `${t.date}|${t.type}|${t.amount.toFixed(2)}`;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(t);
+  }
+  const remove = new Set();
+  for (const group of byKey.values()) {
+    if (group.length < 2) continue;
+    const kept = [];
+    for (const t of group) {
+      // Only entries from older app versions (no batch id) are cleaned up this way;
+      // newer imports are protected by their fingerprint, and two different
+      // statements (current account vs card) must never be merged.
+      const twin = !t.batchId && kept.find((k) => !k.claimed?.has(batchOf(t)) && batchOf(k) !== batchOf(t));
+      if (!twin) { kept.push(t); continue; }
+      (twin.claimed ||= new Set()).add(batchOf(t));
+      if (t.manualCategory && !twin.manualCategory) { twin.category = t.category; twin.manualCategory = true; }
+      if (t.goalId && !twin.goalId) twin.goalId = t.goalId;
+      remove.add(t.id);
+    }
+    for (const k of kept) delete k.claimed;
+  }
+  if (remove.size) state.transactions = state.transactions.filter((t) => !remove.has(t.id));
+  return remove.size;
+}
+
+function mergeIntoBank(state) {
   const bank = state.transactions.filter((t) => t.source === 'bank');
   if (!bank.length) return 0;
   const used = new Set();

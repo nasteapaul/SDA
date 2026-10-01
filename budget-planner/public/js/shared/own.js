@@ -14,7 +14,12 @@ export function ibansIn(text) {
 // Counterparty name in bank text: "Ordering party, NAME, …", "Ordonator:NAME", "Beneficiar:NAME".
 export function partyName(text) {
   const m = String(text || '').match(/(?:ordering party|beneficiary|ordonator|beneficiar|platitor|payer|payee)\s*[:,]\s*([^,;\n]+)/i);
-  return m ? normalize(m[1]) : '';
+  return m ? nameKey(m[1]) : '';
+}
+
+// Word order doesn't matter: "Nastea Dan Paul" is "Dan Paul Nastea".
+function nameKey(name) {
+  return normalize(name).replace(/\b(dl|dna|d-l|d-na|mr|mrs)\b\.?/g, ' ').split(/[^a-z]+/).filter(Boolean).sort().join(' ');
 }
 
 function looksLikePersonName(name) {
@@ -26,8 +31,8 @@ function looksLikePersonName(name) {
 export function ownContext(state) {
   const accounts = (state.bank?.connections || []).flatMap((c) => c.accounts);
   const ibans = new Set(accounts.map((a) => (a.iban || '').replace(/\s/g, '').toUpperCase()).filter(Boolean));
-  const names = new Set(accounts.map((a) => a.name).filter(looksLikePersonName).map(normalize));
-  for (const n of state.settings?.ownNames || []) names.add(normalize(n));
+  const names = new Set(accounts.map((a) => a.name).filter(looksLikePersonName).map(nameKey));
+  for (const n of state.settings?.ownNames || []) names.add(nameKey(n));
   const ibanOf = new Map(accounts.map((a) => [a.uid, (a.iban || '').replace(/\s/g, '').toUpperCase()]));
   return { ibans, names, ibanOf };
 }
@@ -38,6 +43,6 @@ export function isOwnTransfer(t, ctx) {
   if (t.counterpartyIban && t.counterpartyIban !== self && ctx.ibans.has(t.counterpartyIban)) return true;
   const text = `${t.description || ''} ${t.note || ''}`;
   if (ibansIn(text.replace(/\s/g, ' ')).some((iban) => iban !== self && ctx.ibans.has(iban))) return true;
-  const who = partyName(text) || normalize(t.counterparty || '');
+  const who = partyName(text) || (t.counterparty ? nameKey(t.counterparty) : '');
   return Boolean(who) && ctx.names.has(who);
 }

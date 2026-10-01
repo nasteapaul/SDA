@@ -325,3 +325,51 @@ test('own transfers: card repayment, Revolut to yourself, cash deposit', () => {
   assert.equal(c('Card number, **** 8391, Transaction at, Revolut**1304* IE Dublin'), 'Transfers');
   assert.equal(c('Rambursare rata card credit', 'income'), 'Transfers');
 });
+
+import { makePeriods, expectedPayday } from '../public/js/shared/periods.js';
+
+test('payday moves off weekends: Sat → Fri, Sun → Mon', () => {
+  assert.equal(expectedPayday('2026-10', 10), '2026-10-09'); // 10 Oct 2026 is a Saturday
+  assert.equal(expectedPayday('2027-01', 10), '2027-01-11'); // 10 Jan 2027 is a Sunday
+  assert.equal(expectedPayday('2026-09', 10), '2026-09-10'); // Thursday
+});
+
+test('pay periods run from salary to salary, using the real salary date', () => {
+  const tx = [
+    { type: 'income', category: 'Salary', amount: 7334, date: '2026-09-10' },
+    { type: 'income', category: 'Salary', amount: 7364, date: '2026-05-11' }, // paid a day late
+    { type: 'income', category: 'Other income', amount: 194, date: '2026-09-18' },
+  ];
+  const p = makePeriods({ payday: 10, transactions: tx });
+  assert.equal(p.start('2026-09'), '2026-09-10');
+  assert.equal(p.end('2026-09'), '2026-10-08'); // next payday is Fri 9 Oct
+  assert.equal(p.keyOf('2026-09-09'), '2026-08');
+  assert.equal(p.keyOf('2026-09-10'), '2026-09');
+  assert.equal(p.keyOf('2026-10-08'), '2026-09');
+  assert.equal(p.keyOf('2026-10-09'), '2026-10');
+  assert.equal(p.start('2026-05'), '2026-05-11');
+  assert.equal(p.keyOf('2026-05-10'), '2026-04');
+  assert.equal(p.daysLeft('2026-09', '2026-10-01'), 8);
+  assert.equal(p.pseudoDate('2026-09-10'), '2026-09-01');
+});
+
+test('without a payday, periods are calendar months', () => {
+  const p = makePeriods({});
+  assert.equal(p.keyOf('2026-09-30'), '2026-09');
+  assert.equal(p.start('2026-09'), '2026-09-01');
+  assert.equal(p.end('2026-09'), '2026-09-30');
+});
+
+test('the same statement imported twice by different app versions is merged', () => {
+  const old = (id, description, amount, type = 'expense') => ({ id, source: 'import', type, amount, date: '2026-09-12', description, category: 'Other', createdAt: '2026-10-01T18:00:00.000Z', updatedAt: '2026-10-01T18:00:00.000Z' });
+  const neu = (id, description, amount, type = 'expense') => ({ ...old(id, description, amount, type), createdAt: '2026-10-01T20:00:00.000Z', updatedAt: '2026-10-01T20:00:00.000Z' });
+  const state = { transactions: [
+    old('o1', 'Cumparare POS Data finalizarii (decontarii): 12-09-2026 Numar card:**** 8391 Tranzactie la:Pago*Hidroelectrica RO VOLUNTARI', 479.02),
+    old('o2', 'Cumparare POS Data finalizarii: 12-09-2026 Tranzactie la:PayU*portal.tpark.ro', 5),
+    neu('n1', 'Pago*Hidroelectrica RO VOLUNTARI', 479.02),
+    neu('n2', 'PayU*portal.tpark.ro RO ROMANIA', 5),
+    neu('n3', 'PayU*portal.tpark.ro RO ROMANIA', 5), // genuine second parking ticket
+  ] };
+  assert.equal(mergeDuplicates(state), 2);
+  assert.deepEqual(state.transactions.map((t) => t.id).sort(), ['n1', 'n2', 'n3']);
+});

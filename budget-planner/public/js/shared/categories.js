@@ -19,6 +19,7 @@ export const DEFAULT_CATEGORIES = [
   { name: 'Personal care', kind: 'expense', icon: '💇', essential: false },
   { name: 'Gifts', kind: 'expense', icon: '🎁', essential: false },
   { name: 'Cash', kind: 'expense', icon: '💵', essential: false },
+  { name: 'Sent to people', kind: 'expense', icon: '👥', essential: false },
   { name: 'Other', kind: 'expense', icon: '📦', essential: false },
   { name: 'Savings', kind: 'both', icon: '🐷', essential: false, role: 'savings' },
   { name: 'Salary', kind: 'income', icon: '💼' },
@@ -65,6 +66,8 @@ export const DEFAULT_RULES = [
   { pattern: 'frizerie|coafor|salon|barber|cosmetic|manichiura|world class|7card|gym|fitness|stay fit', category: 'Personal care' },
   // Education
   { pattern: 'udemy|coursera|scoala|gradinita|universitate|taxa scolar|meditatii|curs ', category: 'Education' },
+  // Money sent to other people (own accounts are caught earlier as Transfers)
+  { pattern: "transfer home.?bank|plata instant|instant payment|transfer catre|sent to", category: 'Sent to people', kind: 'expense' },
   // Cash
   { pattern: 'retragere numerar|cash withdrawal|\\batm\\b|bancomat', category: 'Cash' },
 ];
@@ -110,6 +113,7 @@ const NOISE = new Set(`
   plata cumparare pos card nr numar tranzactie tranzactia comerciant la in ref referinta ro data finalizarii decontarii
   autorizare autorizarii suma valoare detalii number transaction transactions at authorization authorisation date
   payment purchase contactless online terminal id the of to from
+  incasare home bank homebank titular ordonator beneficiar contul din catre detalii depunere transfer dl dna
   bucuresti sector cluj napoca iasi timisoara constanta brasov
 `.trim().split(/\s+/));
 

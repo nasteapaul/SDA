@@ -68,6 +68,16 @@ if (!store.get().settings?.ownTransfersFixed) {
   });
 }
 
+// v4: after removing statements imported twice, redo automatic categories once.
+if (!store.get().settings?.importsDeduped) {
+  await store.mutate((s) => {
+    const merged = mergeDuplicates(s);
+    const changed = recategorize(s);
+    s.settings = { ...s.settings, importsDeduped: true };
+    if (merged || changed) console.log(`  Removed ${merged} duplicate(s) from repeated imports; re-categorised ${changed} transaction(s)`);
+  });
+}
+
 // Clean up duplicates left by earlier versions (CSV import + bank sync of the same purchase).
 const existingDuplicates = mergeDuplicates(structuredClone({ transactions: store.get().transactions }));
 if (existingDuplicates) {
@@ -294,6 +304,7 @@ async function api(req, res, url) {
       const result = await store.mutate((s) => {
         const seen = new Set(s.transactions.map((t) => t.importHash).filter(Boolean));
         const own = ownContext(s);
+        const batchId = uid();
         let added = 0;
         for (const raw of items.slice(0, 5000)) {
           let t;
@@ -307,13 +318,22 @@ async function api(req, res, url) {
             t.category = isOwnTransfer(t, own) ? 'Transfers' : categorize({ description: `${t.description} ${t.note || ''}`, type: t.type }, s.rules, s.categories);
           }
           const now = new Date().toISOString();
-          s.transactions.push({ ...t, id: uid(), source: 'import', createdAt: now, updatedAt: now });
+          s.transactions.push({ ...t, id: uid(), source: 'import', batchId, createdAt: now, updatedAt: now });
           added += 1;
         }
         const merged = mergeDuplicates(s); // already came in from the bank
         return { added: added - merged, skipped: items.length - added + merged };
       });
       return send(res, 200, result);
+    }
+    // "Start over": remove every transaction that came from a CSV import.
+    if (id === 'imported' && method === 'DELETE') {
+      const removed = await store.mutate((s) => {
+        const before = s.transactions.length;
+        s.transactions = s.transactions.filter((t) => t.source !== 'import');
+        return before - s.transactions.length;
+      });
+      return send(res, 200, { removed });
     }
     if (id && method === 'PUT') {
       const body = await readBody(req);
