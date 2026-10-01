@@ -248,3 +248,33 @@ test('payments between your own accounts become transfers', () => {
   assert.equal(mapBankTransaction('acc', raw, { rules: [], categories: cats }, own).category, 'Transfers');
   assert.notEqual(mapBankTransaction('acc', raw, { rules: [], categories: cats }).category, 'Transfers');
 });
+
+import { isSameTransaction, mergeDuplicates } from '../public/js/shared/dedupe.js';
+
+test('CSV and bank copies of the same purchase are merged', () => {
+  const csv = { id: 'c', source: 'import', type: 'expense', amount: 73.93, date: '2026-09-12', category: 'Subscriptions', importHash: 'h1', createdAt: 'x', updatedAt: 'x',
+    description: 'Cumparare POS Data finalizarii (decontarii): 12-09-2026 Numar card:**** 8391 Tranzactie la:NETFLIX INTERNATIONAL B.V NL Amsterdam' };
+  const bank = { id: 'b', source: 'bank', type: 'expense', amount: 73.93, date: '2026-09-12', category: 'Subscriptions', bankRef: 'acc:1', createdAt: 'y', updatedAt: 'y',
+    description: 'Card number, **** 8391, Transaction at, NETFLIX INTERNATIONAL B.V NL Amsterdam, Authorization date, 10-09-2026' };
+  assert.ok(isSameTransaction(csv, bank));
+  const state = { transactions: [csv, bank] };
+  assert.equal(mergeDuplicates(state), 1);
+  assert.deepEqual(state.transactions.map((t) => t.id), ['b']);
+  assert.equal(state.transactions[0].importHash, 'h1');
+});
+
+test('different purchases with the same amount are not merged', () => {
+  const base = { type: 'expense', amount: 73.93, date: '2026-09-12' };
+  assert.ok(!isSameTransaction({ ...base, description: 'NETFLIX' }, { ...base, description: 'SPOTIFY' }));
+  assert.ok(!isSameTransaction({ ...base, description: 'NETFLIX' }, { ...base, date: '2026-10-12', description: 'NETFLIX' }), 'next month is a new charge');
+  assert.ok(!isSameTransaction({ ...base, description: 'NETFLIX' }, { ...base, amount: 74, description: 'NETFLIX' }));
+});
+
+test('your category edit survives the merge', () => {
+  const state = { transactions: [
+    { id: 'c', source: 'import', type: 'expense', amount: 50, date: '2026-09-01', category: 'Entertainment', createdAt: 'a', updatedAt: 'b', description: 'POS KAUFLAND' },
+    { id: 'b', source: 'bank', type: 'expense', amount: 50, date: '2026-09-02', category: 'Groceries', createdAt: 'c', updatedAt: 'c', description: 'Kaufland 1234' },
+  ] };
+  mergeDuplicates(state);
+  assert.equal(state.transactions[0].category, 'Entertainment');
+});

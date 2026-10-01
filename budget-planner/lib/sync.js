@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { categorize } from '../public/js/shared/categories.js';
 import { round2, todayISO, uid } from '../public/js/shared/money.js';
 import { pickBalance } from './enablebanking.js';
+import { mergeDuplicates } from '../public/js/shared/dedupe.js';
 
 // Fields we keep from an Enable Banking account resource. Only defined values,
 // so a sparse /details response never wipes what the session already gave us.
@@ -116,8 +117,9 @@ export async function syncBank(store, client, { lookbackDays = 90 } = {}) {
       const self = ibanOf.get(t.accountId);
       if ([...ownIbans].some((iban) => iban !== self && text.includes(iban))) t.category = 'Transfers';
     }
+    const merged = mergeDuplicates(s); // same purchase already imported from a CSV
     s.bank.lastSync = new Date().toISOString();
     s.bank.lastError = null;
-    return { added, accounts: fetched.length };
+    return { added: added - merged, accounts: fetched.length };
   });
 }

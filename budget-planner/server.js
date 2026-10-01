@@ -13,6 +13,7 @@ import os from 'node:os';
 import { Store } from './lib/store.js';
 import { EnableBanking } from './lib/enablebanking.js';
 import { syncBank, accountInfo } from './lib/sync.js';
+import { mergeDuplicates } from './public/js/shared/dedupe.js';
 import { categorize, escapeForRule, merchantKey } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
 
@@ -32,6 +33,13 @@ const PUBLIC_URL = (env.PUBLIC_URL || `${TLS ? 'https' : 'http'}://localhost:${P
 const REDIRECT_URL = env.EB_REDIRECT_URL || `${PUBLIC_URL}/bank/callback`;
 
 const store = await new Store(path.join(DATA_DIR, 'budget.json')).load();
+// Clean up duplicates left by earlier versions (CSV import + bank sync of the same purchase).
+const existingDuplicates = mergeDuplicates(structuredClone({ transactions: store.get().transactions }));
+if (existingDuplicates) {
+  await store.mutate((s) => mergeDuplicates(s));
+  console.log(`  Merged ${existingDuplicates} duplicate transaction(s)`);
+}
+
 const bank = new EnableBanking({
   appId: env.EB_APP_ID,
   privateKeyPath: env.EB_PRIVATE_KEY_PATH && path.resolve(ROOT, env.EB_PRIVATE_KEY_PATH),
@@ -261,7 +269,8 @@ async function api(req, res, url) {
           s.transactions.push({ ...t, id: uid(), source: 'import', createdAt: now, updatedAt: now });
           added += 1;
         }
-        return { added, skipped: items.length - added };
+        const merged = mergeDuplicates(s); // already came in from the bank
+        return { added: added - merged, skipped: items.length - added + merged };
       });
       return send(res, 200, result);
     }
