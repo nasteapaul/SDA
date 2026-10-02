@@ -846,14 +846,16 @@ function creditCardPanel(key) {
   if (!owed) pace = 'Nothing owed 🎉';
   else if (net > 1 && owed / net <= 120) pace = `At your pace of the last 3 periods (repaid ${formatRON(avgRepaid, { short: true })}, spent ${formatRON(avgSpent, { short: true })} on the card), it's cleared in about <b>${Math.ceil(owed / net)} months</b>.`;
   else pace = `In the last 3 periods you spent ${formatRON(avgSpent, { short: true })} a month on the card and repaid ${formatRON(avgRepaid, { short: true })} — <b>the debt isn't going down</b>.`;
-  return `<div class="card" style="margin:16px 0">
-    <div class="card-head"><h2>💳 Credit card${(() => { const d = [...L().byDigits].filter(([, a]) => cards.some((c) => c.uid === a.uid)).map(([x]) => x); return d.length ? ` · card **** ${esc(d.join(', '))}` : ''; })()}</h2><a class="link" href="#transactions">Card transactions →</a></div>
-    <div class="plan-summary" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-      <div><span class="stat-label">Owed now</span><div class="stat-value num">${formatRON(owed)}</div></div>
-      <div><span class="stat-label">Spent on the card this period</span><div class="stat-value num">${formatRON(now.spent)}</div><div class="stat-sub">${top.map(([c, v]) => `${esc(icon(c))} ${esc(c)} ${formatRON(v, { short: true })}`).join(' · ') || '—'}</div></div>
-      <div><span class="stat-label">Paid back this period</span><div class="stat-value num pos">${formatRON(now.repaid)}</div></div>
+  const digits = [...L().byDigits].filter(([, a]) => cards.some((c) => c.uid === a.uid)).map(([x]) => x);
+  return `<div class="card card-panel">
+    <div class="card-head"><h2>💳 Credit card${digits.length ? ` <span class="muted num" style="font-weight:400">**** ${esc(digits.join(', '))}</span>` : ''}</h2><a class="link" href="#transactions">Card transactions →</a></div>
+    <div class="kpis">
+      <div class="kpi"><span class="stat-label">Owed now</span><span class="kpi-value num">${formatRON(owed)}</span></div>
+      <div class="kpi"><span class="stat-label">Spent on the card</span><span class="kpi-value num">${formatRON(now.spent)}</span><span class="stat-sub">this period</span></div>
+      <div class="kpi"><span class="stat-label">Paid back</span><span class="kpi-value num pos">${formatRON(now.repaid)}</span><span class="stat-sub">this period</span></div>
     </div>
-    <p class="small" style="margin:12px 0 0">${pace}${owed ? ` To be debt-free in 12 months: repay about <b>${formatRON(in12, { short: true })}</b> a month and keep card spending around ${formatRON(avgSpent, { short: true })} (or less).` : ''}</p>
+    ${top.length ? `<div class="chips">${top.map(([c, v]) => `<span class="chip"><span aria-hidden="true">${esc(icon(c))}</span> ${esc(c)} <b class="num">${formatRON(v, { short: true })}</b></span>`).join('')}</div>` : ''}
+    <p class="small muted" style="margin:12px 0 0">${pace}${owed ? ` To be debt-free in 12 months: repay about <b>${formatRON(in12, { short: true })}</b> a month and keep card spending around ${formatRON(avgSpent, { short: true })} (or less).` : ''}</p>
   </div>`;
 }
 
