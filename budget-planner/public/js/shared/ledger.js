@@ -44,13 +44,58 @@ export function makeLedger(state) {
     if (d && !byDigits.has(d) && accounts.has(t.accountId)) byDigits.set(d, accounts.get(t.accountId));
   }
 
+  // A CSV statement belongs to one account. Each import (batch) goes to the
+  // account most of its card numbers point to — whatever was picked in the
+  // import screen (a wrong pick, e.g. the savings account, used to hide a
+  // whole year of current-account transactions).
+  const batchOf = (t) => t.batchId || `legacy:${(t.createdAt || '').slice(0, 16)}`;
+  const isRepaymentIn = (t) => t.type === 'income' && /rambursare (rata )?card/i.test(`${t.description} ${t.note || ''}`);
+  const imports = (state.transactions || []).filter((t) => t.source === 'import');
+  // Card numbers not seen in bank data yet: the statement with card repayments
+  // coming in is the credit card's; the other statement is the current account's.
+  if (card || current) {
+    const digitsByBatch = new Map();
+    for (const t of imports) {
+      const b = batchOf(t);
+      if (!digitsByBatch.has(b)) digitsByBatch.set(b, { digits: new Map(), repayments: 0 });
+      const e = digitsByBatch.get(b);
+      const d = cardDigitsOf(t);
+      if (d) e.digits.set(d, (e.digits.get(d) || 0) + 1);
+      if (isRepaymentIn(t)) e.repayments += 1;
+    }
+    for (const e of digitsByBatch.values()) {
+      const top = [...e.digits.entries()].sort((x, y) => y[1] - x[1])[0];
+      if (!top || byDigits.has(top[0])) continue;
+      const target = e.repayments ? card : current;
+      if (target) byDigits.set(top[0], target);
+    }
+  }
+  const batchAccount = new Map();
+  {
+    const votes = new Map();
+    for (const t of imports) {
+      const d = cardDigitsOf(t);
+      const acc = d && byDigits.get(d);
+      if (!acc) continue;
+      const b = batchOf(t);
+      if (!votes.has(b)) votes.set(b, new Map());
+      votes.get(b).set(acc.uid, (votes.get(b).get(acc.uid) || 0) + 1);
+    }
+    for (const [b, v] of votes) {
+      const sorted = [...v.entries()].sort((x, y) => y[1] - x[1]);
+      const total = sorted.reduce((n, [, c]) => n + c, 0);
+      if (sorted[0][1] >= 3 && sorted[0][1] / total >= 0.8) batchAccount.set(b, accounts.get(sorted[0][0]));
+    }
+  }
+
   function accountOf(t) {
-    // Known for sure: from the bank, picked by you when importing, or set in the edit form.
-    if (t.accountId && (t.source === 'bank' || t.accountManual || t.accountChosen)) return accounts.get(t.accountId) || null;
-    // Otherwise the clues in the statement text beat any earlier guess.
+    // From the bank, or set by you in the edit form: certain.
+    if (t.accountId && (t.source === 'bank' || t.accountManual)) return accounts.get(t.accountId) || null;
+    // Statement text: the card number on the row, then the account of the whole statement.
     const d = cardDigitsOf(t);
-    if (d && byDigits.has(d)) return byDigits.get(d); // the card number is the most reliable clue
-    if (card && t.type === 'income' && /rambursare (rata )?card/i.test(`${t.description} ${t.note || ''}`)) return card;
+    if (d && byDigits.has(d)) return byDigits.get(d);
+    if (card && isRepaymentIn(t)) return card;
+    if (t.source === 'import' && batchAccount.has(batchOf(t))) return batchAccount.get(batchOf(t));
     if (t.accountId && accounts.has(t.accountId)) return accounts.get(t.accountId);
     return current || null; // manual entries and unknown imports: your everyday account
   }

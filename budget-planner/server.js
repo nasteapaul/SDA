@@ -90,7 +90,7 @@ if (!store.get().settings?.importAccountsAssigned) {
 }
 
 // Clean up duplicates left by earlier versions (CSV import + bank sync of the same purchase).
-const existingDuplicates = mergeDuplicates(structuredClone({ transactions: store.get().transactions }));
+const existingDuplicates = mergeDuplicates(structuredClone(store.get()));
 if (existingDuplicates) {
   await store.mutate((s) => mergeDuplicates(s));
   console.log(`  Merged ${existingDuplicates} duplicate transaction(s)`);

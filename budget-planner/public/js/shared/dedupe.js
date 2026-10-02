@@ -5,6 +5,7 @@
 // word (e.g. "NETFLIX").
 
 import { normalize } from './categories.js';
+import { makeLedger } from './ledger.js';
 
 const MAX_DAYS = 3;
 const STOP = new Set(`
@@ -83,12 +84,16 @@ function mergeIntoBank(state) {
   if (!bank.length) return 0;
   const used = new Set();
   const remove = new Set();
+  // The account a row really belongs to (card number etc.), not a wrong pick at import.
+  const L = state.categories && state.bank ? makeLedger(state) : null;
+  const accountOf = (t) => (L ? L.accountOf(t)?.uid : t.accountId);
   for (const x of state.transactions) {
     if (x.source === 'bank' || x.goalId) continue;
+    const xAccount = accountOf(x);
     let best = null;
     for (const y of bank) {
       if (used.has(y.id) || !isSameTransaction(x, y)) continue;
-      if (x.accountId && y.accountId && x.accountId !== y.accountId) continue;
+      if (xAccount && y.accountId && xAccount !== y.accountId) continue;
       if (!best || dayDiff(x.date, y.date) < dayDiff(x.date, best.date)) best = y;
     }
     if (!best) continue;

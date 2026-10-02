@@ -1,6 +1,6 @@
 {
   "name": "budget-planner",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Self-hosted budget planner (RON) with bank sync, goals and a savings planner. Installable as a phone app (PWA).",
   "type": "module",
   "private": true,

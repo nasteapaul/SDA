@@ -454,3 +454,22 @@ test('card numbers decide the account of imported rows', () => {
   const s2 = twoAccounts(); s2.bank.connections[0].accounts[1].cardDigits = ['8391'];
   assert.equal(makeLedger({ ...s2, transactions: [] }).kindOf(imp('Numar card:**** 8391')), 'credit', 'digits set on the account');
 });
+
+test('a statement imported into the wrong account is still counted on the right one', () => {
+  const s = twoAccounts();
+  const row = (id, note, extra = {}) => ({ id, source: 'import', batchId: extra.batch, type: 'expense', amount: 10, date: '2026-04-01', description: 'X', note, accountId: 'sav', accountChosen: true, ...extra });
+  s.transactions = [
+    // current-account statement, imported into "Savings" by mistake
+    ...[1, 2, 3, 4].map((i) => row(`c${i}`, 'Numar card:**** 7204', { batch: 'A' })),
+    row('c5', "Transfer Home'Bank Beneficiar:Ema", { batch: 'A' }),
+    { ...row('c6', 'Ordonator:H Essers SRL', { batch: 'A' }), type: 'income', category: 'Salary' },
+    // credit-card statement, also imported into "Savings"
+    ...[1, 2, 3].map((i) => row(`k${i}`, 'Numar card:**** 8391', { batch: 'B' })),
+    { ...row('k4', 'Rambursare rata card credit', { batch: 'B' }), type: 'income' },
+  ];
+  const L = makeLedger(s);
+  assert.equal(L.kindOf(s.transactions.find((t) => t.id === 'c5')), 'current');
+  assert.equal(L.counts(s.transactions.find((t) => t.id === 'c6')), 'income');
+  assert.equal(L.kindOf(s.transactions.find((t) => t.id === 'k1')), 'credit');
+  assert.equal(L.counts(s.transactions.find((t) => t.id === 'k4')), null);
+});
