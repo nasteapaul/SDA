@@ -165,6 +165,7 @@ function publicState(s) {
         sessionId: c.sessionId,
         bank: c.bank,
         validUntil: c.validUntil,
+        ...(c.archived ? { archived: true } : {}), // an old link kept for its history; never synced
         accounts: c.accounts.map((a) => ({
           uid: a.uid, name: a.name, nickname: a.nickname, iban: a.iban, currency: a.currency, balance: a.balance, lastSyncDate: a.lastSyncDate,
           kind: a.kind, cashAccountType: a.cashAccountType, creditLimit: a.creditLimit, balanceMeaning: a.balanceMeaning, product: a.product, cardDigits: a.cardDigits,

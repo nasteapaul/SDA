@@ -385,7 +385,7 @@ const views = {
 
   settings() {
     const b = S().bank;
-    const accounts = b.connections.flatMap((c) => c.accounts.map((a) => ({ ...a, bank: c.bank, validUntil: c.validUntil, sessionId: c.sessionId })));
+    const accounts = b.connections.flatMap((c) => c.accounts.map((a) => ({ ...a, bank: c.bank, validUntil: c.validUntil, sessionId: c.sessionId, archived: Boolean(c.archived) })));
     const flash = ui.params.get('bank');
     const theme = localStorage.getItem('bp.theme') || 'system';
     return `
@@ -397,20 +397,7 @@ const views = {
             ${flash === 'error' ? `<div class="banner" style="margin-bottom:12px"><span class="banner-ico">⚠️</span><div><b>Bank linking didn't finish.</b> <span class="muted">${esc(ui.params.get('reason') || '')}</span></div></div>` : ''}
             ${!b.configured ? `<p>Bank sync runs on your home server through <b>Enable Banking</b> (PSD2 open banking, free for your own accounts — supports BT, BCR, BRD, ING, Raiffeisen, CEC, Revolut…).</p>
               <p class="muted small">To turn it on, set <code class="inline">EB_APP_ID</code> and <code class="inline">EB_PRIVATE_KEY_PATH</code> in the server's <code class="inline">.env</code> file and restart it. The README has a 5-minute walkthrough.</p>` : `
-              ${accounts.length ? accounts.map((a) => {
-                const v = accountView(a);
-                const amount = !v.known ? '—' : v.kind === 'credit' ? `Owed ${formatRON(v.owed)}` : formatRON(v.cash);
-                const sub = v.kind === 'credit'
-                  ? (v.limit ? `${formatRON(v.available)} available of ${formatRON(v.limit, { short: true })}` : 'Set the credit limit →')
-                  : `consent until ${fmtDate(a.validUntil?.slice(0, 10))}`;
-                return `<div class="acct">
-                  <div><b>${esc(a.nickname || a.name || 'Account')}</b> <span class="badge">${esc(ACCOUNT_KINDS[v.kind])}</span> <span class="muted small">${esc(a.bank)}</span><div class="muted small num">${esc(a.iban || '')}</div></div>
-                  <div style="text-align:right"><b class="num">${amount}</b><div class="muted small">${sub}</div>
-                    <button class="btn small" type="button" data-action="edit-account" data-id="${esc(a.uid)}" style="margin-top:4px">Edit</button></div>
-                </div>`;
-              }).join('') : '<p class="muted">No bank linked yet.</p>'}
-              <p class="muted small">${b.lastSync ? `Last sync ${new Date(b.lastSync).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}.` : ''} The server syncs automatically every few hours, and whenever you open the app on your home Wi-Fi.</p>
-              ${b.lastError ? `<div class="banner"><span class="banner-ico">⚠️</span><div><b>Last sync failed</b><div class="muted small">${esc(b.lastError)}</div></div></div>` : ''}
+              ${bankAccountsHTML(accounts)}
               <div class="stack" style="gap:8px;margin-top:8px">
                 <label class="field">Link ${accounts.length ? 'another / re-link a' : 'your'} bank
                   <select id="bank-select"><option value="">${ui.banks ? 'Choose your bank…' : 'Loading banks…'}</option>${(ui.banks || []).map((x) => `<option>${esc(x.name)}</option>`).join('')}</select>
@@ -421,7 +408,7 @@ const views = {
                   <p class="muted small">Register <code class="inline">${esc(b.redirectUrl)}</code> as a redirect URL in the Enable Banking control panel. If your bank sent you to a different page, paste its full address here:</p>
                   <div style="display:flex;gap:8px"><input id="bank-landed" placeholder="https://…?code=…"><button class="btn" type="button" data-action="complete-bank">Finish</button></div>
                 </details>
-                ${b.connections.map((c) => `<button class="btn danger small" type="button" data-action="unlink-bank" data-id="${esc(c.sessionId)}">Unlink ${esc(c.bank)}</button>`).join('')}
+                ${b.connections.map((c) => `<button class="btn danger small" type="button" data-action="unlink-bank" data-id="${esc(c.sessionId)}">Unlink ${esc(c.bank)}${c.archived ? ' (old link)' : ''}</button>`).join('')}
               </div>`}
           </div>
           <div class="card">
@@ -494,10 +481,106 @@ const views = {
             }).join('') : '<p class="muted small">None yet.</p>'}
             <div class="setting"><span class="small">Re-run automatic categories on bank transactions<div class="muted small">Useful after changing rules. Your manual choices are kept.</div></span><button class="btn small" type="button" data-action="recategorize">Re-run</button></div>
           </div>
+          ${trashCardHTML()}
         </div>
       </div>`;
   },
 };
+
+// ---------------------------------------------------------------- settings (ux-1)
+// Linked accounts with their balance time, plus the prompts that keep the totals honest.
+function bankAccountsHTML(accounts) {
+  const b = S().bank;
+  if (!accounts.length) return '<p class="muted">No bank linked yet.</p>';
+  const stale = ageHours(b.lastSync) > 24;
+  const rows = accounts.map((a) => {
+    const v = accountView(a);
+    const amount = v.excludedForeign ? `${esc(String(v.amount))} ${esc(v.currency)}`
+      : !v.known ? '—' : v.kind === 'credit' ? `Owed ${formatRON(v.owed)}` : formatRON(v.cash);
+    const sub = v.kind === 'credit'
+      ? (v.limit ? `${formatRON(v.available)} available of ${formatRON(v.limit, { short: true })}` : 'No credit limit set')
+      : a.archived ? 'not synced any more' : `consent until ${fmtDate(a.validUntil?.slice(0, 10))}`;
+    const when = a.archived
+      ? `<div class="small muted">Last balance${a.lastSyncDate ? ` from ${esc(fmtDate(a.lastSyncDate))}` : ''}</div>`
+      : (v.known || v.excludedForeign) ? `<div class="small ${stale ? 'ux1-stale' : 'muted'}">Bank balance as of ${esc(bankTime(b.lastSync))}</div>` : '';
+    let prompt = '';
+    if (v.excludedForeign) {
+      prompt = `<div class="ux1-note small">Not included in your totals: no RON exchange rate for ${esc(v.currency)} yet.</div>`;
+    } else if (v.kind === 'credit' && v.balanceUncertain && !a.archived) {
+      const raw = Number(a.balance?.amount);
+      prompt = v.limit
+        ? `<div class="ux1-note small"><span>The bank reports <b class="num">${formatRON(Math.abs(raw))}</b> for this card. Is that what you owe, or what you can still spend?</span>
+            <span class="ux1-note-actions"><button class="btn small" type="button" data-action="balance-meaning" data-id="${esc(a.uid)}" data-value="owed">What I owe</button>
+            <button class="btn small" type="button" data-action="balance-meaning" data-id="${esc(a.uid)}" data-value="available">What I can spend</button></span></div>`
+        : `<div class="ux1-note small"><span>Enter the card’s credit limit so the app can work out how much you owe.</span>
+            <span class="ux1-note-actions"><button class="btn small" type="button" data-action="edit-account" data-id="${esc(a.uid)}">Set limit</button></span></div>`;
+    }
+    return `<div class="acct${a.archived ? ' ux1-archived' : ''}">
+      <div><b>${esc(a.nickname || a.name || 'Account')}</b> <span class="badge">${esc(ACCOUNT_KINDS[v.kind])}</span>${a.archived ? ' <span class="badge ux1-old">old link</span>' : ''} <span class="muted small">${esc(a.bank)}</span><div class="muted small num ux1-iban">${esc(a.iban || '')}</div></div>
+      <div class="ux1-acct-side" style="text-align:right"><b class="num">${amount}</b><div class="muted small">${sub}</div>${when}
+        <button class="btn small" type="button" data-action="edit-account" data-id="${esc(a.uid)}" style="margin-top:4px">Edit</button></div>
+      ${prompt}
+    </div>`;
+  }).join('');
+  const live = accounts.filter((a) => !a.archived);
+  const { excludedForeign } = bankTotals(live);
+  const foreign = excludedForeign ? `<p class="muted small">Not included in totals: ${excludedForeign.map((x) => `${esc(String(x.amount))} ${esc(x.currency)} (${esc(x.name)})`).join(', ')}.</p>` : '';
+  const currents = live.filter((a) => accountView(a).kind === 'current');
+  const main = L().mainAccount;
+  const chosen = S().settings?.mainAccountId || '';
+  const label = (a) => `${a.nickname || a.name || 'Account'} · …${String(a.iban || a.uid).slice(-4)}`;
+  const mainSelect = currents.length ? `<label class="field ux1-main">Main current account
+      <select data-action="main-account">
+        <option value="" ${chosen ? '' : 'selected'}>Automatic${main && !chosen ? ` (${esc(label(main))})` : ''}</option>
+        ${currents.map((a) => `<option value="${esc(a.uid)}" ${a.uid === chosen ? 'selected' : ''}>${esc(label(a))}</option>`).join('')}
+      </select>
+      <span class="muted small">Money in and out of this account is your income and spending. The other accounts are shown for information.</span></label>` : '';
+  const lastSync = b.lastSync
+    ? `Last sync <span class="${ageHours(b.lastSync) > 12 ? 'ux1-stale' : ''}">${esc(bankTime(b.lastSync))}</span>.`
+    : 'Not synced yet.';
+  let error = '';
+  if (b.lastError) {
+    const { lines, parts } = friendlyBankError(b.lastError);
+    error = `<div class="banner ux1-error"><span class="banner-ico">⚠️</span><div class="ux1-error-body"><b>Last bank sync failed</b>
+      ${lines.map((l) => `<div class="small">${esc(l)}</div>`).join('')}
+      <details><summary class="muted small">Technical details</summary><ul class="ux1-raw small muted">${parts.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details></div></div>`;
+  }
+  return `${rows}${foreign}${mainSelect}
+    <p class="muted small">${lastSync} The server syncs automatically every few hours, and whenever you open the app on your home Wi-Fi.</p>
+    ${error}`;
+}
+
+const TRASH_REASONS = { delete: 'Deleted', 'delete-imported': 'Import removed', 'duplicate-merge': 'Duplicate merged' };
+// Lazy-loaded: fetched again whenever the data changes while Settings is open.
+function trashCardHTML() {
+  const stamp = S().updatedAt || '';
+  if (ui.trashFor !== stamp) {
+    ui.trashFor = stamp;
+    const redraw = () => { if (ui.route === 'settings' && !modal.open) render(); };
+    data.trash().then((list) => { ui.trash = Array.isArray(list) ? list : []; redraw(); })
+      .catch(() => { if (!Array.isArray(ui.trash)) ui.trash = 'error'; redraw(); });
+  }
+  const list = Array.isArray(ui.trash) ? ui.trash : null;
+  const shown = list ? (ui.trashAll ? list : list.slice(0, 8)) : [];
+  let body;
+  if (ui.trash === 'error') body = '<p class="muted small">Couldn’t load the trash. Try again when you’re online.</p>';
+  else if (!list) body = '<p class="muted small">Loading…</p>';
+  else if (!list.length) body = '<p class="muted small">Empty.</p>';
+  else {
+    body = `<div class="settings-list">${shown.map((e) => `<div class="setting ux1-trash">
+        <span class="ux1-trash-main"><span class="ux1-trash-desc">${esc(e.tx?.description || '(no description)')}</span>
+          <span class="muted small">${esc(fmtDate(e.tx?.date))} · ${esc(TRASH_REASONS[e.reason] || 'Removed')} ${esc(bankTime(e.removedAt))}</span></span>
+        <span class="ux1-trash-side">${e.tx ? amountHTML(e.tx) : ''}
+          <button class="btn small" type="button" data-action="restore-tx" data-id="${esc(e.tx?.id || '')}">Restore</button></span>
+      </div>`).join('')}</div>
+      ${list.length > shown.length ? `<button class="btn small" type="button" data-action="trash-all" style="margin-top:8px">Show all ${list.length}</button>` : ''}`;
+  }
+  return `<div class="card">
+    <div class="card-head"><h2>🗑 Trash</h2></div>
+    <p class="muted small" style="margin-top:0">Transactions you deleted, or that were merged as duplicates. They stay here for 60 days.</p>
+    ${body}
+  </div>`;
+}
 
 function pctChange(now, before) {
   const prev = P().payday ? 'previous period' : 'last month';
@@ -523,17 +606,56 @@ function render() {
   if (ui.route === 'settings' && S().bank.configured && !ui.banks) loadBanks();
 }
 
+// ux-1: bank freshness + friendly sync errors (Settings and the status pill).
+const HOUR = 3600000;
+const ageHours = (iso) => (iso ? (Date.now() - Date.parse(iso)) / HOUR : Infinity);
+// "today 18:26", "yesterday 18:26", "5 Oct, 18:26" (en-GB).
+function bankTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const day = todayISO(d);
+  if (day === todayISO()) return `today ${time}`;
+  if (day === todayISO(new Date(Date.now() - 86400000))) return `yesterday ${time}`;
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: day.slice(0, 4) === todayISO().slice(0, 4) ? undefined : 'numeric' })}, ${time}`;
+}
+const BANK_ERRORS = [
+  [/ENOENT|EACCES|private key|\.pem|PRIVATE_KEY|EB_APP_ID|not configured/i, 'The server can’t read its Enable Banking key file. Check EB_PRIVATE_KEY_PATH in the server’s .env and restart it.'],
+  [/\b(401|403)\b|expired|consent|revoked|unauthori[sz]ed|session/i, 'The bank access has expired or was revoked. Link the bank again below.'],
+  [/\b429\b|rate.?limit|too many requests/i, 'The bank only allows a few updates a day. The server will try again later.'],
+  [/too many transactions/i, 'Only part of the transactions were fetched. The next sync gets the rest.'],
+  [/ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|network|timeout|socket/i, 'The server couldn’t reach the bank. It will try again automatically.'],
+  [/\b5\d\d\b|unavailable|maintenance/i, 'The bank’s service was unavailable. The server will try again later.'],
+];
+// One plain-English line per distinct problem; the raw text stays available under <details>.
+function friendlyBankError(raw) {
+  const parts = String(raw || '').split(/;\s*/).filter(Boolean);
+  const lines = [...new Set(parts.map((p) => (BANK_ERRORS.find(([re]) => re.test(p)) || [null, 'The last bank sync didn’t finish. The server will try again automatically.'])[1]))];
+  return { lines, parts };
+}
+const liveConnections = () => (S()?.bank?.connections || []).filter((c) => !c.archived);
+
 function renderStatus() {
   const pending = data.pending;
-  const last = S()?.bank?.lastSync ? new Date(S().bank.lastSync).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : null;
-  let text; let dot;
-  if (!data.online) { text = pending ? `Offline · ${pending} change${pending === 1 ? '' : 's'} waiting` : 'Offline · saved data'; dot = 'var(--warning)'; }
-  else if (pending) { text = `Saving ${pending}…`; dot = 'var(--warning)'; }
-  else { text = last ? `Up to date · bank ${last}` : 'Up to date'; dot = 'var(--good)'; }
+  const b = S()?.bank;
+  const linked = Boolean(b?.configured && liveConnections().length);
+  let text; let short; let dot; let link = false;
+  if (!data.online) { text = pending ? `Offline · ${pending} change${pending === 1 ? '' : 's'} waiting` : 'Offline · saved data'; short = 'Offline'; dot = 'var(--warning)'; }
+  else if (pending) { text = `Saving ${pending}…`; short = 'Saving…'; dot = 'var(--warning)'; }
+  else if (linked && b.lastError) { text = 'Bank sync failed · tap to see why'; short = 'Bank sync failed'; dot = 'var(--critical)'; link = true; }
+  else if (linked && ageHours(b.lastSync) > 12) {
+    text = b.lastSync ? `Bank data from ${bankTime(b.lastSync)}` : 'Bank not synced yet';
+    short = b.lastSync ? `Bank: ${bankTime(b.lastSync)}` : 'Bank not synced'; dot = 'var(--warning)'; link = true;
+  } else { text = linked && b.lastSync ? `Saved · bank ${bankTime(b.lastSync)}` : 'Saved'; short = 'Saved'; dot = 'var(--good)'; }
   for (const el of [$('#sync-pill'), $('#sync-pill-mobile')]) {
-    el.textContent = el.id === 'sync-pill-mobile' ? (data.online ? (pending ? 'Saving…' : 'Synced') : 'Offline') : text;
+    if (!el) continue;
+    el.textContent = el.id === 'sync-pill-mobile' ? short : text;
     el.style.setProperty('--sync-dot', dot);
     el.title = text;
+    el.classList.toggle('ux1-pill-link', link);
+    if (link) { el.setAttribute('role', 'link'); el.tabIndex = 0; } else { el.setAttribute('role', 'status'); el.removeAttribute('tabindex'); }
+    el.onclick = link ? () => { location.hash = 'settings'; } : null;
+    el.onkeydown = link ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); location.hash = 'settings'; } } : null;
   }
 }
 
@@ -1189,6 +1311,26 @@ const actions = {
   'edit-rule': (el) => openRuleModal(S().rules[Number(el.dataset.index)]),
   recategorize: () => { data.recategorizeAll(); toast('Categories updated'); },
   'edit-account': (el) => openAccountModal(el.dataset.id),
+  'balance-meaning': async (el) => {
+    el.disabled = true;
+    try {
+      await data.fetch(`/api/bank/accounts/${encodeURIComponent(el.dataset.id)}`, { method: 'PUT', body: { balanceMeaning: el.dataset.value } });
+      await data.refresh();
+      toast(el.dataset.value === 'owed' ? 'Got it: that’s what you owe' : 'Got it: that’s what you can still spend');
+    } catch (err) { el.disabled = false; toast(err.message); }
+  },
+  'restore-tx': async (el) => {
+    if (!el.dataset.id) return;
+    el.disabled = true;
+    try {
+      await data.restoreTransaction(el.dataset.id);
+      ui.trash = Array.isArray(ui.trash) ? ui.trash.filter((e) => e.tx?.id !== el.dataset.id) : ui.trash;
+      ui.trashFor = null;
+      render();
+      toast('Transaction restored');
+    } catch (err) { el.disabled = false; toast(err.message); }
+  },
+  'trash-all': () => { ui.trashAll = true; render(); },
   'debt-goal': () => {
     const { owed } = bankTotals(S().bank.connections.flatMap((c) => c.accounts));
     data.upsertGoal({ id: uid(), name: 'Pay off credit card', icon: '💳', target: owed, initialSaved: 0, deadline: null, priority: 'high' });
@@ -1258,6 +1400,7 @@ view.addEventListener('change', async (e) => {
       break;
     }
     case 'count-mode': data.setSettings({ countMode: el.value }); toast('Totals updated'); break;
+    case 'main-account': data.setSettings({ mainAccountId: el.value || null }); toast('Main current account updated'); break;
     case 'period-mode':
     case 'payday-day': {
       const mode = view.querySelector('[data-action="period-mode"]:checked')?.value;

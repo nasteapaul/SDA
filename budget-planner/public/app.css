@@ -420,3 +420,42 @@ code.inline { background: var(--surface-2); padding: 1px 6px; border-radius: 6px
 .qc-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .qc-actions .btn.primary { flex: 1 1 auto; max-width: 100%; }
 @media (min-width: 761px) { .qc-actions .btn.primary { flex: 0 1 auto; } }
+
+/* ux-1 */
+:root { --ux1-amber-text: #8a5a00; --ux1-amber-bg: #fdf3dc; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --ux1-amber-text: #f2b54a; --ux1-amber-bg: #2e2614; }
+}
+:root[data-theme="dark"] { --ux1-amber-text: #f2b54a; --ux1-amber-bg: #2e2614; }
+.ux1-stale { color: var(--ux1-amber-text); font-weight: 600; }
+.ux1-pill-link { cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
+.ux1-pill-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.acct > div { min-width: 0; }
+.ux1-iban { overflow-wrap: anywhere; white-space: normal; }
+.ux1-archived { opacity: .8; }
+.badge.ux1-old { background: var(--ux1-amber-bg); color: var(--ux1-amber-text); }
+.ux1-note { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 12px; border-radius: 10px; background: var(--ux1-amber-bg); color: var(--text); }
+.ux1-note-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ux1-main { margin: 12px 0 4px; }
+.ux1-main .muted { font-weight: 400; }
+.ux1-error-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ux1-error details { margin-top: 4px; }
+.ux1-error summary { cursor: pointer; }
+.ux1-raw { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; word-break: break-word; }
+.ux1-trash { align-items: flex-start; }
+.ux1-trash-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ux1-trash-desc { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ux1-trash-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+/* Toast: bottom-left beside the sidebar on a laptop; above the tab bar and clear of the + button on a phone. */
+.toast { left: calc(220px + 24px); right: auto; transform: none; max-width: min(480px, calc(100vw - 220px - 48px)); }
+.acct .ux1-stale { font-weight: 500; }
+/* Phone: account name and IBAN get the full width; amount + times sit below, Edit on the right. */
+@media (max-width: 760px) {
+  .acct { grid-template-columns: minmax(0, 1fr); }
+  .acct .ux1-acct-side { text-align: left !important; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: center; }
+  .acct .ux1-acct-side > * { grid-column: 1; }
+  .acct .ux1-acct-side > .btn { grid-column: 2; grid-row: 1 / span 3; margin-top: 0 !important; }
+}
+@media (max-width: 760px) {
+  .toast { left: 16px; right: 84px; bottom: calc(80px + var(--safe-bottom)); max-width: none; justify-content: space-between; }
+}
