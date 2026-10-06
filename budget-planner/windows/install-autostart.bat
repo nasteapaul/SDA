@@ -19,8 +19,6 @@ if errorlevel 1 (
   echo Could not create the startup task.
   pause & exit /b 1
 )
-:: Give the task the same "no window" behaviour on a slow boot: retry if the network isn't up yet.
-schtasks /Change /TN "Budget Planner" /RI 1 /DU 0005 >nul 2>&1
 
 echo.
 echo Done. Budget Planner will start automatically every time you log in to Windows.
