@@ -69,5 +69,17 @@ claude mcp add claude-flow -s user -- cmd /c npx -y ruflo@3.53.0 mcp start
 npx ruflo@3.53.0 doctor --fix
 ```
 
-The background `daemon` spawns headless Claude sessions and consumes tokens
-continuously; start it only on purpose (`npx ruflo@3.53.0 daemon start`).
+The first start downloads ruflo (~1 min), so `.claude/settings.json` raises
+`MCP_TIMEOUT`. In cloud sessions, add `npx -y ruflo@3.53.0 --version` to the
+environment's setup script so the download happens before the session starts.
+If the server fails with `ERR_MODULE_NOT_FOUND`, the npx cache is half-installed:
+delete `~/.npm/_npx` and start again.
+
+Hive mind (queen + workers sharing memory and voting): with the MCP server
+connected, use the `hive-mind_*` tools (`init`, `spawn`, `memory`, `consensus`,
+`broadcast`, `status`, `shutdown`), or `/hive-mind` commands. Workers still do
+the actual work as Claude Code agents; the hive gives them shared memory.
+
+Most ruflo CLI commands auto-start a background `daemon` that spawns headless
+Claude sessions and consumes tokens continuously. Stop it when done:
+`npx ruflo@3.53.0 daemon stop`.
