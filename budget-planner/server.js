@@ -21,6 +21,7 @@ import { importSeen, rememberDeletedImport } from './public/js/shared/dedupe.js'
 import { ownContext, ownTransferCategory } from './public/js/shared/own.js';
 import { categorize, escapeForRule, merchantKey, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
+import { lastSnapshots } from './public/js/shared/reconcile.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* no .env file */ }
@@ -160,6 +161,7 @@ function publicState(s) {
       redirectUrl: REDIRECT_URL,
       lastSync: s.bank.lastSync,
       lastError: s.bank.lastError,
+      balanceHistory: lastSnapshots(s.bank.balanceHistory), // the two snapshots per account the "matches the bank" check needs
       syncing,
       connections: s.bank.connections.map((c) => ({
         sessionId: c.sessionId,

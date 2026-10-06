@@ -11,6 +11,7 @@ import { mainAccountOf } from '../public/js/shared/ledger.js';
 import { mergeDuplicatesToTrash } from './store.js';
 import { ownContext, ownTransferCategory, ibansIn } from '../public/js/shared/own.js';
 import { bnrRateOn } from './fx.js';
+import { appendSnapshot } from '../public/js/shared/reconcile.js';
 
 // Booked transactions are re-fetched this many days before the last sync:
 // banks backdate the booking date of long-pending card payments. The bankRef
@@ -77,7 +78,24 @@ export function moveAccount(s, from, to) {
     if (t.accountId === from) { t.accountId = to; n += 1; }
   }
   s.deletedBankRefs = [...new Set((s.deletedBankRefs || []).map((r) => (r.startsWith(`${from}:`) ? `${to}:${r.slice(from.length + 1)}` : r)))];
+  const history = s.bank?.balanceHistory;
+  if (history?.[from]) {
+    history[to] = [...history[from], ...(history[to] || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    delete history[from];
+  }
   return n;
+}
+
+/**
+ * Remembers a fetched balance in s.bank.balanceHistory[uid] (for the "matches
+ * the bank" check, shared/reconcile.js): at most 400 per account, an
+ * unchanged balance on the same day is not stored again.
+ */
+export function recordBalance(s, accountUid, balance, now = new Date()) {
+  if (!balance || !accountUid) return;
+  s.bank.balanceHistory ||= {};
+  const next = appendSnapshot(s.bank.balanceHistory[accountUid], { date: now.toISOString(), amount: balance.amount });
+  if (next.length) s.bank.balanceHistory[accountUid] = next;
 }
 
 /**
@@ -457,6 +475,7 @@ export async function syncBank(store, client, { lookbackDays = 90, rate = bnrRat
         added += 1;
       });
       target.balance = balance;
+      recordBalance(s, acc.uid, balance);
       // An incomplete fetch keeps the old date, so the next sync asks for the rest again.
       if (truncated) errors.push(`${acc.nickname || acc.name || acc.uid}: too many transactions, only part was fetched`);
       else target.lastSyncDate = todayISO();

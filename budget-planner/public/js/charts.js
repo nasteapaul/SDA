@@ -32,7 +32,9 @@ export function categoryBars(rows, total) {
 
 /**
  * Grouped columns: income vs spending per month (one shared axis).
- * months: [{ key, income, spend }]
+ * months: [{ key, income, spend, noData?, partial? }]
+ * partial: the data starts part-way through that month — its bars are
+ * hatched and lighter, and its label gets an asterisk.
  */
 export function trendChart(months) {
   const W = 560; const H = 200; const padL = 44; const padB = 24; const padT = 8;
@@ -44,25 +46,29 @@ export function trendChart(months) {
   const groupW = innerW / months.length;
   const barW = Math.min(22, (groupW - 14) / 2);
 
-  let svg = '';
+  let svg = months.some((m) => m.partial)
+    ? `<defs>${[1, 2].map((n) => `<pattern id="hatch-${n}" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--series-${n})" fill-opacity=".28"/><rect width="2.5" height="6" fill="var(--series-${n})"/></pattern>`).join('')}</defs>`
+    : '';
   for (let v = 0; v <= top + 0.001; v += step) {
     svg += `<line class="${v === 0 ? 'base-line' : 'grid-line'}" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/>`;
     svg += `<text x="${padL - 8}" y="${y(v) + 4}" text-anchor="end">${shortNum(v)}</text>`;
   }
   months.forEach((m, i) => {
     const cx = padL + groupW * i + groupW / 2;
-    const bars = [['income', m.income, 'var(--series-1)', cx - barW - 1], ['spend', m.spend, 'var(--series-2)', cx + 1]];
+    const bars = m.partial
+      ? [['income', m.income, 'url(#hatch-1)', cx - barW - 1], ['spend', m.spend, 'url(#hatch-2)', cx + 1]]
+      : [['income', m.income, 'var(--series-1)', cx - barW - 1], ['spend', m.spend, 'var(--series-2)', cx + 1]];
     for (const [, v, color, x] of bars) {
       const h = Math.max(0, y(0) - y(v));
       if (h > 0) svg += `<path d="${roundedTop(x, y(v), barW, h, Math.min(4, h))}" fill="${color}"/>`;
     }
-    svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${esc(monthLabel(m.key, { month: 'short' }))}</text>`;
+    svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${esc(monthLabel(m.key, { month: 'short' }))}${m.partial ? '*' : ''}</text>`;
     if (m.noData) svg += `<text x="${cx}" y="${y(0) - 8}" text-anchor="middle">no data</text>`;
     const net = m.income - m.spend;
-    const tip = `<b>${esc(monthLabel(m.key, { month: 'long', year: 'numeric' }))}</b><br>Income ${formatRON(m.income)}<br>Spending ${formatRON(m.spend)}<br>Net ${formatRON(net, { sign: true })}`;
-    svg += `<rect class="hit" x="${padL + groupW * i}" y="${padT}" width="${groupW}" height="${innerH}" data-tip="${esc(tip)}" tabindex="0" aria-label="${esc(`${monthLabel(m.key, { month: 'long', year: 'numeric' })}: income ${formatRON(m.income)}, spending ${formatRON(m.spend)}`)}"/>`;
+    const tip = `<b>${esc(monthLabel(m.key, { month: 'long', year: 'numeric' }))}</b><br>Income ${formatRON(m.income)}<br>Spending ${formatRON(m.spend)}<br>Net ${formatRON(net, { sign: true })}${m.partial ? '<br><i>* Partial: your data starts part-way through this month</i>' : ''}`;
+    svg += `<rect class="hit" x="${padL + groupW * i}" y="${padT}" width="${groupW}" height="${innerH}" data-tip="${esc(tip)}" tabindex="0" aria-label="${esc(`${monthLabel(m.key, { month: 'long', year: 'numeric' })}: income ${formatRON(m.income)}, spending ${formatRON(m.spend)}${m.partial ? ' (partial month: data starts part-way through)' : ''}`)}"/>`;
   });
-  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Income and spending for the last ${months.length} months">${svg}</svg></div>`;
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Income and spending for the last ${months.length} months">${svg}</svg>${months.some((m) => m.partial) ? '<p class="chart-note">* Hatched: your data starts part-way through that month</p>' : ''}</div>`;
 }
 
 function roundedTop(x, yTop, w, h, r) {
