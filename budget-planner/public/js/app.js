@@ -47,7 +47,7 @@ function P() {
 let ledgerCache = null;
 let ledgerKey = '';
 function L() {
-  const k = `${S().updatedAt}|${S().settings?.countMode || ''}`;
+  const k = `${S().updatedAt}|${S().settings?.countMode || ''}|${S().settings?.mainAccountId || ''}`;
   if (k !== ledgerKey) { ledgerCache = makeLedger(S()); ledgerKey = k; }
   return ledgerCache;
 }
@@ -61,12 +61,12 @@ function summary(key) {
   const own = ownContext(S());
   for (const t of S().transactions) {
     if (keyOf(t.date) !== key) continue;
-    const c = counts(t);
-    if (!c) continue;
+    const e = L().effect(t); // a shop refund lowers spending instead of counting as income
+    if (!e.as) continue;
     count += 1; // transactions that count (current account)
-    if (c === 'saved') saved += t.type === 'expense' ? t.amount : -t.amount;
-    else if (c === 'income') { income += t.amount; if (isOwnTransfer(t, own) || /depunere numerar|cash deposit/i.test(`${t.description} ${t.note || ''}`)) ownIn += t.amount; }
-    else spend += t.amount;
+    if (e.as === 'saved') saved += e.amount;
+    else if (e.as === 'income') { income += e.amount; if (isOwnTransfer(t, own) || /depunere numerar|cash deposit/i.test(`${t.description} ${t.note || ''}`)) ownIn += e.amount; }
+    else spend += e.amount;
   }
   return { income: round2(income), spend: round2(spend), saved: round2(saved), left: round2(income - spend - saved), count, ownIn: round2(ownIn) };
 }
@@ -74,10 +74,12 @@ function summary(key) {
 function spendingByCategory(key) {
   const map = new Map();
   for (const t of S().transactions) {
-    if (keyOf(t.date) !== key || counts(t) !== 'expense') continue;
-    const m = map.get(t.category) || { name: t.category, icon: icon(t.category), value: 0, count: 0 };
-    m.value += t.amount; m.count += 1;
-    map.set(t.category, m);
+    if (keyOf(t.date) !== key) continue;
+    const e = L().effect(t);
+    if (e.as !== 'expense') continue;
+    const m = map.get(e.category) || { name: e.category, icon: icon(e.category), value: 0, count: 0 };
+    m.value += e.amount; m.count += 1;
+    map.set(e.category, m);
   }
   const budgets = S().budgets || {};
   for (const [name, limit] of Object.entries(budgets)) {
@@ -98,8 +100,12 @@ function currentPlan(goalIds = ui.planGoals) {
   // With a payday, habits are measured per pay period instead of per calendar month.
   const p = P();
   // Money into the current account is income even if it carries a savings/transfer category.
-  const counted = S().transactions.filter((t) => counts(t)).map((t) => (
-    L().mode === 'cashflow' && counts(t) === 'income' && cat(t.category).role ? { ...t, category: 'Other income' } : t));
+  const counted = S().transactions.flatMap((t) => {
+    const e = L().effect(t);
+    if (!e.as) return [];
+    if (counts(t) === 'refund') return [{ ...t, type: 'expense', amount: e.amount, category: e.category }];
+    return [L().mode === 'cashflow' && e.as === 'income' && cat(t.category).role ? { ...t, category: 'Other income' } : t];
+  });
   const txs = p.payday ? counted.map((t) => ({ ...t, date: p.pseudoDate(t.date) })) : counted;
   const analysis = analyzeHistory(txs, S().categories, { today: p.payday ? p.pseudoDate(todayISO()) : todayISO() });
   const goals = goalsWithProgress().filter((g) => !g.done && (!goalIds || goalIds.includes(g.id)));
@@ -237,8 +243,7 @@ const views = {
       && (!f.type || t.type === f.type)
       && (!f.category || t.category === f.category)
       && (!q || `${t.description} ${t.note || ''} ${t.category}`.toLowerCase().includes(q))));
-    const income = list.filter((t) => counts(t) === 'income').reduce((s, t) => s + t.amount, 0);
-    const spend = list.filter((t) => counts(t) === 'expense').reduce((s, t) => s + t.amount, 0);
+    const { income, spend } = L().totals(list);
     const monthsWithData = [...new Set([P().current(), ...S().transactions.map((t) => keyOf(t.date))])].sort().reverse();
 
     let html = '';
