@@ -259,6 +259,13 @@ export class Data extends EventTarget {
     return this.mutate({ method: 'POST', path: '/api/recategorize' });
   }
 
+  // Undo one CSV import: its rows go to the trash. Online only (returns { removed }).
+  async undoImport(batchId) {
+    const r = await this.fetch(`/api/imports/${encodeURIComponent(batchId)}`, { method: 'DELETE' });
+    await this.refresh();
+    return r;
+  }
+
   deleteRule(pattern) {
     return this.mutate({ method: 'DELETE', path: `/api/rules/${encodeURIComponent(pattern)}` }, (s) => {
       s.rules = s.rules.filter((r) => r.pattern !== pattern);

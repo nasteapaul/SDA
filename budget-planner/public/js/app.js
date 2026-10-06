@@ -10,6 +10,10 @@ import { ACCOUNT_KINDS, accountView, bankTotals, balanceMeaning } from './shared
 import { ownContext, isOwnTransfer } from './shared/own.js';
 import { makePeriods } from './shared/periods.js';
 import { makeLedger, COUNT_MODES } from './shared/ledger.js';
+// ux-3: add/edit modal + CSV import preview
+import { categorize } from './shared/categories.js';
+import { ownTransferCategory } from './shared/own.js';
+import { importSeen, isSameTransaction } from './shared/dedupe.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -425,13 +429,7 @@ const views = {
             <p class="muted small">Works with CSV exports from BT, BCR, ING, Raiffeisen, BRD, Revolut and most other banks. Duplicates are skipped automatically.</p>
             <input type="file" accept=".csv,text/csv,text/plain" data-action="csv-file" aria-label="CSV file">
             ${S().transactions.some((t) => t.source === 'import') ? `<div class="setting"><span class="small">${S().transactions.filter((t) => t.source === 'import').length} imported transactions<div class="muted small">Start over: remove them, then import the statements again.</div></span><button class="btn small danger" type="button" data-action="delete-imported">Delete imported</button></div>` : ''}
-            ${ui.csvPreview ? `<div class="stack" style="gap:8px;margin-top:12px">
-              <p style="margin:0"><b>${ui.csvPreview.items.length}</b> transactions found (${ui.csvPreview.items.filter((i) => i.type === 'income').length} income, ${ui.csvPreview.items.filter((i) => i.type === 'expense').length} expenses)${ui.csvPreview.skipped ? `, ${ui.csvPreview.skipped} rows skipped` : ''}.</p>
-              <div class="tx-list">${ui.csvPreview.items.slice(0, 4).map((i) => `<div class="setting"><span>${esc(i.date)} · ${esc(i.description)}</span><span class="num ${i.type === 'income' ? 'pos' : ''}">${i.type === 'income' ? '+' : '−'}${formatRON(i.amount)}</span></div>`).join('')}</div>
-              ${b.connections.length ? `<label class="field">Which account is this statement from?
-                <select data-action="csv-account">${b.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === ui.csvAccount ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))} · ${esc(a.nickname || a.name || '')}</option>`).join('')}<option value="" ${!ui.csvAccount ? 'selected' : ''}>Other / not linked</option></select></label>` : ''}
-              <button class="btn primary" type="button" data-action="csv-import">Import ${ui.csvPreview.items.length} transactions</button>
-            </div>` : ''}
+            ${ui.csvPreview ? csvPreviewHTML(b) : ''}
           </div>
           <div class="card">
             <div class="card-head"><h2>🧮 What counts as income and spending</h2></div>
@@ -553,6 +551,72 @@ function route() {
   if (ui.params.has('add')) { history.replaceState(null, '', '#transactions'); openTxModal(); }
 }
 
+// ---------------------------------------------------------------- CSV import preview (ux-3)
+// Mirrors what POST /api/transactions/import will do, so the preview tells the
+// truth: same fingerprint (importHash), same "seen before" check (importSeen),
+// same merge into an existing bank copy (isSameTransaction), same category guess.
+function csvPreviewModel(preview, accountId) {
+  const account = accountId ? S().bank.connections.flatMap((c) => c.accounts).find((a) => a.uid === accountId) : null;
+  const occurrences = new Map();
+  const rows = [];
+  for (const raw of preview.items) {
+    const amount = round2(Math.abs(Number(raw.amount)));
+    if (!Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(raw.date || '')) continue;
+    const t = {
+      type: raw.type, amount, date: raw.date,
+      description: String(raw.description || '').slice(0, 140), note: String(raw.note || '').slice(0, 280),
+      source: 'import', batchId: 'preview',
+      ...(account ? { accountId: account.uid, accountChosen: true } : {}),
+    };
+    const bare = `${t.date}|${t.type}|${t.amount}|${String(raw.description || '').toLowerCase()}|${String(raw.note || '').toLowerCase()}`;
+    const nth = (occurrences.get(bare) || 0) + 1;
+    occurrences.set(bare, nth);
+    t.importHash = `${t.accountId || ''}|${bare}${nth > 1 ? `#${nth}` : ''}`;
+    rows.push({ raw, bare, t });
+  }
+  const seen = importSeen(S(), rows.map((r) => r.t));
+  const own = ownContext(S());
+  const bank = S().transactions.filter((x) => x.source === 'bank');
+  const used = new Set();
+  for (const r of rows) {
+    if (seen.has(r.t, r.bare)) { r.isNew = false; continue; }
+    seen.add(r.t);
+    const twin = bank.find((y) => !used.has(y.id) && isSameTransaction(r.t, y) && !(r.t.accountId && y.accountId && r.t.accountId !== y.accountId));
+    if (twin) { used.add(twin.id); r.isNew = false; continue; }
+    r.isNew = true;
+    r.category = ownTransferCategory(r.t, own) || categorize({ description: `${r.t.description} ${r.t.note || ''}`, type: r.t.type }, S().rules, S().categories);
+  }
+  const fresh = rows.filter((r) => r.isNew).length;
+  return { rows, fresh, already: rows.length - fresh };
+}
+
+function csvPreviewHTML(b) {
+  const p = ui.csvPreview;
+  const m = csvPreviewModel(p, ui.csvAccount);
+  const shown = [...m.rows.filter((r) => r.isNew), ...m.rows.filter((r) => !r.isNew)].slice(0, 8);
+  const income = m.rows.filter((r) => r.t.type === 'income').length;
+  const fx = p.needsFx || 0;
+  const label = m.fresh
+    ? `Import ${m.fresh}${m.already ? ` · skip ${m.already} already in app` : ''}`
+    : 'Nothing new to import';
+  return `<div class="stack qc-preview" style="gap:8px;margin-top:12px">
+    <p style="margin:0"><b>${m.rows.length}</b> transaction${m.rows.length === 1 ? '' : 's'} found (${income} income, ${m.rows.length - income} expenses): <b>${m.fresh} new</b>, ${m.already} already in app.</p>
+    ${p.skipped ? `<p class="muted small" style="margin:0">${p.skipped} row${p.skipped === 1 ? '' : 's'} skipped (not a transaction, or not completed).</p>` : ''}
+    ${fx ? `<div class="banner qc-warn" role="note"><span class="banner-ico" aria-hidden="true">⚠️</span><div class="small"><b>${fx} row${fx === 1 ? ' is' : 's are'} in another currency and ${fx === 1 ? 'is' : 'are'} NOT converted to RON.</b> ${fx === 1 ? 'Its amount is' : 'Their amounts are'} imported as the bank shows ${fx === 1 ? 'it' : 'them'}; edit ${fx === 1 ? 'it' : 'them'} after import.</div></div>` : ''}
+    <div class="qc-rows">${shown.map((r) => `<div class="qc-row${r.isNew ? '' : ' qc-dup'}">
+      <span class="qc-row-main"><span class="qc-row-desc">${esc(r.t.description || '—')}</span>
+        <span class="muted small">${esc(fmtDate(r.t.date))}${r.isNew ? ` · ${esc(icon(r.category))} ${esc(r.category)}` : ''}${r.raw.needsFx ? ` · ${esc(r.raw.originalCurrency || '')} not converted` : ''}</span></span>
+      <span class="qc-row-end"><span class="num ${r.t.type === 'income' ? 'pos' : ''}">${r.t.type === 'income' ? '+' : '−'}${r.raw.needsFx ? `${esc(amountFmt.format(r.t.amount))} ${esc(r.raw.originalCurrency || '')}` : formatRON(r.t.amount)}</span>
+        <span class="qc-tag ${r.isNew ? 'qc-tag-new' : ''}">${r.isNew ? 'New' : 'Already in app'}</span></span>
+    </div>`).join('')}</div>
+    ${m.rows.length > shown.length ? `<p class="muted small" style="margin:0">…and ${m.rows.length - shown.length} more.</p>` : ''}
+    ${b.connections.length ? `<label class="field">Which account is this statement from?
+      <select data-action="csv-account">${b.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === ui.csvAccount ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))} · ${esc(a.nickname || a.name || '')}</option>`).join('')}<option value="" ${!ui.csvAccount ? 'selected' : ''}>Other / not linked</option></select></label>` : ''}
+    <div class="qc-actions"><button class="btn" type="button" data-action="csv-cancel">Cancel</button>
+      <button class="btn primary" type="button" data-action="csv-import" ${m.fresh ? '' : 'disabled'}>${esc(label)}</button></div>
+  </div>`;
+}
+
 // ---------------------------------------------------------------- modals
 function openModal(html, onSubmit) {
   modalForm.innerHTML = html;
@@ -582,23 +646,62 @@ function categoryOptions(type, selected) {
     .join('');
 }
 
+// "1.200,00": amounts in the modal read like the rest of the app (no currency sign).
+const amountFmt = new Intl.NumberFormat('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatAmountInput = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? amountFmt.format(Number(n)) : '');
+
+const LS_LAST_EXPENSE_CAT = 'bp.lastExpenseCategory';
+function lastExpenseCategory() {
+  try {
+    const name = localStorage.getItem(LS_LAST_EXPENSE_CAT);
+    return name && S().categories.some((c) => c.name === name && (c.kind === 'expense' || c.kind === 'both')) ? name : '';
+  } catch { return ''; }
+}
+function rememberExpenseCategory(name) {
+  try { localStorage.setItem(LS_LAST_EXPENSE_CAT, name); } catch { /* storage blocked */ }
+}
+
+// Up to 6 most-used categories of this type, for 2–3 tap entry.
+function topCategories(type, n = 6) {
+  const allowed = new Set(S().categories.filter((c) => c.kind === type || c.kind === 'both').map((c) => c.name));
+  const uses = new Map();
+  for (const x of S().transactions) {
+    if (x.type !== type || !allowed.has(x.category) || x.category === 'Transfers') continue;
+    uses.set(x.category, (uses.get(x.category) || 0) + 1);
+  }
+  return [...uses.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n).map(([name]) => name);
+}
+// New expense: the category you used last time, else your most-used one.
+const defaultExpenseCategory = () => lastExpenseCategory() || topCategories('expense')[0] || '';
+function categoryChips(type, selected) {
+  return topCategories(type).map((name) => `<button type="button" class="qc-chip" data-pick-category="${esc(name)}" aria-pressed="${name === selected}">${esc(icon(name))} ${esc(name)}</button>`).join('');
+}
+
 function openTxModal(tx) {
   const isNew = !tx;
-  const t = tx || { id: uid(), type: 'expense', amount: '', category: '', description: '', date: todayISO(), note: '' };
+  const t = tx || { id: uid(), type: 'expense', amount: '', category: defaultExpenseCategory(), description: '', date: todayISO(), note: '' };
   let type = t.type;
   const originalCategory = t.category;
   const fromBank = t.source === 'bank' || t.source === 'import';
+  // The bank is the source of truth for what moved and when; only your labels are editable.
+  const locked = !isNew && t.source === 'bank';
+  const lockAttr = locked ? 'readonly aria-readonly="true"' : '';
+  const chips = categoryChips(type, t.category);
   openModal(`
     <h2 id="modal-title">${isNew ? 'New transaction' : 'Edit transaction'} ${fromBank ? `<span class="badge">${t.source === 'bank' ? 'from bank' : 'imported'}</span>` : ''}</h2>
     <div class="type-toggle" role="group" aria-label="Type">
-      <button type="button" data-type="expense" aria-pressed="${type === 'expense'}">Expense</button>
-      <button type="button" data-type="income" aria-pressed="${type === 'income'}">Income</button>
+      <button type="button" data-type="expense" aria-pressed="${type === 'expense'}" ${locked ? 'disabled' : ''}>Expense</button>
+      <button type="button" data-type="income" aria-pressed="${type === 'income'}" ${locked ? 'disabled' : ''}>Income</button>
     </div>
-    <label class="field">Amount (RON)<input class="amount-input" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${t.amount ? String(t.amount).replace('.', ',') : ''}" ${isNew ? 'autofocus' : ''} required></label>
+    <label class="field">Amount (RON)<input class="amount-input" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${esc(formatAmountInput(t.amount))}" ${isNew ? 'autofocus' : ''} ${lockAttr} required></label>
+    ${locked ? '<p class="muted small qc-locked-note">🔒 Amount and date come from the bank</p>' : ''}
+    <div class="qc-chips" id="qc-chips" role="group" aria-label="Frequent categories" ${chips ? '' : 'hidden'}>${chips}</div>
     <label class="field">Category<select name="category">${categoryOptions(type, t.category)}</select></label>
     <label class="field">Description<input name="description" maxlength="140" placeholder="e.g. Kaufland, Salary" value="${esc(t.description)}"></label>
     <div class="field-row">
-      <label class="field">Date<input type="date" name="date" value="${esc(t.date)}" required></label>
+      <label class="field">Date${locked
+        ? `<input class="qc-locked-date" value="${esc(fmtDate(t.date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))}" ${lockAttr}>`
+        : `<input type="date" name="date" value="${esc(t.date)}" required>`}</label>
       <label class="field" id="goal-field" ${cat(t.category).role === 'savings' ? '' : 'hidden'}>Goal<select name="goalId"><option value="">—</option>${S().goals.map((g) => `<option value="${esc(g.id)}" ${g.id === t.goalId ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
     </div>
     <label class="field">Note<input name="note" maxlength="280" value="${esc(t.note || '')}" placeholder="Optional"></label>
@@ -617,16 +720,16 @@ function openTxModal(tx) {
       <button class="btn primary" type="submit" value="save">Save</button>
     </div>`, async (action, fd) => {
     if (action === 'delete') { deleteTx(t.id); return false; }
-    const amount = round2(Math.abs(parseAmount(fd.get('amount'))));
+    const amount = locked ? t.amount : round2(Math.abs(parseAmount(fd.get('amount'))));
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter an amount greater than 0.');
     const category = fd.get('category');
     const next = {
       ...t,
-      type,
+      type: locked ? t.type : type,
       amount,
       category,
       description: (fd.get('description') || '').trim() || category,
-      date: fd.get('date') || todayISO(),
+      date: locked ? t.date : (fd.get('date') || todayISO()),
       note: (fd.get('note') || '').trim(),
       goalId: cat(category).role === 'savings' ? (fd.get('goalId') || null) : null,
       ...(category !== originalCategory ? { manualCategory: true } : {}),
@@ -636,6 +739,7 @@ function openTxModal(tx) {
     const learn = fromBank && category !== originalCategory && fd.get('learn');
     if (learn && (keyword.length < 3 || isUselessKeyword(keyword))) throw new Error('That keyword is too generic. Use the shop’s name, e.g. “carrefour”.');
     data.upsertTransaction(next);
+    if (isNew && next.type === 'expense') rememberExpenseCategory(category);
     if (learn) {
       data.addRule(keyword, category);
       toast(`Rule saved: “${keyword}” → ${category}`);
@@ -644,13 +748,33 @@ function openTxModal(tx) {
   });
 
   const form = modalForm;
+  const chipsEl = $('#qc-chips', form);
+  const syncChips = () => chipsEl.querySelectorAll('[data-pick-category]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pickCategory === form.category.value)));
+  chipsEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pick-category]');
+    if (!b) return;
+    form.category.value = b.dataset.pickCategory;
+    form.category.dispatchEvent(new Event('change'));
+  });
+  if (!locked) {
+    form.amount.addEventListener('blur', () => {
+      const v = parseAmount(form.amount.value);
+      if (Number.isFinite(v) && v !== 0) form.amount.value = formatAmountInput(round2(Math.abs(v)));
+    });
+  }
   form.querySelectorAll('[data-type]').forEach((btn) => btn.addEventListener('click', () => {
+    if (locked) return;
     type = btn.dataset.type;
     form.querySelectorAll('[data-type]').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
-    form.category.innerHTML = categoryOptions(type, form.category.value);
+    const keep = form.category.value;
+    form.category.innerHTML = categoryOptions(type, type === 'expense' && isNew && cat(keep).kind === 'income' ? defaultExpenseCategory() : keep);
+    const html = categoryChips(type, form.category.value);
+    chipsEl.innerHTML = html;
+    chipsEl.hidden = !html;
     form.category.dispatchEvent(new Event('change'));
   }));
   form.category.addEventListener('change', () => {
+    syncChips();
     $('#goal-field', form).hidden = cat(form.category.value).role !== 'savings';
     const learn = $('#learn-row', form);
     if (learn) { learn.hidden = form.category.value === originalCategory; updateLearnPreview(); }
@@ -1020,14 +1144,26 @@ const actions = {
     if (!confirm('Unlink this bank? Transactions already imported are kept.')) return;
     try { await data.fetch(`/api/bank/connections/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' }); await data.refresh(); } catch (err) { toast(err.message); }
   },
-  'csv-import': async () => {
+  'csv-import': async (el) => {
+    if (!ui.csvPreview) return;
+    el.disabled = true; // no double import on a double tap
     try {
       const r = await data.fetch('/api/transactions/import', { method: 'POST', body: { items: ui.csvPreview.items, accountId: ui.csvAccount || undefined } });
       ui.csvPreview = null;
-      toast(`Imported ${r.added} transactions${r.skipped ? ` (${r.skipped} duplicates skipped)` : ''}`);
       await data.refresh();
-    } catch (err) { toast(err.message); }
+      const msg = `Imported ${r.added} transaction${r.added === 1 ? '' : 's'}${r.skipped ? ` · skipped ${r.skipped} already in app` : ''}`;
+      toast(msg, r.added && r.batchId ? {
+        label: 'Undo',
+        run: async () => {
+          try {
+            const { removed } = await data.undoImport(r.batchId);
+            toast(`Import undone — ${removed} transaction${removed === 1 ? '' : 's'} moved to the trash`);
+          } catch (err) { toast(err.message); }
+        },
+      } : undefined);
+    } catch (err) { el.disabled = false; toast(err.message); }
   },
+  'csv-cancel': () => { ui.csvPreview = null; render(); },
   'add-category': () => openCategoryModal(),
   'delete-category': (el) => {
     const c = S().categories[Number(el.dataset.index)];
@@ -1111,7 +1247,7 @@ view.addEventListener('change', async (e) => {
       data.setCategories(cats); break;
     }
     case 'theme': applyTheme(el.value); break;
-    case 'csv-account': ui.csvAccount = el.value; break;
+    case 'csv-account': ui.csvAccount = el.value; render(); break; // "New / already in app" depends on the account
     case 'salary-date': {
       const k = el.dataset.key;
       const [y, m] = k.split('-').map(Number);

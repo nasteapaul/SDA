@@ -324,7 +324,7 @@ async function api(req, res, url) {
           added += 1;
         }
         const merged = mergeDuplicatesToTrash(s); // already came in from the bank
-        return { added: Math.max(0, added - merged), skipped: items.length - added + merged };
+        return { added: Math.max(0, added - merged), skipped: items.length - added + merged, batchId };
       });
       return send(res, 200, result);
     }
@@ -386,6 +386,19 @@ async function api(req, res, url) {
       return t;
     });
     return send(res, 200, restored);
+  }
+
+  // Undo one CSV import: that batch's rows go to the trash (restorable). Their
+  // fingerprints are NOT remembered as deleted, so the statement can be imported again.
+  if (parts[0] === 'imports' && parts[1] && !parts[2] && method === 'DELETE') {
+    const batchId = parts[1]; // ids are plain [A-Za-z0-9_-]: nothing to decode
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(batchId)) throw new HttpError(400, 'Invalid import id');
+    if (!store.get().transactions.some((t) => t.source === 'import' && t.batchId === batchId)) {
+      return send(res, 200, { removed: 0 });
+    }
+    await store.backup('pre-undo-import');
+    const removed = await store.mutate((s) => removeTransactions(s, (t) => t.source === 'import' && t.batchId === batchId, 'undo-import').length);
+    return send(res, 200, { removed });
   }
 
   if (parts[0] === 'goals' && parts[1]) {
