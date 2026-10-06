@@ -33,15 +33,14 @@ cp .env.example .env        # then edit .env: set APP_PASSWORD at least
 npm start
 ```
 
-The terminal prints two addresses:
+The terminal prints the address:
 
 ```
   Budget planner running on http://localhost:8080
-  On your Wi-Fi:  http://192.168.1.50:8080
 ```
 
-- **Laptop:** open the first address, or the Wi-Fi address if the server runs on another machine.
-- **Phone:** connect to the home Wi-Fi and open the Wi-Fi address. Then add it to your home screen so it opens like an app:
+- **Laptop:** open that address on the computer running the server.
+- **Phone or another computer:** the server must use HTTPS first (see [Use it from your phone](#4-use-it-from-your-phone-https)). The server refuses to listen on the network over plain HTTP, because your password and bank data would travel unencrypted. Then open the HTTPS address and add it to your home screen so it opens like an app:
   - **iPhone (Safari):** Share → *Add to Home Screen*
   - **Android (Chrome):** ⋮ → *Add to Home screen* / *Install app*
 
@@ -52,7 +51,7 @@ The terminal prints two addresses:
 `android/` contains a small native app that wraps the web app (package `ro.budgetplanner.app`, Android 7.0+).
 
 1. Copy `Budget.apk` to the phone and open it. Android asks you to allow installing apps from that source (your browser or file manager); allow it. Play Protect may warn about an app from an "unknown developer"; tap *Install anyway*.
-2. Open **Budget**, enter the address the server prints (`http://192.168.x.x:8080`), then log in with your `APP_PASSWORD`.
+2. Open **Budget**, enter the server's HTTPS address (for example your Tailscale `https://<machine>.<tailnet>.ts.net` address), then log in with your `APP_PASSWORD`. The app only connects over HTTPS. Tailscale is the easiest choice here: its certificates are trusted by Android out of the box, while an mkcert certificate is not trusted by apps.
 
 How the app behaves:
 - **At home** it shows the live data.
@@ -92,13 +91,13 @@ Bank sync uses **[Enable Banking](https://enablebanking.com)**, a licensed PSD2 
 
 1. Create an account at **enablebanking.com** and open the **Control Panel → Applications → Add application**.
 2. Choose the **Production** environment and give it a name, e.g. "My budget".
-3. Under **Redirect URLs**, add `http://<your-server-ip>:8080/bank/callback`. This must exactly match `PUBLIC_URL` + `/bank/callback` in your `.env`.
+3. Under **Redirect URLs**, add `https://<your-server-address>/bank/callback`. This must exactly match `PUBLIC_URL` + `/bank/callback` in your `.env`.
 4. Let the panel **generate the private key**. Save the downloaded `.pem` file into the `budget-planner` folder as `enablebanking.pem`. Keep it secret.
 5. Copy the **Application ID** into `.env`:
    ```ini
    EB_APP_ID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
    EB_PRIVATE_KEY_PATH=./enablebanking.pem
-   PUBLIC_URL=http://192.168.1.50:8080
+   PUBLIC_URL=https://budget.example.ts.net
    ```
 6. Restart the server. In the app, go to **Settings → Bank connection**, pick your bank and tap **Connect bank**.
 7. Log in at your bank and approve. You'll land back in the app, and your last 90 days of transactions are imported.
@@ -128,39 +127,45 @@ If the Control Panel says your application needs activation, linking your own ac
 
 ---
 
-## 4. Offline mode & HTTPS (optional)
+## 4. Use it from your phone (HTTPS)
 
-Browsers only allow full offline support (opening the app with no connection to the server) over **HTTPS**. Over plain `http://192.168.x.x`:
+Anything other than the computer running the server connects over **HTTPS**. If `HOST` is a network address (or `APP_PASSWORD` is set, which defaults `HOST` to `0.0.0.0`) and there is no certificate, the server stops at startup with an explanation. HTTPS also gives full offline support (opening the app with no connection to the server).
 
-- the app still works normally at home and can be added to the home screen;
-- data is cached on the phone, and edits queue up if the connection drops;
-- but opening the app from scratch away from home needs the server.
+There are two ways to get it:
 
-There are two ways to get HTTPS:
+- **[Tailscale](https://tailscale.com)** (easiest, and it also lets you use the app away from home): install it on the server and your phone. In `.env` set `HOST=127.0.0.1`, `APP_PASSWORD` and `PUBLIC_URL=https://<machine>.<tailnet>.ts.net`. Run `tailscale serve --bg 8080` on the server, and use that `https://` address on the phone.
+- **[mkcert](https://github.com/FiloSottile/mkcert)**: create a certificate for your server's IP, install mkcert's root CA on your phone, and set `TLS_CERT` / `TLS_KEY` in `.env`. This works in the phone's browser, but not in the Android app.
 
-- **[Tailscale](https://tailscale.com)** (easiest, and it also lets you use the app away from home): install it on the server and your phone, run `tailscale serve --bg 8080` on the server, and use the `https://<machine>.<tailnet>.ts.net` address. Set `PUBLIC_URL` to it.
-- **[mkcert](https://github.com/FiloSottile/mkcert)**: create a certificate for your server's IP, install mkcert's root CA on your phone, and set `TLS_CERT` / `TLS_KEY` in `.env`.
+`ALLOW_INSECURE_HTTP=1` turns the check off and serves plain HTTP on the network. Don't, unless you understand the risk.
 
 ---
 
 ## Security
 
 - Set `APP_PASSWORD`. Without it, the server only listens on `localhost`, so your phone can't reach it.
+- On the network the server only runs over HTTPS (see above).
+- Each login gets its own token. It expires after `SESSION_DAYS` (default 30) and **Sign out** revokes it on the server. To sign out every device, stop the server and delete `data/.sessions.json`.
 - Logins are rate-limited (10 tries per 15 minutes).
+- Requests from other websites are blocked (Origin and Content-Type checks). Without a password, only `localhost` is accepted as the Host, which blocks DNS-rebinding attacks.
 - Don't forward the port on your router to the internet. If you want access from outside, use Tailscale.
-- Bank data goes only between your server, Enable Banking and your bank. `data/` and `.env` are git-ignored.
+- Bank data goes only between your server, Enable Banking and your bank. Transactions in other currencies are converted to RON with the National Bank of Romania's daily rate (fetched from bnr.ro).
+- `data/`, `.env`, `*.pem`, CSV statements and `Extrases/` are git-ignored. Keep the Enable Banking key (`.pem`) outside any folder you share.
 - **Back up** `data/budget.json`, or use Settings → Export.
 
 ## Development
 
 ```bash
-npm test        # unit tests: categoriser, planner, CSV parser, bank mapping
+npm test        # unit + HTTP tests: categoriser, planner, CSV parser, bank sync, validation, auth
 npm run dev     # restart on file changes
 ```
 
 ```
-server.js                 HTTP server, REST API, auth, live updates (SSE), scheduler
-lib/store.js              JSON file store with atomic writes
+server.js                 HTTP server, REST API, live updates (SSE), scheduler
+lib/store.js              JSON file store with atomic writes and rollback on errors
+lib/auth.js               login sessions (expiring, revocable tokens), live-update tickets, rate limit
+lib/validate.js           input validation for the API
+lib/migrations.js         one-time fixes for data from earlier versions
+lib/fx.js                 BNR exchange rates for non-RON transactions
 lib/enablebanking.js      Enable Banking client (RS256 JWT, accounts, balances, transactions)
 lib/sync.js               bank → transaction mapping, categorisation, de-duplication
 public/                   the app (no build step)

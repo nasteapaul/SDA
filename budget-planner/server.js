@@ -4,97 +4,67 @@
 
 import http from 'node:http';
 import https from 'node:https';
-import { promises as fs, readFileSync, existsSync } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
 
 import { Store } from './lib/store.js';
 import { EnableBanking } from './lib/enablebanking.js';
-import { syncBank, accountInfo, recategorize, assignImportAccounts } from './lib/sync.js';
+import { syncBank, accountInfo, recategorize } from './lib/sync.js';
+import { runMigrations } from './lib/migrations.js';
+import { Sessions, LoginLimiter } from './lib/auth.js';
+import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories } from './lib/validate.js';
 import { mergeDuplicates } from './public/js/shared/dedupe.js';
 import { ownContext, ownTransferCategory } from './public/js/shared/own.js';
-import { categorize, escapeForRule, merchantKey, extractMerchant, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
+import { categorize, escapeForRule, merchantKey, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* no .env file */ }
 
+// ---------- config ----------
 const env = process.env;
+const configErrors = [];
+function numberSetting(name, fallback, { min = 0, max = Infinity } = {}) {
+  if (env[name] === undefined || env[name] === '') return fallback;
+  const n = Number(env[name]);
+  if (!Number.isFinite(n) || n < min || n > max) configErrors.push(`${name} must be a number between ${min} and ${max} (got "${env[name]}")`);
+  return n;
+}
+
 const PASSWORD = env.APP_PASSWORD || '';
-const PORT = Number(env.PORT || 8080);
+const PORT = numberSetting('PORT', 8080, { min: 1, max: 65535 });
 const HOST = env.HOST || (PASSWORD ? '0.0.0.0' : '127.0.0.1');
 const DATA_DIR = path.resolve(ROOT, env.DATA_DIR || 'data');
-const SYNC_INTERVAL_HOURS = Number(env.SYNC_INTERVAL_HOURS || 6);
-const AUTO_SYNC_MIN_MINUTES = Number(env.AUTO_SYNC_MIN_MINUTES || 120);
+const SYNC_INTERVAL_HOURS = numberSetting('SYNC_INTERVAL_HOURS', 6, { max: 24 * 30 });
+const AUTO_SYNC_MIN_MINUTES = numberSetting('AUTO_SYNC_MIN_MINUTES', 120, { max: 24 * 60 * 30 });
+const SESSION_DAYS = numberSetting('SESSION_DAYS', 30, { min: 1, max: 365 });
 const PUBLIC_DIR = path.join(ROOT, 'public');
+const LOOPBACK = ['127.0.0.1', 'localhost', '::1'].includes(HOST);
+if (env.TLS_CERT && !env.TLS_KEY) configErrors.push('TLS_CERT is set but TLS_KEY is not');
+if (!PASSWORD && !LOOPBACK) configErrors.push(`HOST=${HOST} opens the app to the network: set APP_PASSWORD too`);
+
+// Your password and bank data must not cross the network unencrypted. On the
+// network (HOST other than localhost) the server needs HTTPS: TLS_CERT/TLS_KEY
+// here, or keep it on localhost behind an HTTPS proxy such as `tailscale serve`.
 const TLS = env.TLS_CERT && env.TLS_KEY ? { cert: readFileSync(env.TLS_CERT), key: readFileSync(env.TLS_KEY) } : null;
+if (!TLS && !LOOPBACK && env.ALLOW_INSECURE_HTTP !== '1') {
+  configErrors.push(`HOST=${HOST} without HTTPS would send your password and bank data unencrypted over the network.\n`
+    + '    Set TLS_CERT and TLS_KEY, or use HOST=127.0.0.1 behind an HTTPS proxy (e.g. `tailscale serve`).\n'
+    + '    See "Use it from your phone" in README.md. (ALLOW_INSECURE_HTTP=1 overrides this — not recommended.)');
+}
+if (configErrors.length) {
+  console.error(`\n  Can't start — fix .env:\n${configErrors.map((e) => `  - ${e}`).join('\n')}\n`);
+  process.exit(1);
+}
+
 const PUBLIC_URL = (env.PUBLIC_URL || `${TLS ? 'https' : 'http'}://localhost:${PORT}`).replace(/\/$/, '');
 const REDIRECT_URL = env.EB_REDIRECT_URL || `${PUBLIC_URL}/bank/callback`;
 
 const store = await new Store(path.join(DATA_DIR, 'budget.json')).load();
-// Earlier versions could learn rules from bank boilerplate (e.g. "number transaction"),
-// which matched almost every card payment. Drop them and redo the categories.
-if (store.get().rules.some((r) => isUselessKeyword(r.keyword || r.pattern))) {
-  await store.mutate((s) => {
-    const before = s.rules.length;
-    s.rules = s.rules.filter((r) => !isUselessKeyword(r.keyword || r.pattern));
-    // Cleaner descriptions for card payments: "CARREFOUR EXPRESS" instead of "Card number, **** …".
-    for (const t of s.transactions) {
-      if (t.source === 'bank' && /^(card number|cumparare pos)/i.test(t.description)) {
-        if (!t.note) t.note = t.description;
-        t.description = extractMerchant(t.description) || t.description;
-      }
-    }
-    const changed = recategorize(s);
-    console.log(`  Removed ${before - s.rules.length} rule(s) that matched too much; re-categorised ${changed} transaction(s)`);
-  });
-}
-
-// v3: recognise transfers between your own accounts (card repayments, Revolut,
-// cash deposits) and use the cleaner merchant names. Runs once.
-if (!store.get().settings?.ownTransfersFixed) {
-  await store.mutate((s) => {
-    for (const t of s.transactions) {
-      if (t.source === 'bank' && /^ordering party|^beneficiary/i.test(t.description)) {
-        if (!t.note) t.note = t.description;
-        t.description = extractMerchant(t.description) || t.description;
-      }
-    }
-    const changed = recategorize(s);
-    s.settings = { ...s.settings, ownTransfersFixed: true };
-    if (changed) console.log(`  Re-categorised ${changed} transaction(s) (transfers between your own accounts are no longer income/spending)`);
-  });
-}
-
-// v4: after removing statements imported twice, redo automatic categories once.
-if (!store.get().settings?.importsDeduped) {
-  await store.mutate((s) => {
-    const merged = mergeDuplicates(s);
-    const changed = recategorize(s);
-    s.settings = { ...s.settings, importsDeduped: true };
-    if (merged || changed) console.log(`  Removed ${merged} duplicate(s) from repeated imports; re-categorised ${changed} transaction(s)`);
-  });
-}
-
-// v5: imported transactions get the account they belong to (card vs current), then
-// money between own accounts is re-categorised (current → card = card repayment).
-if (!store.get().settings?.importAccountsAssigned) {
-  await store.mutate((s) => {
-    const assigned = assignImportAccounts(s);
-    const changed = recategorize(s);
-    s.settings = { ...s.settings, importAccountsAssigned: true, countMode: s.settings?.countMode || 'cashflow' };
-    if (assigned || changed) console.log(`  Linked ${assigned} imported transaction(s) to their account; re-categorised ${changed}`);
-  });
-}
-
-// Clean up duplicates left by earlier versions (CSV import + bank sync of the same purchase).
-const existingDuplicates = mergeDuplicates(structuredClone(store.get()));
-if (existingDuplicates) {
-  await store.mutate((s) => mergeDuplicates(s));
-  console.log(`  Merged ${existingDuplicates} duplicate transaction(s)`);
-}
+await runMigrations(store);
 
 const bank = new EnableBanking({
   appId: env.EB_APP_ID,
@@ -103,36 +73,47 @@ const bank = new EnableBanking({
 });
 
 // ---------- auth ----------
-const secretFile = path.join(DATA_DIR, '.secret');
-if (!existsSync(secretFile)) await fs.writeFile(secretFile, randomBytes(32).toString('hex'), { mode: 0o600 });
-const SECRET = readFileSync(secretFile, 'utf8').trim();
-const TOKEN = createHmac('sha256', SECRET).update(`token:${PASSWORD}`).digest('base64url');
+const sessions = new Sessions(path.join(DATA_DIR, '.sessions.json'), { days: SESSION_DAYS });
+const logins = new LoginLimiter();
 
 function safeEqual(a, b) {
   const x = Buffer.from(String(a)); const y = Buffer.from(String(b));
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-function authorized(req, url) {
-  if (!PASSWORD) return true;
+function bearer(req) {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : url.searchParams.get('token');
-  return token ? safeEqual(token, TOKEN) : false;
+  return header.startsWith('Bearer ') ? header.slice(7) : '';
 }
 
-const loginAttempts = new Map();
-function tooManyAttempts(ip) {
-  const now = Date.now();
-  const list = (loginAttempts.get(ip) || []).filter((t) => now - t < 15 * 60 * 1000);
-  loginAttempts.set(ip, list);
-  return list.length >= 10;
+function authorized(req, url) {
+  if (!PASSWORD) return true;
+  // EventSource can't send headers: live updates use a one-time ticket instead.
+  if (url.pathname === '/api/events') return sessions.useTicket(url.searchParams.get('ticket'));
+  return sessions.valid(bearer(req));
+}
+
+// Requests must come from this app, not from another website open in the same
+// browser (CSRF), and the Host must be ours when there is no password (DNS rebinding).
+const PUBLIC_HOST = new URL(PUBLIC_URL).host;
+function checkOrigin(req) {
+  const host = req.headers.host || '';
+  if (!PASSWORD) {
+    const hostname = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+    if (!['localhost', '127.0.0.1', '::1'].includes(hostname) && host !== PUBLIC_HOST) throw new HttpError(403, 'Forbidden host');
+  }
+  if (['GET', 'HEAD'].includes(req.method)) return;
+  const origin = req.headers.origin;
+  if (origin && origin !== 'null') {
+    let originHost;
+    try { originHost = new URL(origin).host; } catch { originHost = ''; }
+    if (originHost !== host && originHost !== PUBLIC_HOST) throw new HttpError(403, 'Cross-site request blocked');
+  } else if (origin === 'null') {
+    throw new HttpError(403, 'Cross-site request blocked');
+  }
 }
 
 // ---------- helpers ----------
-class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
-}
-
 function send(res, status, data, headers = {}) {
   const body = data === undefined ? '' : JSON.stringify(data);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
@@ -148,54 +129,10 @@ async function readBody(req, limit = 5 * 1024 * 1024) {
     chunks.push(chunk);
   }
   if (!size) return {};
+  // A plain HTML form or a text/plain fetch from another site can't send this type
+  // without a CORS preflight, which this server never approves.
+  if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) throw new HttpError(415, 'Content-Type must be application/json');
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'Invalid JSON'); }
-}
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-function cleanTransaction(input, existing = {}) {
-  const t = { ...existing };
-  if (input.type !== undefined) {
-    if (!['income', 'expense'].includes(input.type)) throw new HttpError(400, 'type must be income or expense');
-    t.type = input.type;
-  }
-  if (input.amount !== undefined) {
-    const amount = round2(Math.abs(Number(input.amount)));
-    if (!Number.isFinite(amount) || amount <= 0) throw new HttpError(400, 'amount must be a positive number');
-    t.amount = amount;
-  }
-  if (input.date !== undefined) {
-    if (!DATE_RE.test(input.date)) throw new HttpError(400, 'date must be YYYY-MM-DD');
-    t.date = input.date;
-  }
-  for (const key of ['category', 'description', 'note']) {
-    if (input[key] !== undefined) t[key] = String(input[key]).slice(0, key === 'note' ? 280 : 140);
-  }
-  if (input.goalId !== undefined) t.goalId = input.goalId || null;
-  if (input.manualCategory !== undefined) t.manualCategory = Boolean(input.manualCategory);
-  if (input.accountId !== undefined && existing.source !== 'bank') t.accountId = input.accountId || null;
-  if (input.accountManual !== undefined) t.accountManual = Boolean(input.accountManual);
-  if (!t.type || !t.amount || !t.date) throw new HttpError(400, 'type, amount and date are required');
-  t.category ||= t.type === 'income' ? 'Other income' : 'Other';
-  t.description ||= t.category;
-  return t;
-}
-
-function cleanGoal(input, existing = {}) {
-  const g = { ...existing };
-  if (input.name !== undefined) g.name = String(input.name).trim().slice(0, 80);
-  if (input.target !== undefined) g.target = round2(Number(input.target));
-  if (input.initialSaved !== undefined) g.initialSaved = round2(Number(input.initialSaved) || 0);
-  if (input.deadline !== undefined) {
-    if (input.deadline && !DATE_RE.test(input.deadline)) throw new HttpError(400, 'deadline must be YYYY-MM-DD');
-    g.deadline = input.deadline || null;
-  }
-  if (input.priority !== undefined) g.priority = ['high', 'medium', 'low'].includes(input.priority) ? input.priority : 'medium';
-  if (input.icon !== undefined) g.icon = String(input.icon).slice(0, 8);
-  if (input.archived !== undefined) g.archived = Boolean(input.archived);
-  if (!g.name || !(g.target > 0)) throw new HttpError(400, 'A goal needs a name and a positive target');
-  g.priority ||= 'medium';
-  g.initialSaved ||= 0;
-  return g;
 }
 
 const APP_VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -226,9 +163,13 @@ function publicState(s) {
 
 // ---------- bank sync ----------
 let syncing = false;
+let syncAgain = false; // a forced sync was asked for while one was running
 async function runSync({ force = false } = {}) {
   const s = store.get();
-  if (syncing) return { skipped: 'already running' };
+  if (syncing) {
+    if (force) syncAgain = true;
+    return { skipped: 'already running' };
+  }
   if (!s.bank.connections.length) return { skipped: 'no bank linked' };
   const last = s.bank.lastSync ? Date.parse(s.bank.lastSync) : 0;
   const minGap = (force ? 10 : AUTO_SYNC_MIN_MINUTES) * 60 * 1000;
@@ -236,20 +177,25 @@ async function runSync({ force = false } = {}) {
   syncing = true;
   try {
     const result = await syncBank(store, bank);
-    console.log(`[sync] ${result.added} new transaction(s) from ${result.accounts} account(s)`);
+    console.log(`[sync] ${result.added} new transaction(s) from ${result.accounts} account(s)${result.errors.length ? `; ${result.errors.length} account(s) failed` : ''}`);
     return result;
   } catch (err) {
     console.error('[sync] failed:', err.message);
-    await store.mutate((st) => { st.bank.lastError = err.message; st.bank.lastSync = new Date().toISOString(); });
+    // lastSync stays as it was, so the next scheduled run retries.
+    await store.mutate((st) => { st.bank.lastError = err.message; });
     throw new HttpError(502, err.message);
   } finally {
     syncing = false;
+    if (syncAgain) {
+      syncAgain = false;
+      runSync({ force: true }).catch(() => {});
+    }
   }
 }
 
 async function completeBankLink(code, state) {
   const pending = store.get().bank.pendingAuth;
-  if (!pending || (state && !safeEqual(state, pending.state))) throw new HttpError(400, 'Unknown or expired bank link request. Start again from Settings.');
+  if (!pending || !state || !safeEqual(state, pending.state)) throw new HttpError(400, 'Unknown or expired bank link request. Start again from Settings.');
   const session = await bank.createSession(code);
   const accounts = (session.accounts || []).map((a) => (typeof a === 'string' ? { uid: a } : a));
   await store.mutate((s) => {
@@ -276,6 +222,7 @@ async function completeBankLink(code, state) {
 }
 
 // ---------- live updates (server-sent events) ----------
+const MAX_LIVE_CLIENTS = 50;
 const clients = new Set();
 store.onChange((s) => {
   for (const res of clients) res.write(`event: change\ndata: ${JSON.stringify({ updatedAt: s.updatedAt })}\n\n`);
@@ -290,19 +237,29 @@ async function api(req, res, url) {
 
   if (pathname === '/api/login' && method === 'POST') {
     const ip = req.socket.remoteAddress;
-    if (tooManyAttempts(ip)) throw new HttpError(429, 'Too many attempts. Try again in 15 minutes.');
+    if (logins.blocked(ip)) throw new HttpError(429, 'Too many attempts. Try again in 15 minutes.');
     const { password } = await readBody(req);
     if (PASSWORD && !safeEqual(password || '', PASSWORD)) {
-      loginAttempts.get(ip).push(Date.now());
+      logins.fail(ip);
       throw new HttpError(401, 'Wrong password');
     }
-    return send(res, 200, { token: TOKEN });
+    if (!PASSWORD) return send(res, 200, { token: '' });
+    return send(res, 200, await sessions.create());
   }
   if (pathname === '/api/health') return send(res, 200, { ok: true, auth: Boolean(PASSWORD) });
 
   if (!authorized(req, url)) throw new HttpError(401, 'Login required');
 
+  if (pathname === '/api/logout' && method === 'POST') {
+    await sessions.revoke(bearer(req));
+    return send(res, 200, { ok: true });
+  }
+  if (pathname === '/api/events/ticket' && method === 'POST') {
+    return send(res, 200, { ticket: PASSWORD ? sessions.ticket() : '' });
+  }
+
   if (pathname === '/api/events' && method === 'GET') {
+    if (clients.size >= MAX_LIVE_CLIENTS) throw new HttpError(503, 'Too many live connections');
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.write(`event: change\ndata: ${JSON.stringify({ updatedAt: store.get().updatedAt })}\n\n`);
     clients.add(res);
@@ -317,6 +274,7 @@ async function api(req, res, url) {
     const id = parts[1];
     if (id === 'import' && method === 'POST') {
       const { items = [], accountId } = await readBody(req);
+      if (!Array.isArray(items)) throw new HttpError(400, 'items must be an array');
       const result = await store.mutate((s) => {
         const seen = new Set(s.transactions.map((t) => t.importHash).filter(Boolean));
         const own = ownContext(s);
@@ -331,7 +289,7 @@ async function api(req, res, url) {
           if (account) { t.accountId = account.uid; t.accountChosen = true; }
           // The note holds the bank's details (authorisation no., reference), so two genuine
           // identical-looking payments on the same day keep different fingerprints.
-          const bare = `${t.date}|${t.type}|${t.amount}|${(raw.description || '').toLowerCase()}|${(raw.note || '').toLowerCase()}`;
+          const bare = `${t.date}|${t.type}|${t.amount}|${String(raw.description || '').toLowerCase()}|${String(raw.note || '').toLowerCase()}`;
           // Identical rows inside one statement are real (two equal transfers on the same day):
           // number them, so a re-import of the same file still matches row by row.
           const nth = (occurrences.get(bare) || 0) + 1;
@@ -347,7 +305,7 @@ async function api(req, res, url) {
           added += 1;
         }
         const merged = mergeDuplicates(s); // already came in from the bank
-        return { added: added - merged, skipped: items.length - added + merged };
+        return { added: Math.max(0, added - merged), skipped: items.length - added + merged };
       });
       return send(res, 200, result);
     }
@@ -414,6 +372,8 @@ async function api(req, res, url) {
   }
 
   // Learn a rule from an edit: "always put <merchant> in <category>".
+  // Patterns are only ever built here (escaped) or taken from stored rules, never
+  // straight from the request, so a request can't run an arbitrary regex.
   if (pathname === '/api/rules' && method === 'POST') {
     const { keyword: rawKeyword, description, category, apply = true, replace } = await readBody(req);
     const keyword = String(rawKeyword || merchantKey(description) || '').trim().toLowerCase().slice(0, 60);
@@ -421,12 +381,13 @@ async function api(req, res, url) {
     if (keyword.length < 3 || isUselessKeyword(keyword)) throw new HttpError(400, `“${keyword}” is too generic — use the shop's name, e.g. “carrefour”.`);
     const pattern = escapeForRule(keyword);
     const result = await store.mutate((s) => {
-      if (replace) s.rules = s.rules.filter((r) => r.pattern !== replace);
+      const replaced = replace ? s.rules.find((r) => r.pattern === replace) : null;
+      if (replaced) s.rules = s.rules.filter((r) => r !== replaced);
       s.rules = s.rules.filter((r) => r.pattern !== pattern);
-      const rule = { pattern, keyword, category, createdAt: new Date().toISOString() };
+      const rule = { pattern, keyword, category: String(category).slice(0, 40), createdAt: new Date().toISOString() };
       s.rules.unshift(rule);
       // Transactions the old rule had changed get re-evaluated too.
-      let updated = replace ? recategorize(s, (t) => ruleMatches({ pattern: replace }, t)) : 0;
+      let updated = replaced ? recategorize(s, (t) => ruleMatches(replaced, t)) : 0;
       if (apply) updated += recategorize(s, (t) => ruleMatches(rule, t));
       return { pattern, updated };
     });
@@ -435,8 +396,10 @@ async function api(req, res, url) {
   if (parts[0] === 'rules' && parts[1] && method === 'DELETE') {
     const pattern = decodeURIComponent(parts[1]);
     const updated = await store.mutate((s) => {
-      s.rules = s.rules.filter((r) => r.pattern !== pattern);
-      return recategorize(s, (t) => ruleMatches({ pattern }, t)); // undo what the rule did
+      const rule = s.rules.find((r) => r.pattern === pattern);
+      if (!rule) return 0;
+      s.rules = s.rules.filter((r) => r !== rule);
+      return recategorize(s, (t) => ruleMatches(rule, t)); // undo what the rule did
     });
     return send(res, 200, { ok: true, updated });
   }
@@ -446,19 +409,8 @@ async function api(req, res, url) {
   }
 
   if (pathname === '/api/categories' && method === 'PUT') {
-    const { categories } = await readBody(req);
-    if (!Array.isArray(categories)) throw new HttpError(400, 'categories must be an array');
-    await store.mutate((s) => {
-      s.categories = categories
-        .filter((c) => c?.name)
-        .map((c) => ({
-          name: String(c.name).slice(0, 40),
-          kind: ['income', 'expense', 'both'].includes(c.kind) ? c.kind : 'expense',
-          icon: String(c.icon || '•').slice(0, 8),
-          essential: Boolean(c.essential),
-          ...(c.role ? { role: c.role } : {}),
-        }));
-    });
+    const categories = cleanCategories((await readBody(req)).categories);
+    await store.mutate((s) => { s.categories = categories; });
     return send(res, 200, { ok: true });
   }
 
@@ -466,15 +418,16 @@ async function api(req, res, url) {
     const { budgets } = await readBody(req);
     await store.mutate((s) => {
       s.budgets = Object.fromEntries(Object.entries(budgets || {})
-        .map(([k, v]) => [k, round2(Number(v))])
+        .slice(0, 200)
+        .map(([k, v]) => [String(k).slice(0, 40), round2(Number(v))])
         .filter(([, v]) => v > 0));
     });
     return send(res, 200, { ok: true });
   }
 
   if (pathname === '/api/settings' && method === 'PUT') {
-    const body = await readBody(req);
-    await store.mutate((s) => { s.settings = { ...s.settings, ...body }; });
+    const changes = cleanSettings(await readBody(req));
+    await store.mutate((s) => { s.settings = { ...s.settings, ...changes }; });
     return send(res, 200, { ok: true });
   }
 
@@ -487,27 +440,25 @@ async function api(req, res, url) {
     if (!bankName) throw new HttpError(400, 'Pick a bank');
     const state = randomBytes(16).toString('hex');
     const consentDays = Math.min(Number(days) || 90, 180);
-    const auth = await bank.startAuth({ bank: bankName, country, redirectUrl: REDIRECT_URL, state, days: consentDays });
+    const auth = await bank.startAuth({ bank: String(bankName), country: String(country), redirectUrl: REDIRECT_URL, state, days: consentDays });
     await store.mutate((s) => {
-      s.bank.pendingAuth = { state, bank: bankName, country, validUntil: new Date(Date.now() + consentDays * 86400000).toISOString() };
+      s.bank.pendingAuth = { state, bank: String(bankName), country: String(country), validUntil: new Date(Date.now() + consentDays * 86400000).toISOString() };
     });
     return send(res, 200, { url: auth.url });
   }
   // Fallback when the bank redirects somewhere this server can't receive:
-  // paste the full URL you landed on (it contains ?code=...).
+  // paste the full URL you landed on (it contains ?code=...&state=...).
   if (pathname === '/api/bank/complete' && method === 'POST') {
-    const { url: landed, code } = await readBody(req);
-    let c = code; let st = null;
-    if (landed) {
-      try { const u = new URL(landed); c = u.searchParams.get('code'); st = u.searchParams.get('state'); } catch { throw new HttpError(400, 'That does not look like a URL'); }
-    }
-    if (!c) throw new HttpError(400, 'No authorisation code found');
-    await completeBankLink(c, st);
+    const { url: landed } = await readBody(req);
+    let code; let state;
+    try { const u = new URL(landed); code = u.searchParams.get('code'); state = u.searchParams.get('state'); } catch { throw new HttpError(400, 'That does not look like a URL'); }
+    if (!code) throw new HttpError(400, 'No authorisation code found');
+    await completeBankLink(code, state);
     return send(res, 200, { ok: true });
   }
   if (pathname === '/api/bank/sync' && method === 'POST') {
     const { force = true } = await readBody(req);
-    return send(res, 200, await runSync({ force }));
+    return send(res, 200, await runSync({ force: Boolean(force) }));
   }
   // Your own settings for a linked account: type, credit limit, how to read the balance.
   if (parts[0] === 'bank' && parts[1] === 'accounts' && parts[2] && method === 'PUT') {
@@ -547,6 +498,14 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+  // Inline style attributes are used by the views; scripts only from this server.
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+};
+
 async function serveStatic(req, res, url) {
   let rel = decodeURIComponent(url.pathname);
   if (rel === '/') rel = '/index.html';
@@ -564,8 +523,7 @@ async function serveStatic(req, res, url) {
   res.writeHead(200, {
     'Content-Type': MIME[path.extname(target)] || 'application/octet-stream',
     'Cache-Control': 'no-cache',
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    ...SECURITY_HEADERS,
   });
   res.end(data);
 }
@@ -573,6 +531,7 @@ async function serveStatic(req, res, url) {
 async function handler(req, res) {
   const url = new URL(req.url, 'http://local');
   try {
+    checkOrigin(req);
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname === '/bank/callback') {
       const code = url.searchParams.get('code');
@@ -589,24 +548,32 @@ async function handler(req, res) {
   } catch (err) {
     const status = err.status && err.status < 600 ? err.status : 500;
     if (status >= 500 && status !== 502) console.error(err);
-    if (!res.headersSent) send(res, status, { error: err.message || 'Server error' });
+    // Unexpected errors stay in the server log; the client gets a generic message.
+    const message = status === 500 ? 'Server error' : err.message;
+    if (!res.headersSent) send(res, status, { error: message });
     else res.end();
   }
   return undefined;
 }
 
+// windows/restart-server.bat stops exactly this process, not every Node app.
+const PID_FILE = path.join(DATA_DIR, 'server.pid');
+
 const server = TLS ? https.createServer(TLS, handler) : http.createServer(handler);
 server.listen(PORT, HOST, () => {
+  fs.writeFile(PID_FILE, String(process.pid)).catch(() => {});
   const proto = TLS ? 'https' : 'http';
   console.log(`\n  Budget planner running on ${proto}://localhost:${PORT}`);
-  if (HOST === '0.0.0.0') {
+  if (!LOOPBACK) {
     for (const addrs of Object.values(os.networkInterfaces())) {
       for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) console.log(`  On your Wi-Fi:  ${proto}://${a.address}:${PORT}`);
     }
+    if (!TLS) console.warn('  WARNING: ALLOW_INSECURE_HTTP=1 — your password and data travel unencrypted on the network.');
   } else {
-    console.log('  Only reachable from this computer. Set APP_PASSWORD in .env to open it to your phone on the home Wi-Fi.');
+    console.log('  Only reachable from this computer. To use it from your phone, see "Use it from your phone" in README.md.');
   }
-  console.log(`  Bank sync: ${bank.configured ? `enabled (every ${SYNC_INTERVAL_HOURS}h)` : 'not configured — see README'}\n`);
+  const schedule = SYNC_INTERVAL_HOURS > 0 ? `every ${SYNC_INTERVAL_HOURS}h` : 'only when you press Sync';
+  console.log(`  Bank sync: ${bank.configured ? `enabled (${schedule})` : 'not configured — see README'}\n`);
 });
 
 if (SYNC_INTERVAL_HOURS > 0) {
@@ -614,4 +581,6 @@ if (SYNC_INTERVAL_HOURS > 0) {
   setTimeout(() => runSync().catch(() => {}), 10_000).unref();
 }
 
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => server.close(() => fs.rm(PID_FILE, { force: true }).finally(() => process.exit(0))));
+}

@@ -11,7 +11,9 @@ OUT=build
 VERSION_CODE=${VERSION_CODE:-1}
 VERSION_NAME=${VERSION_NAME:-1.0}
 KEYSTORE=${KEYSTORE:-keystore/budget.p12}
-KEYSTORE_PASS=${KEYSTORE_PASS:-budget-planner}
+# The signing key's password: anyone with the keystore and this password can sign
+# updates that replace your app, so there is no built-in default.
+KEYSTORE_PASS=${KEYSTORE_PASS:?Set KEYSTORE_PASS to the signing key password, e.g. KEYSTORE_PASS=... ./build.sh}
 M=https://repo1.maven.org/maven2
 mkdir -p "$TOOLS"
 

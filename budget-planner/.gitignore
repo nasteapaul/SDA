@@ -1,6 +1,33 @@
+.tools/
+build/
+keystore/
 node_modules/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+
+# Live data: transactions, IBANs, bank sessions, token-signing secret, logs
 data/*
 !data/.gitkeep
-.env
-*.pem
 demo-data/
+*.log
+
+# Real bank statement exports
+Extrases/
+*.csv
+
+# Ruflo (kept local only)
+.claude/
+.claude-flow/
+.agents/
+.mcp.json
+CLAUDE.md
+.swarm/
+.hive-mind/

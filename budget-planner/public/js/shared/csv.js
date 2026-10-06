@@ -62,9 +62,11 @@ export function parseDate(input) {
   return null;
 }
 
+// Only real calendar dates (31.02 is rejected, 29.02 only in leap years).
 function iso(y, mo, d) {
   const date = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-  return Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31 ? date : null;
+  const daysInMonth = new Date(Number(y), Number(mo), 0).getDate();
+  return Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= daysInMonth ? date : null;
 }
 
 /**

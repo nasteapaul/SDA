@@ -50,13 +50,16 @@ export class Store {
     return this.state;
   }
 
-  // mutate(fn): fn receives the state and may change it in place; its return
-  // value is passed back. The change is persisted before the promise resolves.
+  // mutate(fn): fn receives a copy of the state and may change it in place; its
+  // return value is passed back. The copy replaces the state only once it is on
+  // disk, so a fn that throws halfway (or a failed write) changes nothing.
   mutate(fn) {
     const run = this.queue.then(async () => {
-      const result = await fn(this.state);
-      this.state.updatedAt = new Date().toISOString();
-      await this.persist();
+      const draft = structuredClone(this.state);
+      const result = await fn(draft);
+      draft.updatedAt = new Date().toISOString();
+      await this.persist(draft);
+      this.state = draft;
       for (const l of this.listeners) l(this.state);
       return result;
     });
@@ -69,10 +72,24 @@ export class Store {
     return () => this.listeners.delete(fn);
   }
 
-  async persist() {
+  async persist(state = this.state) {
     await fs.mkdir(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(this.state, null, 2), { mode: 0o600 });
-    await fs.rename(tmp, this.file);
+    await fs.writeFile(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
+    await renameWithRetry(tmp, this.file);
+  }
+}
+
+// On Windows, antivirus or sync tools briefly holding the file make rename fail
+// with EPERM/EBUSY/EACCES; a short retry gets past it.
+async function renameWithRetry(from, to, attempts = 5) {
+  for (let i = 1; ; i += 1) {
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (err) {
+      if (i >= attempts || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;
+      await new Promise((r) => setTimeout(r, 50 * i));
+    }
   }
 }

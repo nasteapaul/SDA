@@ -40,7 +40,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * Thin native shell around the self-hosted Budget Planner web app.
  *
- * - First launch asks for the home server address (e.g. http://192.168.1.50:8080).
+ * - First launch asks for the home server address (e.g. https://budget.example.ts.net).
  * - At home: loads the live app from the server.
  * - Away from home: loads the last cached copy; the web app then shows the
  *   data it saved locally and queues edits until you are back on your Wi-Fi.
@@ -98,7 +98,7 @@ public class MainActivity extends Activity {
         box.addView(title);
 
         TextView body = new TextView(this);
-        body.setText("Enter the address your home server prints when it starts (\"On your Wi-Fi: http://…\"). "
+        body.setText("Enter the address your home server prints when it starts (\"On your Wi-Fi: https://…\", or your Tailscale address). "
                 + "Your phone must be on the same Wi-Fi the first time.");
         body.setTextSize(15);
         body.setTextColor(muted);
@@ -109,8 +109,8 @@ public class MainActivity extends Activity {
         input.setSingleLine(true);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         input.setImeOptions(EditorInfo.IME_ACTION_GO);
-        input.setHint("http://192.168.1.50:8080");
-        input.setText(server != null ? server : "http://192.168.");
+        input.setHint("https://192.168.1.50:8080");
+        input.setText(server != null ? server : "https://");
         input.setSelection(input.getText().length());
         input.setTextSize(18);
         input.setTextColor(ink);
@@ -137,7 +137,7 @@ public class MainActivity extends Activity {
             public void onClick(View v) {
                 final String url = normalize(input.getText().toString());
                 if (url == null) {
-                    error.setText("That doesn't look like an address. Example: http://192.168.1.50:8080");
+                    error.setText("That doesn't look like an address. Example: https://192.168.1.50:8080");
                     return;
                 }
                 connect.setEnabled(false);
@@ -190,7 +190,7 @@ public class MainActivity extends Activity {
     private static String normalize(String raw) {
         String s = raw == null ? "" : raw.trim();
         if (s.isEmpty()) return null;
-        if (!s.startsWith("http://") && !s.startsWith("https://")) s = "http://" + s;
+        if (!s.startsWith("http://") && !s.startsWith("https://")) s = "https://" + s;
         while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
         Uri u = Uri.parse(s);
         if (u.getHost() == null || u.getHost().isEmpty()) return null;

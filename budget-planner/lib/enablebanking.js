@@ -6,8 +6,11 @@
 
 import { createSign } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import { round2 } from '../public/js/shared/money.js';
 
 const DEFAULT_API = 'https://api.enablebanking.com';
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_PAGES = 50;
 
 function b64url(input) {
   return Buffer.from(input).toString('base64url');
@@ -51,6 +54,8 @@ export class EnableBanking {
         Accept: 'application/json',
       },
       body: body ? JSON.stringify(body) : undefined,
+      // A stalled bank request must not leave the sync "running" forever.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const text = await res.text();
     let data;
@@ -104,10 +109,12 @@ export class EnableBanking {
     return data.balances || [];
   }
 
+  // Returns the transactions; `.truncated` is true when the page limit was hit
+  // and more pages remain, so the caller knows the list is incomplete.
   async transactions(accountUid, dateFrom) {
     const all = [];
     let continuationKey;
-    for (let page = 0; page < 50; page += 1) {
+    for (let page = 0; page < MAX_PAGES; page += 1) {
       const data = await this.request('GET', `/accounts/${encodeURIComponent(accountUid)}/transactions`, {
         query: { date_from: dateFrom, continuation_key: continuationKey },
       });
@@ -115,21 +122,25 @@ export class EnableBanking {
       continuationKey = data.continuation_key;
       if (!continuationKey) break;
     }
+    all.truncated = Boolean(continuationKey);
     return all;
   }
 }
 
 // Pick the most useful balance: booked/closing first, then available.
+// Balances without a usable amount are ignored.
 export function pickBalance(balances) {
   const order = ['CLBD', 'ITBD', 'XPCD', 'ITAV', 'CLAV', 'OPBD', 'PRCD'];
-  const sorted = [...balances].sort((a, b) => {
-    const ia = order.indexOf(a.balance_type); const ib = order.indexOf(b.balance_type);
-    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-  });
+  const sorted = (balances || [])
+    .filter((b) => Number.isFinite(Number.parseFloat(b?.balance_amount?.amount)))
+    .sort((a, b) => {
+      const ia = order.indexOf(a.balance_type); const ib = order.indexOf(b.balance_type);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
   const b = sorted[0];
   if (!b) return null;
   return {
-    amount: Number(b.balance_amount?.amount),
+    amount: round2(b.balance_amount.amount),
     currency: b.balance_amount?.currency,
     type: b.balance_type,
     creditLimitIncluded: Boolean(b.credit_limit_included),

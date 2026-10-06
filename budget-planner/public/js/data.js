@@ -35,7 +35,9 @@ export class Data extends EventTarget {
 
   setToken(token) { this.token = token; save(LS_TOKEN, token); }
 
-  logout() {
+  async logout() {
+    // Revoke the token on the server too, so a copy of it stops working.
+    try { await this.fetch('/api/logout', { method: 'POST' }); } catch { /* offline: it expires on its own */ }
     this.setToken('');
     try { localStorage.removeItem(LS_STATE); } catch { /* ignore */ }
     this.events?.close();
@@ -122,10 +124,24 @@ export class Data extends EventTarget {
     return this.flushing;
   }
 
-  connectLive() {
-    if (!('EventSource' in window) || this.events) return;
-    const url = `/api/events${this.token ? `?token=${encodeURIComponent(this.token)}` : ''}`;
-    const es = new EventSource(url);
+  // EventSource can't send the Authorization header, so it gets a one-time
+  // ticket instead of the login token (which would end up in server logs).
+  async connectLive() {
+    if (!('EventSource' in window) || this.events || this.connecting) return;
+    this.connecting = true;
+    let ticket = '';
+    try {
+      if (this.token) ({ ticket } = await this.fetch('/api/events/ticket', { method: 'POST' }));
+    } catch (err) {
+      this.connecting = false;
+      if (err instanceof AuthError) { this.emit('auth'); return; }
+      this.setOnline(false);
+      setTimeout(() => this.connectLive(), 10000);
+      return;
+    }
+    this.connecting = false;
+    if (this.events) return;
+    const es = new EventSource(`/api/events${ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''}`);
     this.events = es;
     es.addEventListener('change', (e) => {
       this.setOnline(true);
