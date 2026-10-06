@@ -1,8 +1,9 @@
 // One-time data fixes for stores written by earlier versions. Each runs when
-// its check says it's needed, then re-categorises what it changed.
+// its check says it's needed, then re-categorises what it changed. A backup is
+// taken before the first one runs; rows merged away go to the trash.
 
 import { recategorize, assignImportAccounts } from './sync.js';
-import { mergeDuplicates } from '../public/js/shared/dedupe.js';
+import { mergeDuplicatesToTrash } from './store.js';
 import { extractMerchant, isUselessKeyword } from '../public/js/shared/categories.js';
 
 // Clearer descriptions for bank rows: the merchant instead of the bank's boilerplate.
@@ -43,7 +44,7 @@ const MIGRATIONS = [
     // v4: after removing statements imported twice, redo automatic categories once.
     needed: (s) => !s.settings?.importsDeduped,
     run: (s) => {
-      const merged = mergeDuplicates(s);
+      const merged = mergeDuplicatesToTrash(s);
       const changed = recategorize(s);
       s.settings = { ...s.settings, importsDeduped: true };
       return (merged || changed) && `Removed ${merged} duplicate(s) from repeated imports; re-categorised ${changed} transaction(s)`;
@@ -61,15 +62,26 @@ const MIGRATIONS = [
     },
   },
   {
-    // Duplicates left by earlier versions (CSV import + bank sync of the same purchase).
-    needed: (s) => mergeDuplicates(structuredClone(s)) > 0,
-    run: (s) => `Merged ${mergeDuplicates(s)} duplicate transaction(s)`,
+    // v6: duplicates left by earlier versions (CSV import + bank sync of the same
+    // purchase), merged once. New ones are merged by the import and the sync.
+    needed: (s) => !s.settings?.duplicatesMerged,
+    run: (s) => {
+      const merged = mergeDuplicatesToTrash(s);
+      s.settings = { ...s.settings, duplicatesMerged: true };
+      return merged && `Merged ${merged} duplicate transaction(s) (kept in the trash)`;
+    },
   },
 ];
 
 export async function runMigrations(store, log = console.log) {
+  let backedUp = false;
   for (const m of MIGRATIONS) {
     if (!m.needed(store.get())) continue;
+    if (!backedUp) {
+      const file = await store.backup('pre-migration');
+      if (file) log(`  Backup before updating your data: ${file}`);
+      backedUp = true;
+    }
     const message = await store.mutate((s) => m.run(s));
     if (message) log(`  ${message}`);
   }

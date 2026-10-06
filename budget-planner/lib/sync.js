@@ -7,8 +7,8 @@ import { categorize, extractMerchant, ruleText } from '../public/js/shared/categ
 import { round2, todayISO, uid } from '../public/js/shared/money.js';
 import { pickBalance, accountIdentity } from './enablebanking.js';
 import { accountKind } from '../public/js/shared/accounts.js';
-import { mergeDuplicates } from '../public/js/shared/dedupe.js';
 import { mainAccountOf } from '../public/js/shared/ledger.js';
+import { mergeDuplicatesToTrash } from './store.js';
 import { ownContext, ownTransferCategory, ibansIn } from '../public/js/shared/own.js';
 import { bnrRateOn } from './fx.js';
 
@@ -464,7 +464,7 @@ export async function syncBank(store, client, { lookbackDays = 90, rate = bnrRat
     // Earlier entries between your own accounts (not categorised by hand) → Transfers.
     const own = ownContext(s);
     recategorize(s, (t) => { const c = ownTransferCategory(t, own); return Boolean(c) && c !== t.category; });
-    const merged = mergeDuplicates(s); // same purchase already imported from a CSV
+    const merged = mergeDuplicatesToTrash(s); // same purchase already imported from a CSV
     s.bank.lastSync = new Date().toISOString();
     s.bank.lastError = errors.length ? errors.join('; ') : null;
     return { added: Math.max(0, added - merged), accounts: fetched.length, errors };
