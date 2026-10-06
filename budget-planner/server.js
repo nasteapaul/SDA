@@ -10,12 +10,13 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
 
-import { Store } from './lib/store.js';
+import { Store, removeTransactions, restoreFromTrash, addTombstones, TRASH_DAYS } from './lib/store.js';
+import { dailyBackup } from './lib/backup.js';
 import { EnableBanking } from './lib/enablebanking.js';
 import { syncBank, accountInfo, recategorize } from './lib/sync.js';
 import { runMigrations } from './lib/migrations.js';
 import { Sessions, LoginLimiter } from './lib/auth.js';
-import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories } from './lib/validate.js';
+import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories, cleanBudgets, requireObject, findConflicts } from './lib/validate.js';
 import { mergeDuplicates } from './public/js/shared/dedupe.js';
 import { ownContext, ownTransferCategory } from './public/js/shared/own.js';
 import { categorize, escapeForRule, merchantKey, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
@@ -64,7 +65,15 @@ const PUBLIC_URL = (env.PUBLIC_URL || `${TLS ? 'https' : 'http'}://localhost:${P
 const REDIRECT_URL = env.EB_REDIRECT_URL || `${PUBLIC_URL}/bank/callback`;
 
 const store = await new Store(path.join(DATA_DIR, 'budget.json')).load();
-await runMigrations(store);
+await runMigrations(store); // backs up first when a migration is needed
+
+// One backup a day (data/backups), checked hourly so a server left running for
+// weeks still makes them.
+async function backupDaily() {
+  try { await store.queue; await dailyBackup(store.file, { dir: store.backupDir }); } catch (err) { console.error('[backup] failed:', err.message); }
+}
+await backupDaily();
+setInterval(backupDaily, 3600 * 1000).unref();
 
 const bank = new EnableBanking({
   appId: env.EB_APP_ID,
@@ -132,7 +141,9 @@ async function readBody(req, limit = 5 * 1024 * 1024) {
   // A plain HTML form or a text/plain fetch from another site can't send this type
   // without a CORS preflight, which this server never approves.
   if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) throw new HttpError(415, 'Content-Type must be application/json');
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'Invalid JSON'); }
+  let body;
+  try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'Invalid JSON'); }
+  return requireObject(body);
 }
 
 const APP_VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -142,6 +153,8 @@ function publicState(s) {
     ...s,
     appVersion: APP_VERSION,
     deletedBankRefs: undefined,
+    deletedIds: undefined, // internal; the trash has its own endpoint
+    trash: undefined,
     bank: {
       configured: bank.configured,
       redirectUrl: REDIRECT_URL,
@@ -310,38 +323,61 @@ async function api(req, res, url) {
       return send(res, 200, result);
     }
     // "Start over": remove every transaction that came from a CSV import.
+    // A backup is taken first, and the rows stay in the trash.
     if (id === 'imported' && method === 'DELETE') {
-      const removed = await store.mutate((s) => {
-        const before = s.transactions.length;
-        s.transactions = s.transactions.filter((t) => t.source !== 'import');
-        return before - s.transactions.length;
-      });
+      await store.backup('pre-delete-imported');
+      const removed = await store.mutate((s) => removeTransactions(s, (t) => t.source === 'import', 'delete-imported').length);
       return send(res, 200, { removed });
     }
+    // Offline edits are replayed later, so: a deleted transaction is never
+    // re-created (409 deleted), and an edit made on an older copy that clashes
+    // with a newer change from another device is refused (409 conflict).
     if (id && method === 'PUT') {
       const body = await readBody(req);
-      const saved = await store.mutate((s) => {
-        const idx = s.transactions.findIndex((t) => t.id === id);
-        const now = new Date().toISOString();
-        if (idx === -1) {
-          const t = { ...cleanTransaction(body), id, source: 'manual', createdAt: now, updatedAt: now };
-          s.transactions.push(t);
+      try {
+        const saved = await store.mutate((s) => {
+          const idx = s.transactions.findIndex((t) => t.id === id);
+          const now = new Date().toISOString();
+          if (idx === -1) {
+            if (s.deletedIds?.includes(id)) throw new HttpError(409, 'deleted');
+            const t = { ...cleanTransaction(body), id, source: 'manual', createdAt: now, updatedAt: now };
+            s.transactions.push(t);
+            return t;
+          }
+          if (findConflicts(s.transactions[idx], body).length) throw new HttpError(409, 'conflict', { current: s.transactions[idx] });
+          const t = { ...cleanTransaction(body, s.transactions[idx]), updatedAt: now };
+          s.transactions[idx] = t;
           return t;
-        }
-        const t = { ...cleanTransaction(body, s.transactions[idx]), updatedAt: now };
-        s.transactions[idx] = t;
-        return t;
-      });
-      return send(res, 200, saved);
+        });
+        return send(res, 200, saved);
+      } catch (err) {
+        if (err.status === 409) return send(res, 409, { error: err.message, ...err.details });
+        throw err;
+      }
     }
     if (id && method === 'DELETE') {
       await store.mutate((s) => {
-        const t = s.transactions.find((x) => x.id === id);
-        if (t?.bankRef) s.deletedBankRefs.push(t.bankRef); // don't re-import on next sync
-        s.transactions = s.transactions.filter((x) => x.id !== id);
+        // To the trash; a bank row is remembered so the next sync doesn't re-import it.
+        if (!removeTransactions(s, (x) => x.id === id, 'delete').length) addTombstones(s, [id]);
       });
       return send(res, 200, { ok: true });
     }
+  }
+
+  // Trash: transactions removed by you or merged as duplicates, newest first.
+  if (pathname === '/api/trash' && method === 'GET') {
+    const cutoff = Date.now() - TRASH_DAYS * 86400000;
+    const trash = (store.get().trash || []).filter((e) => Date.parse(e.removedAt) >= cutoff).reverse();
+    return send(res, 200, { trash });
+  }
+  if (parts[0] === 'trash' && parts[1] && parts[2] === 'restore' && method === 'POST') {
+    const id = decodeURIComponent(parts[1]);
+    const restored = await store.mutate((s) => {
+      const t = restoreFromTrash(s, id);
+      if (!t) throw new HttpError(404, 'Not in the trash (or already back)');
+      return t;
+    });
+    return send(res, 200, restored);
   }
 
   if (parts[0] === 'goals' && parts[1]) {
@@ -415,13 +451,8 @@ async function api(req, res, url) {
   }
 
   if (pathname === '/api/budgets' && method === 'PUT') {
-    const { budgets } = await readBody(req);
-    await store.mutate((s) => {
-      s.budgets = Object.fromEntries(Object.entries(budgets || {})
-        .slice(0, 200)
-        .map(([k, v]) => [String(k).slice(0, 40), round2(Number(v))])
-        .filter(([, v]) => v > 0));
-    });
+    const budgets = cleanBudgets((await readBody(req)).budgets);
+    await store.mutate((s) => { s.budgets = budgets; });
     return send(res, 200, { ok: true });
   }
 

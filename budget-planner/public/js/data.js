@@ -3,11 +3,23 @@
 // - The last known state is cached locally so the app opens instantly and
 //   works away from home; edits made offline are queued in an outbox and
 //   replayed when the phone is back on the home Wi-Fi.
+// - Replayed edits carry the version they were made on; if another device
+//   changed or deleted the same transaction meanwhile, the server refuses it
+//   (409) and the edit is dropped with a message instead of overwriting.
 // - Server-sent events keep the phone and laptop in sync live.
 
 const LS_STATE = 'bp.state';
 const LS_OUTBOX = 'bp.outbox';
 const LS_TOKEN = 'bp.token';
+
+// Transaction fields the server keeps itself; never sent as "changes".
+const TX_META = new Set(['id', 'createdAt', 'updatedAt', 'source', 'bankRef', 'importHash', 'batchId']);
+const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null) || ((a ?? '') === '' && (b ?? '') === '');
+
+const CONFLICT_MESSAGES = {
+  deleted: 'A change was not applied: this transaction was deleted on another device.',
+  conflict: 'A change was not applied: this transaction was changed on another device in the meantime. Showing the latest version.',
+};
 
 function load(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
@@ -27,6 +39,7 @@ export class Data extends EventTarget {
     this.online = false;
     this.flushing = null;
     this.events = null;
+    this.deletedHere = new Set(); // deleted from this device: "undo" restores them from the trash
   }
 
   get pending() { return this.outbox.length; }
@@ -56,6 +69,7 @@ export class Data extends EventTarget {
     if (!res.ok) {
       const err = new Error(data.error || `Request failed (${res.status})`);
       err.status = res.status;
+      err.data = data;
       throw err;
     }
     return data;
@@ -107,7 +121,10 @@ export class Data extends EventTarget {
           this.setOnline(true);
         } catch (err) {
           if (err instanceof AuthError) { this.emit('auth'); return; }
-          if (err.status && err.status < 500) {
+          if (err.status === 409) {
+            // Changed or deleted on another device: drop it; the refresh below shows the server's copy.
+            this.emit('error', CONFLICT_MESSAGES[err.data?.error] || CONFLICT_MESSAGES.conflict);
+          } else if (err.status && err.status < 500) {
             // The server rejected it (invalid data) — drop it so the queue can't jam.
             this.emit('error', `Couldn't save a change: ${err.message}`);
           } else {
@@ -159,8 +176,31 @@ export class Data extends EventTarget {
   }
 
   // ---- high level operations ----
+  // An edit of a known transaction sends only the fields that changed, with the
+  // values and version (updatedAt) it was made on, so the server can tell a
+  // stale edit from another device's newer change.
   upsertTransaction(t) {
-    return this.mutate({ method: 'PUT', path: `/api/transactions/${encodeURIComponent(t.id)}`, body: t }, (s) => {
+    const path = `/api/transactions/${encodeURIComponent(t.id)}`;
+    if (this.deletedHere.has(t.id)) {
+      // Undo of a delete made here: bring back the original from the trash.
+      this.deletedHere.delete(t.id);
+      return this.mutate({ method: 'POST', path: `/api/trash/${encodeURIComponent(t.id)}/restore` }, (s) => {
+        if (!s.transactions.some((x) => x.id === t.id)) s.transactions.push(t);
+      });
+    }
+    const prev = this.state?.transactions?.find((x) => x.id === t.id);
+    let body = t;
+    if (prev) {
+      body = { baseUpdatedAt: prev.updatedAt, base: {} };
+      const changes = {};
+      for (const [key, value] of Object.entries(t)) {
+        if (TX_META.has(key) || sameValue(value, prev[key])) continue;
+        changes[key] = value;
+        body.base[key] = prev[key];
+      }
+      body = { ...changes, ...body };
+    }
+    return this.mutate({ method: 'PUT', path, body }, (s) => {
       const i = s.transactions.findIndex((x) => x.id === t.id);
       if (i === -1) s.transactions.push({ source: 'manual', ...t });
       else s.transactions[i] = { ...s.transactions[i], ...t };
@@ -168,9 +208,20 @@ export class Data extends EventTarget {
   }
 
   deleteTransaction(id) {
+    this.deletedHere.add(id);
     return this.mutate({ method: 'DELETE', path: `/api/transactions/${encodeURIComponent(id)}` }, (s) => {
       s.transactions = s.transactions.filter((x) => x.id !== id);
     });
+  }
+
+  // Removed transactions (deleted or merged as duplicates), newest first.
+  async trash() {
+    return (await this.fetch('/api/trash')).trash;
+  }
+
+  restoreTransaction(id) {
+    this.deletedHere.delete(id);
+    return this.mutate({ method: 'POST', path: `/api/trash/${encodeURIComponent(id)}/restore` });
   }
 
   upsertGoal(g) {

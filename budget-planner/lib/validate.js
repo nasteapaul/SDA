@@ -6,7 +6,24 @@ import { INTENSITY } from '../public/js/shared/planner.js';
 import { COUNT_MODES } from '../public/js/shared/ledger.js';
 
 export class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  // details: extra fields for the JSON error body (e.g. { current } on a 409).
+  constructor(status, message, details) { super(message); this.status = status; if (details) this.details = details; }
+}
+
+// Largest amount accepted anywhere (RON). Guards against typos and overflow.
+export const MAX_AMOUNT = 1e9;
+
+/** Request bodies must be plain JSON objects; anything else is a 400. */
+export function requireObject(value, name = 'request body') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, `${name} must be a JSON object`);
+  return value;
+}
+
+// A money amount: finite and at most MAX_AMOUNT. Sign checks are the caller's.
+function money(value, name) {
+  const n = round2(toNumber(value));
+  if (!Number.isFinite(n) || Math.abs(n) > MAX_AMOUNT) throw new HttpError(400, `${name} must be a number up to ${MAX_AMOUNT.toLocaleString('en')}`);
+  return n;
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -29,6 +46,7 @@ function optionalId(value, name, max = 200) {
 }
 
 export function cleanTransaction(input, existing = {}) {
+  requireObject(input, 'transaction');
   const t = { ...existing };
   if (input.type !== undefined) {
     if (!['income', 'expense'].includes(input.type)) throw new HttpError(400, 'type must be income or expense');
@@ -37,7 +55,7 @@ export function cleanTransaction(input, existing = {}) {
   if (input.amount !== undefined) {
     const amount = round2(Math.abs(toNumber(input.amount)));
     if (!Number.isFinite(amount) || amount <= 0) throw new HttpError(400, 'amount must be a positive number');
-    t.amount = amount;
+    t.amount = money(amount, 'amount');
   }
   if (input.date !== undefined) {
     if (!isDate(input.date)) throw new HttpError(400, 'date must be a valid YYYY-MM-DD date');
@@ -57,10 +75,15 @@ export function cleanTransaction(input, existing = {}) {
 }
 
 export function cleanGoal(input, existing = {}) {
+  requireObject(input, 'goal');
   const g = { ...existing };
   if (input.name !== undefined) g.name = String(input.name).trim().slice(0, 80);
-  if (input.target !== undefined) g.target = round2(toNumber(input.target));
-  if (input.initialSaved !== undefined) g.initialSaved = round2(toNumber(input.initialSaved) || 0);
+  if (input.target !== undefined) g.target = money(input.target, 'target');
+  if (input.initialSaved !== undefined) {
+    const blank = input.initialSaved === null || input.initialSaved === '';
+    g.initialSaved = blank ? 0 : money(input.initialSaved, 'initialSaved');
+    if (g.initialSaved < 0) throw new HttpError(400, 'initialSaved can\'t be negative');
+  }
   if (input.deadline !== undefined) {
     if (input.deadline && !isDate(input.deadline)) throw new HttpError(400, 'deadline must be a valid YYYY-MM-DD date');
     g.deadline = input.deadline || null;
@@ -118,4 +141,49 @@ export function cleanCategories(categories) {
       essential: Boolean(c.essential),
       ...(ROLES.includes(c.role) ? { role: c.role } : {}),
     }));
+}
+
+/**
+ * Monthly budgets: { category: limit }. A limit of 0 (or empty) removes the
+ * budget; anything that isn't a number, or is above MAX_AMOUNT, is a 400.
+ */
+export function cleanBudgets(budgets) {
+  if (budgets === undefined || budgets === null) return {};
+  requireObject(budgets, 'budgets');
+  const out = {};
+  for (const [k, v] of Object.entries(budgets).slice(0, 200)) {
+    const limit = v === null || v === '' ? 0 : money(v, `budget for ${String(k).slice(0, 40)}`);
+    if (limit > 0) out[String(k).slice(0, 40)] = limit;
+  }
+  return out;
+}
+
+// ---------- offline edits: optimistic concurrency ----------
+
+const META = new Set(['id', 'base', 'baseUpdatedAt', 'createdAt', 'updatedAt', 'source']);
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  || ((a ?? '') === '' && (b ?? '') === '');
+
+/**
+ * Fields of a transaction edit that clash with a newer change on the server.
+ * `body.baseUpdatedAt` is the version the client last saw; `body.base` holds
+ * the values it saw for the fields it changed. A field conflicts when the
+ * stored row changed after that version, the server's value is no longer the
+ * one the client saw, and the client wants something else. Without `base`
+ * every field that differs from the stored value counts. No baseUpdatedAt
+ * (older clients) or a row that hasn't changed since: no conflicts.
+ */
+export function findConflicts(stored, body) {
+  if (!stored || !body?.baseUpdatedAt) return [];
+  const seen = Date.parse(body.baseUpdatedAt);
+  const current = Date.parse(stored.updatedAt || stored.createdAt || '');
+  if (!Number.isFinite(seen) || !Number.isFinite(current) || current <= seen) return [];
+  const base = body.base && typeof body.base === 'object' && !Array.isArray(body.base) ? body.base : null;
+  const out = [];
+  for (const key of Object.keys(body)) {
+    if (META.has(key) || same(body[key], stored[key])) continue;
+    if (base && same(base[key], stored[key])) continue; // only this client changed it
+    out.push(key);
+  }
+  return out;
 }
