@@ -90,10 +90,14 @@ function mergeIntoBank(state) {
   for (const x of state.transactions) {
     if (x.source === 'bank' || x.goalId) continue;
     const xAccount = accountOf(x);
+    const manual = x.source === 'manual';
     let best = null;
     for (const y of bank) {
       if (used.has(y.id) || !isSameTransaction(x, y)) continue;
       if (xAccount && y.accountId && xAccount !== y.accountId) continue;
+      // Something you typed in (cash at Kaufland) is only the bank's copy when it is
+      // the same day, amount and account; otherwise keep both, never delete it.
+      if (manual && (x.date !== y.date || !y.accountId || (x.accountId || xAccount) !== y.accountId)) continue;
       if (!best || dayDiff(x.date, y.date) < dayDiff(x.date, best.date)) best = y;
     }
     if (!best) continue;
@@ -106,4 +110,72 @@ function mergeIntoBank(state) {
   }
   if (remove.size) state.transactions = state.transactions.filter((t) => !remove.has(t.id));
   return remove.size;
+}
+
+// ---------------------------------------------------------------- CSV imports
+// An imported row's fingerprint (importHash) is `${accountId}|${bare}[#n]`:
+// the account picked in the import screen, the row's text (`bare`) and its
+// occurrence number within the statement. Older versions stored `bare` alone.
+// The account *picked* must not matter (the same file imported as "Current
+// account" and then as "auto" is still the same file), but the account the
+// row really belongs to does (identical rows on the current account and on
+// the card statement are two transactions).
+
+const LEGACY = /^\d{4}-\d{2}-\d{2}\|/; // a bare fingerprint starts with the date
+
+function splitHash(hash) {
+  if (LEGACY.test(hash)) return { account: '', rest: hash };
+  const i = hash.indexOf('|');
+  return { account: hash.slice(0, i), rest: hash.slice(i + 1) };
+}
+
+function resolver(state) {
+  const L = state.categories ? makeLedger(state) : null;
+  return (t) => (L ? L.accountOf(t)?.uid : null) || t.accountId || '';
+}
+
+/**
+ * Which incoming rows were imported (or deleted) before. `candidates` are the
+ * new rows, already shaped like stored transactions (source 'import', batchId,
+ * accountId, importHash), so they are resolved to an account together, as one
+ * statement. has(t, bare) is true when t was seen; add(t) marks it as seen.
+ */
+export function importSeen(state, candidates = []) {
+  const resolve = resolver({ ...state, transactions: [...(state.transactions || []), ...candidates] });
+  const keys = new Set();
+  const anyAccount = new Set(); // fingerprints whose account is unknown
+  const legacy = new Set();
+  for (const t of state.transactions || []) {
+    if (typeof t.importHash !== 'string' || !t.importHash) continue;
+    if (LEGACY.test(t.importHash)) { legacy.add(t.importHash); continue; }
+    keys.add(`${resolve(t)}|${splitHash(t.importHash).rest}`);
+  }
+  for (const h of state.deletedImportHashes || []) {
+    if (typeof h !== 'string' || !h) continue;
+    const { account, rest } = splitHash(h);
+    if (account) keys.add(`${account}|${rest}`); else anyAccount.add(rest);
+  }
+  const keyOf = (t) => `${resolve(t)}|${splitHash(t.importHash).rest}`;
+  return {
+    has: (t, bare) => keys.has(keyOf(t)) || anyAccount.has(splitHash(t.importHash).rest) || legacy.has(bare),
+    add: (t) => { keys.add(keyOf(t)); },
+  };
+}
+
+const MAX_DELETED = 20000;
+
+/**
+ * Call when a transaction is deleted, BEFORE removing it from
+ * state.transactions: if it came from a CSV import (or is a bank entry that
+ * absorbed one), its fingerprint, keyed by the account it really belongs to,
+ * goes to state.deletedImportHashes so re-importing the statement doesn't
+ * bring it back. Mutates `state`; returns true when something was recorded.
+ */
+export function rememberDeletedImport(state, tx) {
+  if (typeof tx?.importHash !== 'string' || !tx.importHash) return false;
+  const key = LEGACY.test(tx.importHash) ? tx.importHash : `${resolver(state)(tx)}|${splitHash(tx.importHash).rest}`;
+  const list = Array.isArray(state.deletedImportHashes) ? state.deletedImportHashes : [];
+  if (!list.includes(key)) list.push(key);
+  state.deletedImportHashes = list.slice(-MAX_DELETED);
+  return true;
 }
