@@ -568,3 +568,10 @@ a.stat-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 @media (forced-colors: active) {
   .hero .balance .meter > i { background: CanvasText; }
 }
+
+/* Plan: on a phone the goal's status sits under its name instead of in a cut-off column. */
+.show-sm { display: none; }
+@media (max-width: 760px) {
+  .show-sm { display: block; }
+  .goal-status-sm { margin-top: 4px; }
+}

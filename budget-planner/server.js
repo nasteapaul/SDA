@@ -14,6 +14,7 @@ import { Store, removeTransactions, restoreFromTrash, addTombstones, mergeDuplic
 import { dailyBackup } from './lib/backup.js';
 import { EnableBanking } from './lib/enablebanking.js';
 import { syncBank, recategorize, accountFromSession, relinkAccounts } from './lib/sync.js';
+import { convertPendingFx } from './lib/fxconvert.js';
 import { runMigrations } from './lib/migrations.js';
 import { Sessions, LoginLimiter } from './lib/auth.js';
 import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories, cleanBudgets, requireObject, findConflicts } from './lib/validate.js';
@@ -75,6 +76,16 @@ async function backupDaily() {
 }
 await backupDaily();
 setInterval(backupDaily, 3600 * 1000).unref();
+
+// Imported rows in another currency: convert to RON at the BNR rate of their date
+// (retried every hour while the rate can't be fetched, e.g. offline).
+function convertFx() {
+  return convertPendingFx(store)
+    .then((n) => { if (n) console.log(`[fx] converted ${n} imported transaction(s) to RON`); })
+    .catch((err) => console.error('[fx] conversion failed:', err.message));
+}
+setInterval(convertFx, 3600 * 1000).unref();
+setTimeout(convertFx, 5000).unref();
 
 const bank = new EnableBanking({
   appId: env.EB_APP_ID,
@@ -329,6 +340,7 @@ async function api(req, res, url) {
         const merged = mergeDuplicatesToTrash(s); // already came in from the bank
         return { added: Math.max(0, added - merged), skipped: items.length - added + merged, batchId };
       });
+      convertFx(); // the app updates live when it's done
       return send(res, 200, result);
     }
     // "Start over": remove every transaction that came from a CSV import.

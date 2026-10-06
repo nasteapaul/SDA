@@ -183,15 +183,15 @@ function txRow(t, { showDelete = true } = {}) {
   if (!counted) chips.push('<span class="tx-chip off">not counted</span>');
   if (accLabel) chips.push(`<span class="tx-chip">${esc(accLabel)}</span>`);
   if (t.date > todayISO()) chips.push('<span class="tx-chip warn" title="Dated in the future">future-dated</span>');
-  // Not converted to RON yet: the original amount goes under the (unconverted) figure.
-  const orig = t.needsFx && t.originalAmount != null && t.originalCurrency
-    ? `${Number(t.originalAmount).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t.originalCurrency}` : '';
+  // In another currency: the original amount goes under the RON figure (with the rate used).
+  const orig = t.originalAmount != null && t.originalCurrency && t.originalCurrency !== 'RON'
+    ? `${Number(t.originalAmount).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t.originalCurrency}${!t.needsFx && t.exchangeRate ? ` @ ${Number(t.exchangeRate).toLocaleString('ro-RO', { maximumFractionDigits: 4 })}` : ''}` : '';
   if (t.needsFx) chips.push(`<span class="tx-chip warn" title="${esc(orig ? `${orig}, not converted to RON yet` : 'Not converted to RON yet')}">needs conversion</span>`);
   const meta = [t.category, t.source === 'bank' ? 'Bank' : t.source === 'import' ? 'Imported' : null, t.note || null].filter(Boolean).join(' · ');
   return `<div class="tx" role="button" tabindex="0" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="tx-ico" aria-hidden="true">${esc(txIcon(t))}</span>
     <span class="tx-main"><span class="tx-desc">${esc(t.description)}</span><span class="tx-meta">${chips.join('')}<span class="tx-meta-text">${esc(meta)}</span></span></span>
-    <span class="tx-amt${counted ? '' : ' uncounted'}">${amountHTML(t)}${orig ? `<small class="tx-orig">${esc(orig)}</small>` : ''}</span>
+    <span class="tx-amt${counted ? '' : ' uncounted'}">${t.needsFx ? `<span class="num">${t.type === 'income' ? '+' : '−'}? RON</span>` : amountHTML(t)}${orig ? `<small class="tx-orig">${esc(orig)}</small>` : ''}</span>
     ${showDelete ? `<button class="tx-del" type="button" data-action="delete-tx" data-id="${esc(t.id)}" aria-label="Delete ${esc(t.description)}">✕</button>` : '<span></span>'}
   </div>`;
 }
@@ -288,8 +288,8 @@ const views = {
     const counted = L().totals(list);
     // Nothing in the list counts (e.g. only credit-card rows): show the plain sums, labelled.
     const raw = !counted.count && list.length > 0;
-    const income = raw ? round2(list.filter((t) => t.type === 'income').reduce((n, t) => n + t.amount, 0)) : counted.income;
-    const spend = raw ? round2(list.filter((t) => t.type === 'expense').reduce((n, t) => n + t.amount, 0)) : counted.spend;
+    const income = raw ? round2(list.filter((t) => t.type === 'income' && !t.needsFx).reduce((n, t) => n + t.amount, 0)) : counted.income;
+    const spend = raw ? round2(list.filter((t) => t.type === 'expense' && !t.needsFx).reduce((n, t) => n + t.amount, 0)) : counted.spend;
     const monthsWithData = [...new Set([P().current(), ...(month ? [month] : []), ...S().transactions.map((t) => keyOf(t.date))])].sort().reverse();
     const filtered = Boolean(f.q || f.type || f.category || account || f.counted || month !== P().current());
 
@@ -398,14 +398,14 @@ const views = {
         ${plan.goals.length ? `<div class="card">
           <div class="card-head"><h2>Goal timeline</h2></div>
           <div class="table-wrap"><table class="data">
-            <thead><tr><th>Goal</th><th class="r hide-sm">Remaining</th><th class="r">Deadline</th><th class="r hide-sm">Needs / month</th><th class="r">With this plan</th><th>Status</th></tr></thead>
+            <thead><tr><th>Goal</th><th class="r hide-sm">Remaining</th><th class="r">Deadline</th><th class="r hide-sm">Needs / month</th><th class="r">With this plan</th><th class="hide-sm">Status</th></tr></thead>
             <tbody>${plan.goals.map((g) => `<tr>
-              <td>${esc(S().goals.find((x) => x.id === g.id)?.icon || '🎯')} ${esc(g.name)}</td>
+              <td>${esc(S().goals.find((x) => x.id === g.id)?.icon || '🎯')} ${esc(g.name)}<div class="show-sm goal-status-sm">${statusChip(g.status)}</div></td>
               <td class="r hide-sm">${formatRON(g.remaining, { short: true })}</td>
               <td class="r">${g.deadline ? fmtDate(g.deadline, { month: 'short', year: 'numeric' }) : 'Flexible'}</td>
               <td class="r hide-sm">${g.deadline ? formatRON(g.required, { short: true }) : '—'}</td>
               <td class="r">${g.eta ? fmtDate(g.eta, { month: 'short', year: 'numeric' }) : 'Not funded'}</td>
-              <td>${statusChip(g.status)}</td></tr>`).join('')}</tbody>
+              <td class="hide-sm">${statusChip(g.status)}</td></tr>`).join('')}</tbody>
           </table></div>
         </div>` : ''}
         <div class="grid two">
@@ -816,10 +816,10 @@ function csvPreviewHTML(b) {
   return `<div class="stack qc-preview" style="gap:8px;margin-top:12px">
     <p style="margin:0"><b>${m.rows.length}</b> transaction${m.rows.length === 1 ? '' : 's'} found (${income} income, ${m.rows.length - income} expenses): <b>${m.fresh} new</b>, ${m.already} already in app.</p>
     ${p.skipped ? `<p class="muted small" style="margin:0">${p.skipped} row${p.skipped === 1 ? '' : 's'} skipped (not a transaction, or not completed).</p>` : ''}
-    ${fx ? `<div class="banner qc-warn" role="note"><span class="banner-ico" aria-hidden="true">⚠️</span><div class="small"><b>${fx} row${fx === 1 ? ' is' : 's are'} in another currency and ${fx === 1 ? 'is' : 'are'} NOT converted to RON.</b> ${fx === 1 ? 'Its amount is' : 'Their amounts are'} imported as the bank shows ${fx === 1 ? 'it' : 'them'}; edit ${fx === 1 ? 'it' : 'them'} after import.</div></div>` : ''}
+    ${fx ? `<div class="banner qc-warn" role="note"><span class="banner-ico" aria-hidden="true">⚠️</span><div class="small"><b>${fx} row${fx === 1 ? ' is' : 's are'} in another currency.</b> After import ${fx === 1 ? 'it is' : 'they are'} converted to RON at the BNR rate of ${fx === 1 ? 'its' : 'their'} date (marked “needs conversion” until the rate can be fetched).</div></div>` : ''}
     <div class="qc-rows">${shown.map((r) => `<div class="qc-row${r.isNew ? '' : ' qc-dup'}">
       <span class="qc-row-main"><span class="qc-row-desc">${esc(r.t.description || '—')}</span>
-        <span class="muted small">${esc(fmtDate(r.t.date))}${r.isNew ? ` · ${esc(icon(r.category))} ${esc(r.category)}` : ''}${r.raw.needsFx ? ` · ${esc(r.raw.originalCurrency || '')} not converted` : ''}</span></span>
+        <span class="muted small">${esc(fmtDate(r.t.date))}${r.isNew ? ` · ${esc(icon(r.category))} ${esc(r.category)}` : ''}${r.raw.needsFx ? ` · ${esc(r.raw.originalCurrency || '')} → RON at BNR rate` : ''}</span></span>
       <span class="qc-row-end"><span class="num ${r.t.type === 'income' ? 'pos' : ''}">${r.t.type === 'income' ? '+' : '−'}${r.raw.needsFx ? `${esc(amountFmt.format(r.t.amount))} ${esc(r.raw.originalCurrency || '')}` : formatRON(r.t.amount)}</span>
         <span class="qc-tag ${r.isNew ? 'qc-tag-new' : ''}">${r.isNew ? 'New' : 'Already in app'}</span></span>
     </div>`).join('')}</div>

@@ -150,6 +150,9 @@ export function makeLedger(state) {
    * spending of effect(t).category — never add it to income (use effect()).
    */
   function counts(t) {
+    // In another currency and not converted to RON yet: its amount isn't RON, so it
+    // can't be added up until the conversion (lib/fxconvert.js) has run.
+    if (t.needsFx) return null;
     if (mode === 'cashflow') {
       if (!isMain(t)) return null;
       if (t.goalId) return 'saved';
