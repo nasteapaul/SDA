@@ -28,16 +28,23 @@ export function formatRON(n, { short = false, sign = false } = {}) {
   return s;
 }
 
-// Accepts "1.234,56", "1,234.56", "1234.56", "-12,5", "12 345,00 lei" etc.
+// Accepts "1.234,56", "1,234.56", "1234.56", "-12,5", "12 345,00 lei", "2.500"
+// (dot thousands), "12-" (trailing minus), "12,50 DR" (debit) and "12 CR" etc.
 export function parseAmount(input) {
   if (typeof input === 'number') return input;
   let s = String(input ?? '').trim().replace(/\s|lei|ron/gi, '');
   if (!s) return NaN;
-  const neg = /^[-−(]/.test(s) || /\)$/.test(s);
+  let neg = /^[-−(]/.test(s) || /[-−)]$/.test(s);
+  const dc = s.match(/(dr|db|cr)\.?$/i);
+  if (dc) neg = dc[1].toLowerCase() !== 'cr';
   s = s.replace(/[^\d.,]/g, '');
   const lastComma = s.lastIndexOf(',');
   const lastDot = s.lastIndexOf('.');
-  if (lastComma > lastDot) {
+  if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, ''); // "2.500" = 2500: RON amounts never have 3 decimals
+  } else if (/^\d{1,3}(,\d{3}){2,}$/.test(s)) {
+    s = s.replace(/,/g, ''); // "1,234,567"
+  } else if (lastComma > lastDot) {
     s = s.replace(/\./g, '').replace(',', '.');
   } else if (lastDot > lastComma) {
     s = s.replace(/,/g, '');

@@ -16,7 +16,7 @@ import { syncBank, accountInfo, recategorize } from './lib/sync.js';
 import { runMigrations } from './lib/migrations.js';
 import { Sessions, LoginLimiter } from './lib/auth.js';
 import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories } from './lib/validate.js';
-import { mergeDuplicates } from './public/js/shared/dedupe.js';
+import { mergeDuplicates, importSeen } from './public/js/shared/dedupe.js';
 import { ownContext, ownTransferCategory } from './public/js/shared/own.js';
 import { categorize, escapeForRule, merchantKey, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
@@ -276,17 +276,22 @@ async function api(req, res, url) {
       const { items = [], accountId } = await readBody(req);
       if (!Array.isArray(items)) throw new HttpError(400, 'items must be an array');
       const result = await store.mutate((s) => {
-        const seen = new Set(s.transactions.map((t) => t.importHash).filter(Boolean));
         const own = ownContext(s);
         const batchId = uid();
         const occurrences = new Map();
         const account = accountId ? s.bank.connections.flatMap((c) => c.accounts).find((a) => a.uid === accountId) : null;
         if (accountId && !account) throw new HttpError(400, 'Unknown account');
-        let added = 0;
+        const now = new Date().toISOString();
+        const rows = [];
         for (const raw of items.slice(0, 5000)) {
           let t;
           try { t = cleanTransaction(raw); } catch { continue; }
           if (account) { t.accountId = account.uid; t.accountChosen = true; }
+          // Rows in another currency (csv.js): amount is NOT in RON yet; keep what the bank said.
+          const fxAmount = round2(Number(raw.originalAmount));
+          if (raw.needsFx === true && /^[A-Z]{3}$/.test(String(raw.originalCurrency)) && Number.isFinite(fxAmount) && fxAmount > 0) {
+            Object.assign(t, { needsFx: true, originalCurrency: raw.originalCurrency, originalAmount: fxAmount });
+          }
           // The note holds the bank's details (authorisation no., reference), so two genuine
           // identical-looking payments on the same day keep different fingerprints.
           const bare = `${t.date}|${t.type}|${t.amount}|${String(raw.description || '').toLowerCase()}|${String(raw.note || '').toLowerCase()}`;
@@ -295,13 +300,19 @@ async function api(req, res, url) {
           const nth = (occurrences.get(bare) || 0) + 1;
           occurrences.set(bare, nth);
           t.importHash = `${t.accountId || ''}|${bare}${nth > 1 ? `#${nth}` : ''}`;
-          if (seen.has(t.importHash) || seen.has(bare)) continue; // `bare`: imported by the previous version
-          seen.add(t.importHash);
+          rows.push({ raw, bare, t: { ...t, id: uid(), source: 'import', batchId, createdAt: now, updatedAt: now } });
+        }
+        // Seen = imported before into the account the row really belongs to (whatever was
+        // picked in the import screen), or deleted by you after an earlier import.
+        const seen = importSeen(s, rows.map((r) => r.t));
+        let added = 0;
+        for (const { raw, bare, t } of rows) {
+          if (seen.has(t, bare)) continue;
+          seen.add(t);
           if (!raw.category) {
             t.category = ownTransferCategory(t, own) || categorize({ description: `${t.description} ${t.note || ''}`, type: t.type }, s.rules, s.categories);
           }
-          const now = new Date().toISOString();
-          s.transactions.push({ ...t, id: uid(), source: 'import', batchId, createdAt: now, updatedAt: now });
+          s.transactions.push(t);
           added += 1;
         }
         const merged = mergeDuplicates(s); // already came in from the bank
