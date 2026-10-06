@@ -1,0 +1,7 @@
+# Ruflo runtime state (daemon, memory, logs) - local only
+.claude-flow/
+.claude/proven-config.json
+.claude/.proven-config-version
+.claude/settings.local.json
+.swarm/
+.hive-mind/
