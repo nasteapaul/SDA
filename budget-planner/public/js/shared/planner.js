@@ -82,8 +82,9 @@ export function analyzeHistory(transactions, categories, { today = todayISO(), m
     if (!byCat.has(t.category)) byCat.set(t.category, { total: 0, count: 0, smallCount: 0, smallTotal: 0, months: {} });
     const c = byCat.get(t.category);
     c.total += t.amount;
-    c.count += 1;
     c.months[k] = (c.months[k] || 0) + t.amount;
+    if (t.amount <= 0) continue; // a refund (negative expense) lowers the total only
+    c.count += 1;
     if (t.amount < SMALL_PURCHASE) { c.smallCount += 1; c.smallTotal += t.amount; }
   }
 
@@ -146,6 +147,43 @@ export function detectRecurring(transactions, categories, currentMonth) {
     out.push({ merchant: key, label: list[list.length - 1].description, avg: round2(avg), category: list[0].category, months: months.size });
   }
   return out.sort((a, b) => b.avg - a.avg);
+}
+
+/**
+ * Credit-card activity in one period: { spent, repaid, refunded, cats, count }.
+ * A refund from a shop lowers what was spent (in the purchase's category);
+ * only real payments towards the card count as repaid.
+ */
+export function cardPeriod(transactions, { isRefund = () => false, refundCategory = (t) => t.category } = {}) {
+  let spent = 0; let repaid = 0; let refunded = 0; let count = 0;
+  const cats = {};
+  for (const t of transactions) {
+    count += 1;
+    if (t.type === 'expense') {
+      spent += t.amount;
+      cats[t.category] = round2((cats[t.category] || 0) + t.amount);
+    } else if (isRefund(t)) {
+      refunded += t.amount;
+      spent -= t.amount;
+      const c = refundCategory(t);
+      cats[c] = round2((cats[c] || 0) - t.amount);
+    } else repaid += t.amount;
+  }
+  return { spent: round2(spent), repaid: round2(repaid), refunded: round2(refunded), cats, count };
+}
+
+/**
+ * Average card spending / repayment over the recent periods [{ key?, spent,
+ * repaid, count }]. Divides by the periods that are really covered by data —
+ * from `firstKey` (the period of the first card transaction) on, or else the
+ * ones with transactions — never by a fixed 3 (min 1).
+ */
+export function cardPace(periods, { firstKey = null } = {}) {
+  const present = periods.filter((p) => (firstKey && p.key ? p.key >= firstKey : p.count > 0));
+  const n = Math.max(present.length, 1);
+  const avgSpent = round2(present.reduce((s, p) => s + p.spent, 0) / n);
+  const avgRepaid = round2(present.reduce((s, p) => s + p.repaid, 0) / n);
+  return { periods: n, avgSpent, avgRepaid, net: round2(avgRepaid - avgSpent) };
 }
 
 function addMonthsToDate(iso, months) {

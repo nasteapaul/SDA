@@ -6,13 +6,20 @@
 //   - income   = everything coming into the current account
 //   - spending = everything leaving it (paying off the credit card included)
 //   - only money put towards a goal (Goals → Add money) is shown as "saved"
-//   Credit-card and savings-account transactions are listed and analysed
-//   separately (card spending, amount owed) but not added to these totals, so
-//   nothing is counted twice.
+//   Only the MAIN current account counts (settings.mainAccountId, else the one
+//   ending in 7204, else the current account with most transactions). Other
+//   current accounts (e.g. Revolut), credit-card and savings-account
+//   transactions are listed and analysed separately (card spending, amount
+//   owed) but not added to these totals, so nothing is counted twice: a top-up
+//   from the main account is the money out, what is spent from Revolut is not.
+//   Refunds from shops (see refunds.js) are not income: they lower the
+//   spending of the purchase's category ("refund").
 // "all" adds every account together instead: card purchases are spending,
 //   transfers between your own accounts (incl. card repayments) don't count.
 
 import { accountKind } from './accounts.js';
+import { round2 } from './money.js';
+import { makeRefunds } from './refunds.js';
 
 export const COUNT_MODES = {
   cashflow: 'Current account: money in = income, money out = spending',
@@ -26,12 +33,38 @@ export function cardDigitsOf(t) {
   return m ? m[1] : null;
 }
 
+const MAIN_DIGITS = '7204'; // the everyday ING account
+
+/**
+ * The current account whose money in/out are income/spending: the one you
+ * picked (settings.mainAccountId), else the one ending in 7204 (IBAN, account
+ * number or its card number), else the current account with most transactions.
+ */
+export function mainAccountOf(state) {
+  const list = (state.bank?.connections || []).flatMap((c) => c.accounts || []);
+  const currents = list.filter((a) => accountKind(a) === 'current');
+  if (!currents.length) return null;
+  const chosen = state.settings?.mainAccountId && currents.find((a) => a.uid === state.settings.mainAccountId);
+  if (chosen) return chosen;
+  if (currents.length === 1) return currents[0];
+  const endsWith = (v) => String(v || '').replace(/\s/g, '').endsWith(MAIN_DIGITS);
+  const byNumber = currents.find((a) => [a.iban, a.number, a.accountNumber, a.bban].some(endsWith) || (a.cardDigits || []).includes(MAIN_DIGITS));
+  if (byNumber) return byNumber;
+  const txs = state.transactions || [];
+  const byCard = txs.find((t) => t.source === 'bank' && cardDigitsOf(t) === MAIN_DIGITS && currents.some((a) => a.uid === t.accountId));
+  if (byCard) return currents.find((a) => a.uid === byCard.accountId);
+  const n = new Map(currents.map((a) => [a.uid, 0]));
+  for (const t of txs) if (n.has(t.accountId)) n.set(t.accountId, n.get(t.accountId) + 1);
+  return currents.reduce((best, a) => (n.get(a.uid) > n.get(best.uid) ? a : best), currents[0]);
+}
+
 export function makeLedger(state) {
   const list = (state.bank?.connections || []).flatMap((c) => c.accounts);
   const accounts = new Map(list.map((a) => [a.uid, a]));
   const roles = new Map(state.categories.map((c) => [c.name, c.role]));
   const mode = state.settings?.countMode === 'all' ? 'all' : 'cashflow';
-  const current = list.find((a) => accountKind(a) === 'current');
+  const current = mainAccountOf(state);
+  const refunds = makeRefunds(state);
   const card = list.find((a) => accountKind(a) === 'credit');
 
   // Which card number belongs to which account: set by you on the account,
@@ -100,24 +133,75 @@ export function makeLedger(state) {
     return current || null; // manual entries and unknown imports: your everyday account
   }
 
+  /** Counted as the main current account (manual entries included). */
+  function isMain(t) {
+    const acc = accountOf(t);
+    return acc ? acc === current : true;
+  }
+
   function kindOf(t) {
     const acc = accountOf(t);
     return acc ? accountKind(acc) : 'current';
   }
 
-  /** 'income' | 'expense' | 'saved' | null (not counted) */
+  /**
+   * 'income' | 'expense' | 'saved' | 'refund' | null (not counted).
+   * 'refund' is money in that cancels a purchase: subtract it from the
+   * spending of effect(t).category — never add it to income (use effect()).
+   */
   function counts(t) {
-    const kind = kindOf(t);
     if (mode === 'cashflow') {
-      if (kind !== 'current') return null;
+      if (!isMain(t)) return null;
       if (t.goalId) return 'saved';
+      if (refunds.isRefund(t)) return 'refund';
       return t.type;
     }
     const role = roles.get(t.category);
     if (role === 'repayment' || role === 'transfer') return null;
     if (role === 'savings') return 'saved';
+    if (refunds.isRefund(t)) return 'refund';
     return t.type;
   }
 
-  return { mode, counts, accountOf, kindOf, byDigits };
+  /**
+   * How a transaction moves the totals: { as, amount, category }.
+   * as: 'income' | 'expense' | 'saved' | null; amount is signed (a refund is a
+   * negative expense in the purchase's category; money taken back out of a
+   * goal is negative 'saved').
+   */
+  function effect(t) {
+    const c = counts(t);
+    const amount = Number(t.amount) || 0;
+    if (!c) return { as: null, amount: 0, category: t.category };
+    if (c === 'refund') return { as: 'expense', amount: -amount, category: refunds.categoryOf(t) };
+    if (c === 'saved') return { as: 'saved', amount: t.type === 'expense' ? amount : -amount, category: t.category };
+    return { as: c, amount, category: t.category };
+  }
+
+  /** Headline numbers for a list of transactions (e.g. one period). */
+  function totals(transactions) {
+    const sum = { income: 0, spend: 0, saved: 0 };
+    const byCategory = {};
+    let count = 0;
+    for (const t of transactions) {
+      const e = effect(t);
+      if (!e.as) continue;
+      count += 1;
+      if (e.as === 'income') sum.income += e.amount;
+      else if (e.as === 'saved') sum.saved += e.amount;
+      else {
+        sum.spend += e.amount;
+        byCategory[e.category] = round2((byCategory[e.category] || 0) + e.amount);
+      }
+    }
+    const income = round2(sum.income); const spend = round2(sum.spend); const saved = round2(sum.saved);
+    return { income, spend, saved, left: round2(income - spend - saved), count, byCategory };
+  }
+
+  return {
+    mode, counts, effect, totals, accountOf, kindOf, isMain, byDigits,
+    mainAccount: current,
+    isRefund: (t) => refunds.isRefund(t),
+    refundCategory: (t) => refunds.categoryOf(t),
+  };
 }

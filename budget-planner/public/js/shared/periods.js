@@ -53,10 +53,23 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
     return s;
   }
 
+  // The period whose range [start(k), start(k + 1)) contains the date. A salary
+  // can come early (next month's period already started) or late (this
+  // month's — or, for a payday at the end of the month, even last month's —
+  // period hasn't started yet), so look at k − 2 … k + 1.
   function keyOf(date) {
     const k = monthKey(date);
-    if (date >= start(addMonths(k, 1))) return addMonths(k, 1); // next salary came early
-    return date >= start(k) ? k : addMonths(k, -1);
+    if (!day) return k;
+    for (let i = 1; i >= -2; i -= 1) {
+      const c = addMonths(k, i);
+      if (start(c) <= date && date < start(addMonths(c, 1))) return c;
+    }
+    // Overlapping overrides (a salary date set out of order): latest start wins.
+    for (let i = 1; i >= -2; i -= 1) {
+      const c = addMonths(k, i);
+      if (start(c) <= date) return c;
+    }
+    return addMonths(k, -1);
   }
 
   function end(key) {
