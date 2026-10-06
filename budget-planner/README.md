@@ -80,7 +80,9 @@ sudo cp budget-planner.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now budget-planner
 ```
 
-On Windows/macOS you can use `npx pm2 start server.js --name budget`, or just leave a terminal open.
+**Windows:** double-click `windows\install-autostart.bat` once. It creates a scheduled task that starts the server, hidden (no window), every time you log in, and opens the app. `windows\restart-server.bat` restarts it after you download a new version; `windows\uninstall-autostart.bat` removes the auto-start. The server's output goes to `data\server.log`.
+
+On macOS you can use `npx pm2 start server.js --name budget`, or just leave a terminal open.
 
 ---
 
