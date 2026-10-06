@@ -8,6 +8,7 @@ import { round2, todayISO, uid } from '../public/js/shared/money.js';
 import { pickBalance, accountIdentity } from './enablebanking.js';
 import { accountKind } from '../public/js/shared/accounts.js';
 import { mergeDuplicates } from '../public/js/shared/dedupe.js';
+import { mainAccountOf } from '../public/js/shared/ledger.js';
 import { ownContext, ownTransferCategory, ibansIn } from '../public/js/shared/own.js';
 import { bnrRateOn } from './fx.js';
 
@@ -233,7 +234,7 @@ const CARD_NO = /\*{2,}\s*(\d{4})\b/;
 export function assignImportAccounts(s) {
   const accounts = s.bank.connections.flatMap((c) => c.accounts);
   if (!accounts.length) return 0;
-  const current = accounts.find((a) => accountKind(a) === 'current');
+  const current = mainAccountOf(s) || accounts.find((a) => accountKind(a) === 'current');
   const card = accounts.find((a) => accountKind(a) === 'credit');
   const cardDigits = (t) => `${t.description} ${t.note || ''}`.match(CARD_NO)?.[1];
   const cardAccount = new Map();
