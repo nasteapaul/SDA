@@ -81,6 +81,8 @@ sudo systemctl daemon-reload && sudo systemctl enable --now budget-planner
 
 **Windows:** double-click `windows\install-autostart.bat` once. It creates a scheduled task that starts the server, hidden (no window), every time you log in, and opens the app. `windows\restart-server.bat` restarts it after you download a new version; `windows\uninstall-autostart.bat` removes the auto-start. The server's output goes to `data\server.log`.
 
+**Automatic updates (Windows):** double-click `windows\setup-auto-update.bat` once. Every 10 minutes the PC checks GitHub; when a new version was pushed, it downloads it and restarts the server by itself, so you never copy files or restart by hand. If the folder was copied by hand (not a git clone), the script first makes a proper copy in `%USERPROFILE%\SDA` and moves your `.env`, keys and `data\` into it. Files you changed on the PC are never overwritten (the update is skipped and noted). Log: `data\update.log`. `uninstall-autostart.bat` turns it off too.
+
 On macOS you can use `npx pm2 start server.js --name budget`, or just leave a terminal open.
 
 ---
