@@ -1,224 +1,73 @@
-# Ruflo — Claude Code Configuration
+# SDA — Budget Planner + Ruflo agents
+
+## Project
+
+- The app lives in `budget-planner/`: a zero-dependency Node (>= 20, ESM) server
+  (`server.js`, `lib/`), a PWA front end (`public/`), an Android WebView wrapper
+  (`android/`) and Windows auto-start scripts (`windows/`).
+- Currency is RON. Pay periods run from salary to salary (`public/js/shared/periods.js`).
+- Cash-flow rule: the current account (ending 7204) counts money in as income and
+  money out as expense; the credit card (ending 8391) is for analysis only
+  (spending, amount owed, repayment plan); own-account transfers are not income.
+- Tests: `cd budget-planner && npm test` (node:test). Run them after every code change.
+- NEVER commit secrets: `.env`, `*.pem`, `data/`, `.claude-flow/`, `settings.local.json`.
+- No new npm dependencies without asking — the server is deliberately dependency-free.
 
 ## Rules
 
 - Do what has been asked; nothing more, nothing less
-- NEVER create files unless absolutely necessary — prefer editing existing files
-- NEVER create documentation files unless explicitly requested
-- NEVER save working files or tests to root — use `/src`, `/tests`, `/docs`, `/config`, `/scripts`
 - ALWAYS read a file before editing it
-- NEVER commit secrets, credentials, or .env files
-- NEVER add a `Co-Authored-By` trailer to user commits unless this project's `.claude/settings.json` has `attribution.commit` set (#2078). The Claude Code Bash tool may suggest one in its default commit-message template — ignore it. `Co-Authored-By` is semantic authorship attribution under git/GitHub convention; the tool is the facilitator, not a co-author.
-- Keep files under 500 lines
+- Prefer editing existing files; don't create documentation files unless asked
 - Validate input at system boundaries
+- Keep new modules small and focused (existing large files such as `app.js` are fine to edit in place)
 
-## Ruflo Capability Brain & Implementation Loop
+## Ruflo agents — usable in any conversation (laptop, web or phone)
 
-Ruflo is the coordination ledger and policy decision point. Claude Code is the
-executor: after a Ruflo coordination call, continue implementing the task.
+Agent definitions are in `.claude/agents/` and command recipes in `.claude/commands/`.
+They are plain Markdown, so they work even where the ruflo MCP server or CLI
+cannot run (e.g. a cloud session started from the phone):
 
-When it is registered, call
-`guidance_brain({ mode: "recommend", task: "..." })` before complex Ruflo
-work. Use its live registry instead of guessing tool names. Treat
-`registered`, `configured`, `reachable`, `healthy`, and `authorized`
-as separate facts. If the brain is unavailable, continue with the compatible
-`guidance_recommend` tool, CLI discovery, and repository instructions.
+- `/ruflo <agent> <task>` — e.g. `/ruflo planner what should be added for a
+  fully accurate financial picture`. Claude reads the agent file and runs it as
+  a subagent with that file as its instructions.
+- `/ruflo swarm <task>` — several ruflo agents in parallel (fan-out), each with
+  its own role, then one merged, prioritised report.
+- Agents available: `core/planner`, `sparc/{specification,pseudocode,architecture,refinement}`,
+  `swarm/{hierarchical,mesh,adaptive}-coordinator`, `testing/{production-validator,tdd-london-swarm}`,
+  `consensus/*`, `browser/browser-agent`. Any role name also works as a custom agent.
+- Agent files mention `npx claude-flow@v3alpha …` hooks; those are optional — skip
+  them when the CLI is unavailable and do the work directly.
 
-Follow the returned loop:
+### Coordination
 
-1. Recall memory and ADR constraints.
-2. Inspect source, runtime, dependencies, policy, and health.
-3. Route to the smallest capable topology, agents, skills, and tools.
-4. Plan acceptance criteria, safety envelope, ownership, and validation.
-5. Execute in isolated scopes; the coding agent performs the work.
-6. Test focused, regression, and failure paths.
-7. Validate types, security, policy, compatibility, and artifacts.
-8. Benchmark a source-bound candidate against a source-bound baseline.
-9. Optimize measured bottlenecks without weakening safety.
-10. Bind claims and evidence to exact source/build receipts.
-11. Reconcile concurrent handoffs and disclose limitations.
-12. Publish only through a separately authorized release gate.
-
-### Concurrency and authority
-
-- Never allow two writers in one worktree; give each writing agent an isolated
-  worktree and explicit file ownership.
-- Read-only research may run concurrently and report findings to the owner.
-- Only the integration owner edits shared manifests and lockfiles or reconciles
-  overlapping changes.
-- A child may drop capabilities but cannot add tools, network, secrets, spend,
-  concurrency, namespaces, or delegation depth.
-- A lease or claim coordinates ownership; it does not authorize a side effect.
-- Darwin, Flywheel, MetaHarness, memory, and neural systems may propose or
-  evaluate candidates but cannot self-promote or expand their SafetyEnvelope.
-- Bind tests, benchmarks, policy decisions, and release evidence to an exact
-  commit or immutable dirty-worktree snapshot.
-
-## Agent Comms (SendMessage-First Coordination)
-
-Named agents coordinate via `SendMessage`, not polling or shared state.
-
-```
-Lead (you) ←→ architect ←→ developer ←→ tester ←→ reviewer
-              (named agents message each other directly)
-```
-
-### Spawning a Coordinated Team
-
-```javascript
-// ALL agents in ONE message, each knows WHO to message next
-Agent({ prompt: "Research the codebase. SendMessage findings to 'architect'.",
-  subagent_type: "researcher", name: "researcher", run_in_background: true })
-Agent({ prompt: "Wait for 'researcher'. Design solution. SendMessage to 'coder'.",
-  subagent_type: "system-architect", name: "architect", run_in_background: true })
-Agent({ prompt: "Wait for 'architect'. Implement it. SendMessage to 'tester'.",
-  subagent_type: "coder", name: "coder", run_in_background: true })
-Agent({ prompt: "Wait for 'coder'. Write tests. SendMessage results to 'reviewer'.",
-  subagent_type: "tester", name: "tester", run_in_background: true })
-Agent({ prompt: "Wait for 'tester'. Review code quality and security.",
-  subagent_type: "reviewer", name: "reviewer", run_in_background: true })
-
-// Kick off the pipeline
-SendMessage({ to: "researcher", summary: "Start", message: "[task context]" })
-```
-
-### Patterns
-
-| Pattern | Flow | Use When |
+| Pattern | Flow | Use when |
 |---------|------|----------|
-| **Pipeline** | A → B → C → D | Sequential dependencies (feature dev) |
-| **Fan-out** | Lead → A, B, C → Lead | Independent parallel work (research) |
-| **Supervisor** | Lead ↔ workers | Ongoing coordination (complex refactor) |
+| Pipeline | A → B → C | Sequential dependencies (feature dev) |
+| Fan-out | Lead → A, B, C → Lead | Independent parallel work (research, review) |
+| Supervisor | Lead ↔ workers | Ongoing coordination (complex refactor) |
 
-### Rules
+- Read-only research agents may run in parallel; only one agent writes to a given file.
+- Give every writing agent a non-overlapping file scope (or an isolated worktree).
+- Swarm for 3+ files, new features, cross-module refactors, security or performance;
+  not for 1–2 line fixes, docs or config tweaks.
 
-- ALWAYS name agents — `name: "role"` makes them addressable
-- ALWAYS include comms instructions in prompts — who to message, what to send
-- Spawn ALL agents in ONE message with `run_in_background: true`
-- After spawning, continue independent local work; wait only when a dependency
-  genuinely blocks progress
-- Do not poll repeatedly — agents message back or complete automatically
-- Give every writing agent an isolated worktree and a non-overlapping file scope
+| Task | Agents |
+|------|--------|
+| Bug fix | researcher, coder, tester |
+| Feature | architect, coder, tester, reviewer |
+| Refactor | architect, coder, reviewer |
+| Security | security-architect, auditor |
 
-## Swarm & Routing
+## Ruflo MCP server / CLI (optional)
 
-### Config
-- **Topology**: hierarchical-mesh (anti-drift)
-- **Max Agents**: 15
-- **Memory**: hybrid
-- **HNSW**: Enabled
-- **Neural**: Enabled
-
-```bash
-npx @claude-flow/cli@latest swarm init --topology hierarchical --max-agents 8 --strategy specialized
-```
-
-### Agent Routing
-
-| Task | Agents | Topology |
-|------|--------|----------|
-| Bug Fix | researcher, coder, tester | hierarchical |
-| Feature | architect, coder, tester, reviewer | hierarchical |
-| Refactor | architect, coder, reviewer | hierarchical |
-| Performance | perf-engineer, coder | hierarchical |
-| Security | security-architect, auditor | hierarchical |
-
-### When to Swarm
-- **YES**: 3+ files, new features, cross-module refactoring, API changes, security, performance
-- **NO**: single file edits, 1-2 line fixes, docs updates, config changes, questions
-
-### 3-Tier Model Routing
-
-| Tier | Handler | Use Cases |
-|------|---------|-----------|
-| 1 | Agent Booster (WASM) | Simple transforms — skip LLM, use Edit directly |
-| 2 | Haiku | Simple tasks, low complexity |
-| 3 | Sonnet/Opus | Architecture, security, complex reasoning |
-
-## Memory & Learning
-
-### Before Any Task
-```bash
-npx @claude-flow/cli@latest memory search --query "[task keywords]" --namespace patterns
-npx @claude-flow/cli@latest hooks route --task "[task description]"
-```
-
-### After Success
-```bash
-npx @claude-flow/cli@latest memory store --namespace patterns --key "[name]" --value "[what worked]"
-npx @claude-flow/cli@latest hooks post-task --task-id "[id]" --success true --store-results true
-```
-
-### MCP Tools (use `ToolSearch("keyword")` to discover)
-
-| Category | Key Tools |
-|----------|-----------|
-| **Memory** | `memory_store`, `memory_search`, `memory_search_unified` |
-| **Bridge** | `memory_import_claude`, `memory_bridge_status` |
-| **Swarm** | `swarm_init`, `swarm_status`, `swarm_health` |
-| **Agents** | `agent_spawn`, `agent_list`, `agent_status` |
-| **Hooks** | `hooks_route`, `hooks_post-task`, `hooks_worker-dispatch` |
-| **Security** | `aidefence_scan`, `aidefence_is_safe`, `aidefence_has_pii` |
-| **Hive-Mind** | `hive-mind_init`, `hive-mind_consensus`, `hive-mind_spawn` |
-
-### Background Workers
-
-| Worker | When |
-|--------|------|
-| `audit` | After security changes |
-| `optimize` | After performance work |
-| `testgaps` | After adding features |
-| `map` | Every 5+ file changes |
-| `document` | After API changes |
+`.mcp.json` starts `npx -y ruflo@3.53.0 mcp start` (pinned version — bump it
+deliberately). On native Windows, if the server fails to start, add it for your
+user with the `cmd /c` wrapper instead:
 
 ```bash
-npx @claude-flow/cli@latest hooks worker dispatch --trigger audit
+claude mcp add claude-flow -s user -- cmd /c npx -y ruflo@3.53.0 mcp start
+npx ruflo@3.53.0 doctor --fix
 ```
 
-## Agents
-
-**Core**: `coder`, `reviewer`, `tester`, `planner`, `researcher`
-**Architecture**: `system-architect`, `backend-dev`, `mobile-dev`
-**Security**: `security-architect`, `security-auditor`
-**Performance**: `performance-engineer`, `perf-analyzer`
-**Coordination**: `hierarchical-coordinator`, `mesh-coordinator`, `adaptive-coordinator`
-**GitHub**: `pr-manager`, `code-review-swarm`, `issue-tracker`, `release-manager`
-
-Any string works as a custom agent type.
-
-## Build & Test
-
-- ALWAYS run tests after code changes
-- ALWAYS verify build succeeds before committing
-
-```bash
-npm run build && npm test
-```
-
-## CLI Quick Reference
-
-```bash
-npx @claude-flow/cli@latest init --wizard           # Setup
-npx @claude-flow/cli@latest swarm init --v3-mode     # Start swarm
-npx @claude-flow/cli@latest memory search --query "" # Vector search
-npx @claude-flow/cli@latest hooks route --task ""    # Route to agent
-npx @claude-flow/cli@latest doctor --fix             # Diagnostics
-npx @claude-flow/cli@latest security scan            # Security scan
-npx @claude-flow/cli@latest performance benchmark    # Benchmarks
-```
-
-26 commands, 140+ subcommands. Use `--help` on any command for details.
-
-## Setup
-
-```bash
-claude mcp add claude-flow -- npx -y ruflo@latest mcp start
-npx ruflo@latest doctor --fix
-```
-
-> The background `daemon` is optional. It runs interval workers that each spawn
-> a headless `claude` session, so it consumes tokens continuously. Start it only
-> if you want those sweeps: `npx ruflo@latest daemon start` (self-stops after 12h
-> by default; `--ttl 0` to disable, `daemon status --all` to audit running daemons).
-
-**Agent tool** handles execution (agents, files, code, git). **MCP tools** handle coordination (swarm, memory, hooks). **CLI** is the same via Bash.
+The background `daemon` spawns headless Claude sessions and consumes tokens
+continuously; start it only on purpose (`npx ruflo@3.53.0 daemon start`).
