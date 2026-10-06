@@ -53,6 +53,11 @@ test('cleanSettings: only known settings, with valid values', () => {
   assert.throws(() => cleanSettings({ paydays: { '2026-09': '2026-09-31' } }), { status: 400 });
   assert.throws(() => cleanSettings([]), { status: 400 });
   assert.deepEqual(cleanSettings({ paydays: { '2026-09': '2026-09-12' } }).paydays, { '2026-09': '2026-09-12' });
+  assert.deepEqual(cleanSettings({ mainAccountId: 'acc-7204' }), { mainAccountId: 'acc-7204' });
+  assert.deepEqual(cleanSettings({ mainAccountId: '' }), { mainAccountId: null }, 'empty = automatic');
+  assert.deepEqual(cleanSettings({ mainAccountId: null }), { mainAccountId: null });
+  assert.throws(() => cleanSettings({ mainAccountId: 'x'.repeat(65) }), { status: 400 });
+  assert.throws(() => cleanSettings({ mainAccountId: 42 }), { status: 400 });
 });
 
 test('cleanCategories: unknown roles are dropped', () => {

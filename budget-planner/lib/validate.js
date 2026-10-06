@@ -126,6 +126,13 @@ export function cleanSettings(input) {
     }
     out.paydays = Object.fromEntries(entries);
   }
+  if (input.mainAccountId !== undefined) {
+    // The current account that counts as "your money" (ledger.js mainAccountOf); '' / null = automatic.
+    const id = input.mainAccountId;
+    if (id !== null && typeof id !== 'string') throw new HttpError(400, 'mainAccountId must be a string');
+    if (id && (id.length > 64 || /[\u0000-\u001f]/.test(id))) throw new HttpError(400, 'mainAccountId is too long or invalid');
+    out.mainAccountId = id || null;
+  }
   return out;
 }
 
