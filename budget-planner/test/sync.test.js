@@ -131,11 +131,11 @@ test('syncBank: an incomplete fetch does not move the sync date forward', async 
   assert.equal(store.get().bank.connections[0].accounts[0].lastSyncDate, null);
 });
 
-test('syncBank: re-fetches the last 5 days for late bookings', async (t) => {
+test('syncBank: re-fetches the last 30 days for late (backdated) bookings', async (t) => {
   const store = await setup(t, [{ uid: 'a1', name: 'Current', lastSyncDate: '2026-10-01' }]);
   const fake = client({ a1: [] });
   await syncBank(store, fake, { rate: noRates });
-  assert.equal(fake.calls[0].since, '2026-09-26');
+  assert.equal(fake.calls[0].since, '2026-09-01');
 });
 
 test('syncBank: transactions of an account unlinked mid-sync are dropped', async (t) => {

@@ -12,7 +12,7 @@ import os from 'node:os';
 
 import { Store } from './lib/store.js';
 import { EnableBanking } from './lib/enablebanking.js';
-import { syncBank, accountInfo, recategorize } from './lib/sync.js';
+import { syncBank, recategorize, accountFromSession, relinkAccounts } from './lib/sync.js';
 import { runMigrations } from './lib/migrations.js';
 import { Sessions, LoginLimiter } from './lib/auth.js';
 import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories } from './lib/validate.js';
@@ -197,24 +197,19 @@ async function completeBankLink(code, state) {
   const pending = store.get().bank.pendingAuth;
   if (!pending || !state || !safeEqual(state, pending.state)) throw new HttpError(400, 'Unknown or expired bank link request. Start again from Settings.');
   const session = await bank.createSession(code);
-  const accounts = (session.accounts || []).map((a) => (typeof a === 'string' ? { uid: a } : a));
+  const accounts = (session.accounts || []).map(accountFromSession).filter((a) => typeof a.uid === 'string' && a.uid);
   await store.mutate((s) => {
-    s.bank.connections = s.bank.connections.filter((c) => c.bank !== pending.bank);
-    s.bank.connections.push({
+    const connection = {
       sessionId: session.session_id,
       bank: pending.bank,
       validUntil: session.access?.valid_until || pending.validUntil,
-      accounts: accounts.map((a) => ({
-        uid: a.uid,
-        name: a.name || a.product || a.details || 'Account',
-        iban: a.account_id?.iban || null,
-        currency: a.currency || 'RON',
-        ...accountInfo(a),
-        detailsFetched: Boolean(a.cash_account_type),
-        balance: null,
-        lastSyncDate: null,
-      })),
-    });
+      accounts,
+    };
+    // A renewed consent gives the same accounts new uids: carry settings and
+    // history over to them (unmatched old accounts stay, archived).
+    const previous = s.bank.connections.filter((c) => c.bank === pending.bank);
+    const { archived } = previous.length ? relinkAccounts(s, connection, previous) : { archived: null };
+    s.bank.connections = [...s.bank.connections.filter((c) => c.bank !== pending.bank), connection, ...(archived ? [archived] : [])];
     s.bank.pendingAuth = null;
     s.bank.lastSync = null;
   });

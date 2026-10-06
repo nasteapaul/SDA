@@ -127,6 +127,19 @@ export class EnableBanking {
   }
 }
 
+/**
+ * What identifies a stored account across bank links (a new consent gives the
+ * same account a new uid): normalised IBAN, Enable Banking identification
+ * hashes, and the last 4 digits of a masked card number.
+ */
+export function accountIdentity(a = {}) {
+  const iban = String(a.iban || '').replace(/\s/g, '').toUpperCase() || null;
+  const hashes = [a.identificationHash, ...(Array.isArray(a.identificationHashes) ? a.identificationHashes : [])]
+    .filter((h) => typeof h === 'string' && h);
+  const panLast4 = String(a.maskedPan || '').match(/(\d{4})\s*$/)?.[1] || null;
+  return { iban, hashes: [...new Set(hashes)], panLast4 };
+}
+
 // Pick the most useful balance: booked/closing first, then available.
 // Balances without a usable amount are ignored.
 export function pickBalance(balances) {
