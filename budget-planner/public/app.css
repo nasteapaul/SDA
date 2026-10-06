@@ -458,4 +458,60 @@ code.inline { background: var(--surface-2); padding: 1px 6px; border-radius: 6px
 }
 @media (max-width: 760px) {
   .toast { left: 16px; right: 84px; bottom: calc(80px + var(--safe-bottom)); max-width: none; justify-content: space-between; }
+
+/* ux-2 — drill-down links, transactions list, FAB, amounts never truncated */
+a.stat-link { color: inherit; text-decoration: none; transition: border-color .15s, background .15s; }
+a.stat-link:hover { border-color: color-mix(in srgb, var(--text) 25%, var(--border)); }
+a.stat-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stat-go { color: var(--muted); font-weight: 600; margin-left: 2px; }
+
+/* Big numbers shrink to fit their card instead of being cut off. */
+.hero .card, .plan-summary .card, .kpi { container-type: inline-size; }
+.stat-value, .kpi-value { white-space: nowrap; overflow: visible; text-overflow: clip; overflow-wrap: normal; }
+.hero .card:not(.balance) .stat-value, .plan-summary .stat-value { font-size: clamp(14px, 11cqi, 24px); }
+.kpi-value { font-size: clamp(14px, 10cqi, 22px); }
+.stat-value.big { font-size: clamp(24px, 12cqi, 38px); }
+
+/* Transaction rows: chips first, muted amount when not counted */
+.tx-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tx-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-chip { flex: none; font-size: 11px; font-weight: 600; line-height: 1.6; padding: 0 6px; border-radius: 6px; background: var(--surface-2); color: var(--text-2); white-space: nowrap; }
+.tx-chip.off { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+.tx-chip.warn { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--text); }
+.tx-amt.uncounted, .tx-amt.uncounted .num { color: var(--muted); font-weight: 500; }
+.tx-orig { display: block; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+
+/* Transactions filters + totals */
+.filters select { min-width: 0; }
+.filter-chips { margin: 0 0 6px; }
+.filter-chips .chip { border: 0; cursor: pointer; font: inherit; font-size: 12.5px; color: var(--text-2); }
+.totals { flex-direction: column; gap: 2px; }
+.totals-count { color: var(--muted); font-size: 12.5px; }
+.totals-nums { display: flex; flex-wrap: nowrap; gap: 16px; white-space: nowrap; }
+.cur-label { display: none; }
+@media (max-width: 760px) { .cur-label { display: inline; } }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
+
+.fab { transition: transform .2s ease, opacity .2s ease; }
+
+@media (max-width: 760px) {
+  .content { padding-bottom: calc(140px + var(--safe-bottom)); }
+  .fab.fab-hidden { transform: translateY(calc(100% + 96px)); opacity: 0; pointer-events: none; }
+  .hero .card:not(.balance) .stat-value, .plan-summary .stat-value { font-size: clamp(14px, 11cqi, 20px); }
+  .kpi-value { font-size: clamp(14px, 6cqi, 18px); }
+  .stat-value.big { font-size: clamp(22px, 10cqi, 32px); }
+  .tx-desc { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3; }
+  .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filters input[type=search] { grid-column: 1 / -1; }
+  .filters input, .filters select { width: 100%; }
+  /* One row of three: label above the amount, so the full amounts always fit. */
+  .totals-nums { display: grid; grid-template-columns: repeat(3, auto); justify-content: space-between; gap: 8px; font-size: 12px; margin-top: 4px; }
+  .totals-nums > span { display: flex; flex-direction: column; gap: 1px; }
+  .totals-nums b { font-size: 13.5px; }
+  .totals-nums .cur { display: none; }
+  .tx-meta { flex-wrap: wrap; row-gap: 3px; }
+  .tx-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fab { transition: none; }
 }

@@ -21,11 +21,14 @@ const view = $('#view');
 const modal = $('#modal');
 const modalForm = $('#modal-form');
 
+// Transactions filters. month: null = current period, '' = all months.
+const TX_DEFAULTS = Object.freeze({ q: '', type: '', category: '', account: '', counted: false, month: null, limit: 150 });
+
 const ui = {
   route: 'overview',
   params: new URLSearchParams(),
   month: null, // budget period shown on the Overview (null = current)
-  tx: { q: '', type: '', category: '', month: null, limit: 150 },
+  tx: { ...TX_DEFAULTS },
   planGoals: null, // null = all active goals
   banks: null,
   csvPreview: null,
@@ -162,14 +165,32 @@ function txIcon(t) {
   return t.goalId ? (S().goals.find((g) => g.id === t.goalId)?.icon || icon(t.category)) : icon(t.category);
 }
 
+// Short name of an account for chips and filters: "Credit card", "Savings account", "Revolut · 1234".
+function accountLabel(a) {
+  const kind = accountView(a).kind;
+  const last4 = String(a.iban || '').replace(/\s/g, '').slice(-4);
+  if (kind !== 'current') return ACCOUNT_KINDS[kind];
+  return [a.nickname || a.name || a.bank || ACCOUNT_KINDS[kind], last4].filter(Boolean).join(' · ');
+}
+
 function txRow(t, { showDelete = true } = {}) {
   const acc = L().accountOf(t);
-  const accLabel = acc && accountView(acc).kind !== 'current' ? ACCOUNT_KINDS[accountView(acc).kind] : null;
-  const meta = [t.category, accLabel, t.source === 'bank' ? 'Bank' : t.source === 'import' ? 'Imported' : null, counts(t) ? null : 'not counted'].filter(Boolean).join(' · ');
+  const counted = Boolean(counts(t));
+  // Chips first, so on a phone "not counted" is never the part that gets cut off.
+  const chips = [];
+  const accLabel = acc && acc !== L().mainAccount ? accountLabel(acc) : null;
+  if (!counted) chips.push('<span class="tx-chip off">not counted</span>');
+  if (accLabel) chips.push(`<span class="tx-chip">${esc(accLabel)}</span>`);
+  if (t.date > todayISO()) chips.push('<span class="tx-chip warn" title="Dated in the future">future-dated</span>');
+  // Not converted to RON yet: the original amount goes under the (unconverted) figure.
+  const orig = t.needsFx && t.originalAmount != null && t.originalCurrency
+    ? `${Number(t.originalAmount).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t.originalCurrency}` : '';
+  if (t.needsFx) chips.push(`<span class="tx-chip warn" title="${esc(orig ? `${orig}, not converted to RON yet` : 'Not converted to RON yet')}">needs conversion</span>`);
+  const meta = [t.category, t.source === 'bank' ? 'Bank' : t.source === 'import' ? 'Imported' : null, t.note || null].filter(Boolean).join(' · ');
   return `<div class="tx" role="button" tabindex="0" data-action="edit-tx" data-id="${esc(t.id)}">
     <span class="tx-ico" aria-hidden="true">${esc(txIcon(t))}</span>
-    <span class="tx-main"><span class="tx-desc">${esc(t.description)}</span><span class="tx-meta">${esc(meta)}${t.note ? ` · ${esc(t.note)}` : ''}</span></span>
-    <span class="tx-amt">${amountHTML(t)}</span>
+    <span class="tx-main"><span class="tx-desc">${esc(t.description)}</span><span class="tx-meta">${chips.join('')}<span class="tx-meta-text">${esc(meta)}</span></span></span>
+    <span class="tx-amt${counted ? '' : ' uncounted'}">${amountHTML(t)}${orig ? `<small class="tx-orig">${esc(orig)}</small>` : ''}</span>
     ${showDelete ? `<button class="tx-del" type="button" data-action="delete-tx" data-id="${esc(t.id)}" aria-label="Delete ${esc(t.description)}">✕</button>` : '<span></span>'}
   </div>`;
 }
@@ -204,9 +225,9 @@ const views = {
       ${s.count ? '' : `<div class="banner" style="margin-top:12px"><span class="banner-ico" aria-hidden="true">📭</span><div class="small"><b>No current-account transactions in this period.</b> The bank connection only goes back about 90 days — for older months import the current account statement (CSV) in Settings and pick the current account.</div></div>`}
       <div class="hero">
         ${heroCard({ s, key, isCurrent, used, daysLeft, accounts })}
-        <div class="card"><span class="stat-label">Income</span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${s.ownIn ? `${formatRON(s.income - s.ownIn, { short: true })} earned + ${formatRON(s.ownIn, { short: true })} from your own accounts / cash` : pctChange(s.income, summary(addMonths(key, -1)).income)}</span></div>
-        <div class="card"><span class="stat-label">Spending</span><span class="stat-value num">${formatRON(s.spend)}</span><span class="stat-sub">${budgetTotal ? `Budget ${formatRON(budgetTotal, { short: true })}` : pctChange(s.spend, summary(addMonths(key, -1)).spend)}</span></div>
-        <div class="card"><span class="stat-label">Saved to goals</span><span class="stat-value num">${formatRON(s.saved)}</span><span class="stat-sub">${s.income ? `${Math.round((s.saved / s.income) * 100)}% savings rate` : '—'}</span></div>
+        <a class="card stat-link" href="${txLink({ month: key, type: 'income', counted: 1 })}" title="See these transactions"><span class="stat-label">Income <span class="stat-go" aria-hidden="true">›</span></span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${s.ownIn ? `${formatRON(s.income - s.ownIn, { short: true })} earned + ${formatRON(s.ownIn, { short: true })} from your own accounts / cash` : pctChange(s.income, prevSamePoint(key).income, isCurrent)}</span></a>
+        <a class="card stat-link" href="${txLink({ month: key, type: 'expense', counted: 1 })}" title="See these transactions"><span class="stat-label">Spending <span class="stat-go" aria-hidden="true">›</span></span><span class="stat-value num">${formatRON(s.spend)}</span><span class="stat-sub">${budgetTotal ? `Budget ${formatRON(budgetTotal, { short: true })}` : pctChange(s.spend, prevSamePoint(key).spend, isCurrent)}</span></a>
+        <a class="card stat-link" href="${txLink({ month: key, type: 'saved', counted: 1 })}" title="See these transactions"><span class="stat-label">Saved to goals <span class="stat-go" aria-hidden="true">›</span></span><span class="stat-value num">${formatRON(s.saved)}</span><span class="stat-sub">${s.income ? `${Math.round((s.saved / s.income) * 100)}% savings rate` : '—'}</span></a>
       </div>
       ${creditCardPanel(key)}
       <div class="grid two">
@@ -243,33 +264,60 @@ const views = {
     const f = ui.tx;
     const q = f.q.toLowerCase();
     const month = f.month === null ? P().current() : f.month;
+    const accounts = S().bank.connections.flatMap((c) => c.accounts || []);
+    const account = f.account === 'none' || accounts.some((a) => a.uid === f.account) ? f.account : '';
+    const typeOk = (t) => {
+      if (f.counted) {
+        const e = L().effect(t); // refund-aware: a shop refund shows under spending
+        return Boolean(e.as) && (!f.type || e.as === f.type);
+      }
+      if (!f.type) return true;
+      return f.type === 'saved' ? Boolean(t.goalId) : t.type === f.type;
+    };
+    const accountOk = (t) => {
+      if (!account) return true;
+      const acc = L().accountOf(t);
+      return account === 'none' ? !acc : acc?.uid === account;
+    };
     const list = sortTx(S().transactions.filter((t) => (!month || keyOf(t.date) === month)
-      && (!f.type || t.type === f.type)
+      && typeOk(t) && accountOk(t)
       && (!f.category || t.category === f.category)
       && (!q || `${t.description} ${t.note || ''} ${t.category}`.toLowerCase().includes(q))));
-    const { income, spend } = L().totals(list);
-    const monthsWithData = [...new Set([P().current(), ...S().transactions.map((t) => keyOf(t.date))])].sort().reverse();
+    const counted = L().totals(list);
+    // Nothing in the list counts (e.g. only credit-card rows): show the plain sums, labelled.
+    const raw = !counted.count && list.length > 0;
+    const income = raw ? round2(list.filter((t) => t.type === 'income').reduce((n, t) => n + t.amount, 0)) : counted.income;
+    const spend = raw ? round2(list.filter((t) => t.type === 'expense').reduce((n, t) => n + t.amount, 0)) : counted.spend;
+    const monthsWithData = [...new Set([P().current(), ...(month ? [month] : []), ...S().transactions.map((t) => keyOf(t.date))])].sort().reverse();
+    const filtered = Boolean(f.q || f.type || f.category || account || f.counted || month !== P().current());
 
     let html = '';
     let lastDay = '';
     for (const t of list.slice(0, f.limit)) {
       if (t.date !== lastDay) {
-        const dayTotal = list.filter((x) => x.date === t.date && counts(x) === 'expense').reduce((s, x) => s + x.amount, 0);
-        html += `<div class="tx-day"><span>${esc(dayHeading(t.date))}</span><span class="num">${dayTotal ? `−${formatRON(dayTotal)}` : ''}</span></div>`;
+        const dayTotal = round2(list.filter((x) => x.date === t.date).reduce((n, x) => { const e = L().effect(x); return e.as === 'expense' ? n + e.amount : n; }, 0));
+        html += `<div class="tx-day"><span>${esc(dayHeading(t.date))}</span><span class="num">${dayTotal > 0 ? `−${formatRON(dayTotal)}` : ''}</span></div>`;
         lastDay = t.date;
       }
       html += txRow(t);
     }
+    const empty = `<div class="empty"><b>No transactions</b>${month ? `Nothing in ${esc(P().label(month))} matches.` : 'Nothing matches these filters.'}
+      <div class="empty-actions">${month ? '<button class="btn small" type="button" data-action="tx-all-months">Search all months</button>' : ''}${filtered ? '<button class="btn small" type="button" data-action="tx-clear">Clear filters</button>' : '<button class="btn small primary" type="button" data-action="add-tx">+ Add a transaction</button>'}</div></div>`;
     return `
       <div class="card">
         <div class="filters">
           <input type="search" placeholder="Search transactions" value="${esc(f.q)}" data-filter="q" aria-label="Search">
           <select data-filter="month" aria-label="Month"><option value="">All months</option>${monthsWithData.map((k) => `<option value="${k}" ${k === month ? 'selected' : ''}>${esc(P().label(k))}${P().payday ? ` (${esc(P().rangeLabel(k))})` : ''}</option>`).join('')}</select>
-          <select data-filter="type" aria-label="Type"><option value="">All types</option><option value="expense" ${f.type === 'expense' ? 'selected' : ''}>Expenses</option><option value="income" ${f.type === 'income' ? 'selected' : ''}>Income</option></select>
+          <select data-filter="type" aria-label="Type"><option value="">All types</option><option value="expense" ${f.type === 'expense' ? 'selected' : ''}>Expenses</option><option value="income" ${f.type === 'income' ? 'selected' : ''}>Income</option><option value="saved" ${f.type === 'saved' ? 'selected' : ''}>Saved to goals</option></select>
           <select data-filter="category" aria-label="Category"><option value="">All categories</option>${S().categories.map((c) => `<option ${c.name === f.category ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+          ${accounts.length ? `<select data-filter="account" aria-label="Account"><option value="">All accounts</option>${accounts.map((a) => `<option value="${esc(a.uid)}" ${a.uid === account ? 'selected' : ''}>${esc(accountLabel(a))}${a === L().mainAccount ? ' (main)' : ''}</option>`).join('')}<option value="none" ${account === 'none' ? 'selected' : ''}>No account (cash / other)</option></select>` : ''}
         </div>
-        <div class="totals"><span>${list.length} transaction${list.length === 1 ? '' : 's'}</span><span>In <b class="num pos">${formatRON(income)}</b></span><span>Out <b class="num">${formatRON(spend)}</b></span><span>Net <b class="num">${formatRON(income - spend, { sign: true })}</b></span></div>
-        <div class="tx-list">${html || '<div class="empty"><b>No transactions</b>Try another filter, or tap + to add one.</div>'}</div>
+        ${f.counted ? '<div class="chips filter-chips"><button class="chip" type="button" data-action="tx-uncounted" title="Also show transactions that don’t count">Only what counts in the budget <span aria-hidden="true">✕</span></button></div>' : ''}
+        <div class="totals">
+          <span class="totals-count">${list.length} transaction${list.length === 1 ? '' : 's'}${raw ? ' · not counted in your budget' : counted.count && counted.count < list.length ? ` · ${counted.count} counted` : ''}</span>
+          <span class="totals-nums">${[['In', income, 'pos'], ['Out', spend, ''], ['Net', income - spend, '']].map(([label, n, cls]) => `<span><span>${label}<span class="cur-label"> (RON)</span></span> <b class="num ${cls}">${formatRON(n, { sign: label === 'Net' }).replace(/\s*RON$/, '<span class="cur">&nbsp;RON</span>')}</b></span>`).join('')}</span>
+        </div>
+        <div class="tx-list">${html || empty}</div>
         ${list.length > f.limit ? '<div style="text-align:center;padding-top:12px"><button class="btn" type="button" data-action="more-tx">Show more</button></div>' : ''}
       </div>`;
   },
@@ -582,8 +630,30 @@ function trashCardHTML() {
   </div>`;
 }
 
-function pctChange(now, before) {
-  const prev = P().payday ? 'previous period' : 'last month';
+// Link to the Transactions list with filters (contract in hive memory 'proposal.route'):
+// #transactions?month=K|all&type=income|expense|saved&account=<uid>|none&counted=1&category=<name>&q=<text>
+function txLink(params = {}) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+  const s = q.toString();
+  return `#transactions${s ? `?${s}` : ''}`;
+}
+
+/**
+ * Totals of the period before `key`. For the period you're in, only up to the
+ * same point (same number of days since the period started), so a half-finished
+ * period isn't compared with a whole one.
+ */
+function prevSamePoint(key) {
+  const prev = addMonths(key, -1);
+  if (key !== P().current()) return summary(prev);
+  const day = Math.round((Date.parse(todayISO()) - Date.parse(P().start(key))) / 86400000); // 0 = first day
+  const cutoff = new Date(Math.min(Date.parse(P().start(prev)) + day * 86400000, Date.parse(P().end(prev)))).toISOString().slice(0, 10);
+  return L().totals(S().transactions.filter((t) => t.date <= cutoff && keyOf(t.date) === prev));
+}
+
+function pctChange(now, before, samePoint = false) {
+  const prev = `${samePoint ? 'same point ' : ''}${P().payday ? (samePoint ? 'last period' : 'previous period') : 'last month'}`;
   if (!before) return `vs ${prev}: —`;
   const p = Math.round(((now - before) / before) * 100);
   return `${p > 0 ? '▲' : p < 0 ? '▼' : '='} ${Math.abs(p)}% vs ${prev}`;
@@ -659,14 +729,31 @@ function renderStatus() {
   }
 }
 
+// #transactions?month=K|all&type=income|expense|saved&account=<uid>|none&counted=1&category=<name>&q=<text>
+// Any of these present: start from clean filters, so links always show the same list.
+// Values are validated here (unknown ones are dropped); an unknown account is ignored by the view.
+const TX_PARAMS = ['month', 'type', 'account', 'counted', 'category', 'q'];
+function applyTxParams(params) {
+  if (!TX_PARAMS.some((k) => params.has(k))) return;
+  const text = (k, max) => String(params.get(k) || '').slice(0, max);
+  const month = params.get('month');
+  const type = params.get('type');
+  ui.tx = {
+    ...TX_DEFAULTS,
+    q: text('q', 100),
+    type: ['income', 'expense', 'saved'].includes(type) ? type : '',
+    category: text('category', 60),
+    account: text('account', 200),
+    counted: params.get('counted') === '1',
+    month: month === 'all' ? '' : /^\d{4}-(0[1-9]|1[0-2])$/.test(month || '') ? month : null,
+  };
+}
+
 function route() {
   const [name, query] = location.hash.slice(1).split('?');
   ui.route = TITLES[name] ? name : 'overview';
   ui.params = new URLSearchParams(query || '');
-  if (ui.route === 'transactions' && ui.params.has('category')) {
-    ui.tx.category = ui.params.get('category');
-    ui.tx.month = ui.params.get('month') ?? ui.tx.month;
-  }
+  if (ui.route === 'transactions') applyTxParams(ui.params);
   render();
   view.focus({ preventScroll: true });
   window.scrollTo(0, 0);
@@ -1235,6 +1322,9 @@ const actions = {
   'delete-tx': (el, e) => { e.stopPropagation(); deleteTx(el.dataset.id); },
   month: (el) => { ui.month = addMonths(ui.month || P().current(), Number(el.dataset.delta)); render(); },
   'more-tx': () => { ui.tx.limit += 150; render(); },
+  'tx-all-months': () => { ui.tx = { ...ui.tx, month: '', limit: 150 }; render(); },
+  'tx-clear': () => { ui.tx = { ...TX_DEFAULTS }; render(); },
+  'tx-uncounted': () => { ui.tx = { ...ui.tx, counted: false, limit: 150 }; render(); },
   'add-goal': () => openGoalModal(),
   'edit-goal': (el) => openGoalModal(S().goals.find((g) => g.id === el.dataset.id)),
   contribute: (el) => openContributionModal(S().goals.find((g) => g.id === el.dataset.id)),
@@ -1360,7 +1450,7 @@ document.addEventListener('click', (e) => {
   }
   const bar = e.target.closest('.bar-row[data-category]');
   if (bar) {
-    ui.tx = { ...ui.tx, category: bar.dataset.category, month: ui.month || P().current(), type: '', q: '' };
+    ui.tx = { ...TX_DEFAULTS, category: bar.dataset.category, month: ui.month || P().current() };
     location.hash = 'transactions';
   }
 });
@@ -1434,6 +1524,29 @@ function applyTheme(t) {
   else document.documentElement.setAttribute('data-theme', t);
 }
 
+// Phone: the + button gets out of the way while scrolling down (so it never
+// covers amounts) and comes back as soon as you scroll up or reach the top.
+function watchFabScroll() {
+  const fab = $('.fab');
+  if (!fab) return;
+  let lastY = window.scrollY;
+  let ticking = false;
+  window.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      const y = window.scrollY;
+      if (Math.abs(y - lastY) > 6) {
+        fab.classList.toggle('fab-hidden', y > lastY && y > 80);
+        lastY = y;
+      }
+      if (y <= 80) fab.classList.remove('fab-hidden');
+      ticking = false;
+    });
+  }, { passive: true });
+  window.addEventListener('hashchange', () => fab.classList.remove('fab-hidden'));
+}
+
 // ---------------------------------------------------------------- boot
 function showApp() {
   $('#login').hidden = true;
@@ -1456,6 +1569,7 @@ async function boot() {
   data.addEventListener('error', (e) => toast(e.detail));
   data.addEventListener('auth', showLogin);
   window.addEventListener('hashchange', route);
+  watchFabScroll();
   window.addEventListener('online', () => data.flush());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') { data.flush(); syncBank(false); }
