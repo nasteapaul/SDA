@@ -15,7 +15,7 @@ const { values, positionals } = parseArgs({
     ig: { type: 'string' },
     resolution: { type: 'string', default: 'MINUTE_5' },
     max: { type: 'string', default: '1000' },
-    spread: { type: 'string', default: '0' },
+    spread: { type: 'string', default: '1.2' }, // DAX in session; never test without costs
     risk: { type: 'string', default: '1' },
     capital: { type: 'string', default: '10000' },
     fast: { type: 'string', default: '9' },

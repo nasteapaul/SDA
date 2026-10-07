@@ -28,3 +28,14 @@ test('CandleBuilder closes a candle when a new period starts', () => {
   assert.deepEqual(closed[0], { time: 0, open: 10, high: 12, low: 9, close: 11 });
   assert.equal(b.current.open, 11.5);
 });
+
+test('CandleBuilder.flush closes a finished candle without a new tick', () => {
+  const closed = [];
+  const b = new CandleBuilder(60_000, (c) => closed.push(c));
+  b.push({ time: 0, price: 10 });
+  b.flush(59_999);
+  assert.equal(closed.length, 0);
+  b.flush(60_000);
+  assert.equal(closed.length, 1);
+  assert.equal(b.current, null);
+});

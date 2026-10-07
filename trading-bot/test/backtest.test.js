@@ -43,3 +43,11 @@ test('emaCrossSignals emits BUY after a downtrend turns up', () => {
   assert.equal(sig[first].side, 'BUY');
   assert.ok(sig[first].stopDist > 0 && sig[first].targetDist > sig[first].stopDist);
 });
+
+test('a gap through the stop fills at the open, not at the stop', () => {
+  const candles = [candle(0, 100, 100, 100, 100), candle(1, 100, 101, 99, 100), candle(2, 95, 96, 94, 95)];
+  const signals = [{ side: 'BUY', stopDist: 2, targetDist: 4 }, { side: null }, { side: null }];
+  const r = backtest(candles, signals, { capital: 1000, riskPct: 1 });
+  assert.equal(r.trades[0].exit, 95);
+  assert.equal(r.net, -25);
+});

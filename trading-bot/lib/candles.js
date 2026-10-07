@@ -54,6 +54,16 @@ export class CandleBuilder {
     this.current = null;
   }
 
+  // Closes the current candle once its period is over, even if no new tick arrived
+  // (e.g. the market closed). Call it on every poll.
+  flush(time) {
+    if (this.current && time >= this.current.time + this.periodMs) {
+      const c = this.current;
+      this.current = null;
+      this.onClose?.(c);
+    }
+  }
+
   push({ time, price }) {
     if (!isNum(time) || !isNum(price)) return;
     const start = Math.floor(time / this.periodMs) * this.periodMs;

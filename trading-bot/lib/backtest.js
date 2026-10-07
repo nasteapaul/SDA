@@ -54,8 +54,9 @@ export function backtest(candles, signals, opts = {}) {
       const long = pos.side === 'BUY';
       const hitStop = long ? c.low <= pos.stop : c.high >= pos.stop;
       const hitTarget = long ? c.high >= pos.target : c.low <= pos.target;
-      if (hitStop) close(pos.stop, c.time, 'stop-loss');
-      else if (hitTarget) close(pos.target, c.time, 'take-profit');
+      // A gap through the level fills at the open, not at the level.
+      if (hitStop) close(long ? Math.min(c.open, pos.stop) : Math.max(c.open, pos.stop), c.time, 'stop-loss');
+      else if (hitTarget) close(long ? Math.max(c.open, pos.target) : Math.min(c.open, pos.target), c.time, 'take-profit');
     }
   }
   if (pos) close(candles.at(-1).close, candles.at(-1).time, 'final date');
