@@ -63,7 +63,19 @@ if (configErrors.length) {
   process.exit(1);
 }
 
-const PUBLIC_URL = (env.PUBLIC_URL || `${TLS ? 'https' : 'http'}://localhost:${PORT}`).replace(/\/$/, '');
+const PUBLIC_URL = publicUrl(env.PUBLIC_URL || `${TLS ? 'https' : 'http'}://localhost:${PORT}`);
+
+// "my-pc.tailnet.ts.net" (no scheme) is a common .env slip: assume https://.
+function publicUrl(raw) {
+  let value = String(raw).trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
+  try {
+    return new URL(value).origin;
+  } catch {
+    console.error(`\n  PUBLIC_URL in .env is not a valid address: "${raw}"\n  Write it like https://my-pc.tailnet.ts.net or http://192.168.1.50:8080\n`);
+    process.exit(1);
+  }
+}
 const REDIRECT_URL = env.EB_REDIRECT_URL || `${PUBLIC_URL}/bank/callback`;
 
 const store = await new Store(path.join(DATA_DIR, 'budget.json')).load();
