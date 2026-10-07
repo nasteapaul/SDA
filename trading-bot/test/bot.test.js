@@ -117,3 +117,36 @@ test('rejects a size below the IG minimum and non-point stop units', async () =>
   client.market = async () => ({ ...(await m()), minStopUnit: 'PERCENTAGE' });
   await assert.rejects(makeBot(client).start(), /PERCENTAGE/);
 });
+
+test('closes positions at the end of the session and caps trades per day', async () => {
+  const client = fakeClient();
+  const bot = makeBot(client, { maxTradesPerDay: 1 });
+  await bot.start();
+  await runUp(bot, client, 30);
+  assert.equal(client.orders.length, 1);
+  bot.clock = Date.parse('2026-10-07T15:31:00Z'); // 17:31 in Frankfurt
+  await bot.tick();
+  assert.equal(client.closed.length, 1);
+  assert.equal(bot.risk.trades, 1);
+});
+
+test('level-based signals become distances from the live price', async () => {
+  const client = fakeClient();
+  let fired = false;
+  const signal = () => (fired ? null : ((fired = true), { side: 'BUY', stopLevel: 150, targetR: 2, reason: 'test' }));
+  const bot = makeBot(client, { signal });
+  await bot.start();
+  await runUp(bot, client, 3);
+  assert.equal(client.orders.length, 1);
+  const o = client.orders[0];
+  // offer = price + 0.5 at the time of the order
+  assert.ok(o.stopDistance > 10 && Math.abs(o.limitDistance - 2 * o.stopDistance) < 0.2);
+});
+
+test('no new trades outside the trading window', async () => {
+  const client = fakeClient();
+  const bot = makeBot(client, { tradeFrom: '18:00', tradeUntil: '19:00' });
+  await bot.start();
+  await runUp(bot, client, 30);
+  assert.equal(client.orders.length, 0);
+});

@@ -5,20 +5,38 @@ import { fileURLToPath } from 'node:url';
 import { IgClient } from '../lib/ig.js';
 import { Bot } from '../lib/bot.js';
 import { StateStore } from '../lib/state.js';
+import { orbLive } from '../lib/strategies.js';
 
 const env = process.env;
 const num = (k, d) => (env[k] === undefined ? d : Number(env[k]));
 const log = (m) => console.log(`${new Date().toISOString()} ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// orb: opening range breakout, 1 trade/day (the least bad in the 2011-2018 research).
+// ema: the original EMA 9/21 cross, kept for comparison; it lost money in the research.
+const strategy = env.BOT_STRATEGY ?? 'orb';
+const presets = {
+  orb: {
+    resolution: 'MINUTE',
+    maxTradesPerDay: 1,
+    signal: orbLive({ rangeMin: num('ORB_RANGE_MIN', 15), targetR: num('ORB_TARGET_R', 2), stopFrac: num('ORB_STOP_FRAC', 1) }),
+  },
+  ema: {
+    resolution: 'MINUTE_5',
+    maxTradesPerDay: num('BOT_MAX_TRADES', 6),
+    strategy: { fast: num('BOT_FAST', 9), slow: num('BOT_SLOW', 21) },
+  },
+};
+if (!presets[strategy]) throw new Error(`BOT_STRATEGY must be one of: ${Object.keys(presets).join(', ')}`);
+
 const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
 const bot = new Bot({
   client,
   epic: env.BOT_EPIC ?? 'IX.D.DAX.IFMM.IP',
-  resolution: env.BOT_RESOLUTION ?? 'MINUTE_5',
+  ...presets[strategy],
+  ...(env.BOT_RESOLUTION ? { resolution: env.BOT_RESOLUTION } : {}),
   size: num('BOT_SIZE', 1),
   maxDailyLoss: num('BOT_MAX_DAILY_LOSS', 100),
-  strategy: { fast: num('BOT_FAST', 9), slow: num('BOT_SLOW', 21) },
   state: new StateStore(fileURLToPath(new URL('../data/state.json', import.meta.url))),
   log,
 });
@@ -44,6 +62,7 @@ let failures = 0;
 while (!stopping) {
   try {
     await bot.start();
+    log(`Strategie: ${strategy}.`);
     failures = 0;
     break;
   } catch (e) {

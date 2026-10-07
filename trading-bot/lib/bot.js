@@ -1,23 +1,35 @@
 import { CandleBuilder } from './candles.js';
 import { emaCrossSignals } from './strategy.js';
 import { StateStore, tradingDay } from './state.js';
+import { berlinClock, hhmm } from './session.js';
 
 export const RESOLUTIONS = Object.freeze({ MINUTE: 60e3, MINUTE_5: 300e3, MINUTE_15: 900e3, HOUR: 3600e3 });
 
-// Polls the market price, builds candles, and on every closed candle runs the strategy.
-// One position at a time, always with a stop. The daily loss limit is checked on every
-// poll, survives restarts (state file) and closes open positions when hit.
+// Polls the market price, builds candles, and on every closed candle asks `signal` for a
+// trade. One position at a time, always with a stop. New trades only between tradeFrom and
+// tradeUntil (Frankfurt time), everything closed at flatAt, at most maxTradesPerDay.
+// The daily loss limit is checked on every poll, survives restarts (state file) and closes
+// open positions when hit.
 export class Bot {
-  constructor({ client, epic, resolution = 'MINUTE_5', size, maxDailyLoss, strategy = {}, state = new StateStore(null), log = console.log, now = Date.now }) {
+  constructor({
+    client, epic, resolution = 'MINUTE_5', size, maxDailyLoss, strategy = {}, signal,
+    tradeFrom = '09:15', tradeUntil = '17:00', flatAt = '17:30', maxTradesPerDay = Infinity,
+    state = new StateStore(null), log = console.log, now = Date.now,
+  }) {
     if (!RESOLUTIONS[resolution]) throw new Error(`Unknown resolution ${resolution}`);
     if (!(size > 0)) throw new Error('BOT_SIZE must be > 0');
     if (!(maxDailyLoss > 0)) throw new Error('BOT_MAX_DAILY_LOSS must be > 0');
-    Object.assign(this, { client, epic, resolution, size, maxDailyLoss, strategy, state, log, now });
+    if (!(maxTradesPerDay >= 1)) throw new Error('maxTradesPerDay must be >= 1');
+    Object.assign(this, { client, epic, resolution, size, maxDailyLoss, maxTradesPerDay, state, log, now });
+    this.signal = signal ?? ((candles) => emaCrossSignals(candles, strategy).at(-1));
+    this.tradeFrom = hhmm(tradeFrom);
+    this.tradeUntil = hhmm(tradeUntil);
+    this.flatAt = hhmm(flatAt);
     this.periodMs = RESOLUTIONS[resolution];
     this.candles = [];
     this.pending = [];
     this.builder = new CandleBuilder(this.periodMs, (c) => this.onCandle(c));
-    this.risk = { day: null, dayStartEquity: null, halted: false, ...state.load() };
+    this.risk = { day: null, dayStartEquity: null, halted: false, trades: 0, ...state.load() };
   }
 
   async start(historyCount = 100) {
@@ -46,6 +58,7 @@ export class Bot {
       this.builder.push({ time: now, price: (m.bid + m.offer) / 2 });
     }
     await this.checkRisk();
+    await this.flattenAfterHours(now);
     const pending = this.pending;
     this.pending = [];
     for (const p of pending) await p;
@@ -64,7 +77,10 @@ export class Bot {
     if (this.risk.halted || this.stopped || this.market?.status !== 'TRADEABLE') return;
     // A candle that closed long ago (market was shut) is not a signal to act on now.
     if (this.now() - candle.time > 2 * this.periodMs) return;
-    const sig = emaCrossSignals(this.candles, this.strategy).at(-1);
+    const { mod } = berlinClock(this.now());
+    if (mod < this.tradeFrom || mod >= this.tradeUntil) return;
+    if (this.risk.trades >= this.maxTradesPerDay) return;
+    const sig = this.signal(this.candles);
     if (!sig?.side) return;
     const open = await this.client.openPositions(this.epic);
     if (open.some((p) => p.direction === sig.side)) return;
@@ -73,8 +89,16 @@ export class Bot {
       this.log(`Închis ${p.direction} ${p.size} (semnal invers).`);
     }
     if (await this.checkRisk()) return;
-    const stopDistance = this.points(Math.max(sig.stopDist, this.market.minStop));
-    const limitDistance = this.points(Math.max(sig.targetDist, this.market.minStop));
+    let { stopDist, targetDist } = sig;
+    if (sig.stopLevel != null) {
+      // Level-based signal: measure from the price we would actually get.
+      const entry = sig.side === 'BUY' ? this.market.offer : this.market.bid;
+      stopDist = (entry - sig.stopLevel) * (sig.side === 'BUY' ? 1 : -1);
+      if (!(stopDist > 0)) return this.log('Prețul a trecut deja de nivelul de stop; sar peste semnal.');
+      targetDist = sig.targetR ? stopDist * sig.targetR : undefined;
+    }
+    const stopDistance = this.points(Math.max(stopDist, this.market.minStop));
+    const limitDistance = targetDist == null ? undefined : this.points(Math.max(targetDist, this.market.minStop));
     if (!(stopDistance > 0)) throw new Error('Stop distance rounded to zero; refusing to trade');
     try {
       const res = await this.client.openMarket({
@@ -85,7 +109,9 @@ export class Bot {
         stopDistance,
         limitDistance,
       });
-      this.log(`Deschis ${sig.side} ${this.size} la ${res.level}, stop ${stopDistance}, țintă ${limitDistance}. ${sig.reason}`);
+      this.risk.trades++;
+      this.state.save(this.risk);
+      this.log(`Deschis ${sig.side} ${this.size} la ${res.level}, stop ${stopDistance}, țintă ${limitDistance ?? 'fără'}. ${sig.reason}`);
     } catch (e) {
       if (e.code === 'UNKNOWN_ORDER_STATE') {
         // Until a human checks, any new order could double the position.
@@ -107,7 +133,7 @@ export class Bot {
     const today = tradingDay(this.now());
     const equity = await this.client.equity();
     if (this.risk.day !== today) {
-      this.risk = { day: today, dayStartEquity: equity, halted: false };
+      this.risk = { day: today, dayStartEquity: equity, halted: false, trades: 0 };
       this.state.save(this.risk);
     }
     if (!this.risk.halted && this.risk.dayStartEquity - equity >= this.maxDailyLoss) {
@@ -115,6 +141,16 @@ export class Bot {
       for (const p of await this.client.openPositions(this.epic)) await this.client.closePosition(p);
     }
     return this.risk.halted;
+  }
+
+  // Day trading only: nothing is held past flatAt (no overnight gaps or funding costs).
+  async flattenAfterHours(now) {
+    if (berlinClock(now).mod < this.flatAt) return;
+    const open = await this.client.openPositions(this.epic);
+    for (const p of open) {
+      await this.client.closePosition(p);
+      this.log(`Închis ${p.direction} ${p.size} (sfârșitul sesiunii).`);
+    }
   }
 
   halt(message) {

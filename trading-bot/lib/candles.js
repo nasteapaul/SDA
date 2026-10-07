@@ -15,7 +15,8 @@ export function parseCsv(text) {
   const header = lines[0].toLowerCase().split(',').map((h) => h.trim());
   const idx = {};
   for (const k of ['time', 'open', 'high', 'low', 'close']) {
-    idx[k] = header.indexOf(k);
+    // Dukascopy and other exporters call the time column "timestamp" or "date".
+    idx[k] = k === 'time' ? header.findIndex((h) => ['time', 'timestamp', 'date', 'datetime'].includes(h)) : header.indexOf(k);
     if (idx[k] < 0) throw new Error(`CSV header missing column "${k}"`);
   }
   const candles = [];

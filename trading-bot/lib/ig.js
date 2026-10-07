@@ -121,6 +121,11 @@ export class IgClient {
     })).filter(validateCandle);
   }
 
+  async searchMarkets(term) {
+    const { data } = await this.request('GET', `/markets?searchTerm=${encodeURIComponent(term)}`);
+    return (data.markets ?? []).map((m) => ({ epic: m.epic, name: m.instrumentName, type: m.instrumentType, expiry: m.expiry, status: m.marketStatus }));
+  }
+
   // Balance plus open profit/loss of the current account.
   async equity() {
     const { data } = await this.request('GET', '/accounts');
