@@ -15,6 +15,8 @@ import { makeLedger, COUNT_MODES } from './shared/ledger.js';
 import { categorize } from './shared/categories.js';
 import { ownTransferCategory } from './shared/own.js';
 import { importSeen, isSameTransaction } from './shared/dedupe.js';
+// foundation: SVG icons (named svgIcon here — icon() below is the category emoji)
+import { icon as svgIcon, iconTile } from './icons.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -125,6 +127,57 @@ function fmtDate(iso, opts = { day: 'numeric', month: 'short', year: 'numeric' }
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-GB', opts);
 }
+
+// ---------------------------------------------------------------- foundation: card titles + date fields
+// Card heading with an icon tile: cardTitle('bank', 'Bank connection').
+// tone: '' (accent) | neutral | good | warning | critical. after: trusted HTML appended to the title.
+function cardTitle(iconName, text, { tone = '', after = '' } = {}) {
+  return `<h2 class="card-title">${iconTile(iconName, { tone })}<span>${esc(text)}${after}</span></h2>`;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const ATTR_NAME = /^[a-z][a-z0-9-]*$/i;
+
+/**
+ * A date input that always reads "9 Oct 2026": a styled box with the native
+ * <input type="date"> stretched transparently over it, so a tap opens the
+ * phone's own picker but the text shown is never an ambiguous 09/10/2026.
+ *   dateField({ name: 'date', value: t.date, attrs: { required: true } })
+ *   dateField({ value: P().start(k), label: 'Salary date', attrs: { 'data-action': 'salary-date', 'data-key': k }, cls: 'compact' })
+ * attrs: extra attributes for the <input>, as an object (values escaped; true = bare
+ * attribute, false/null = left out) or a trusted string. label: aria-label.
+ * cls: 'compact' (36px high, for rows) and/or 'block' (full width; automatic inside .field).
+ */
+function dateField({ name = '', value = '', attrs = '', label = '', placeholder = 'Pick a date', cls = '' } = {}) {
+  const iso = ISO_DAY.test(value || '') ? value : '';
+  const extra = typeof attrs === 'string' ? attrs : Object.entries(attrs || {})
+    .filter(([k, v]) => ATTR_NAME.test(k) && v !== false && v != null)
+    .map(([k, v]) => (v === true ? k : `${k}="${esc(v)}"`)).join(' ');
+  const off = /(^|\s)(disabled|readonly)(\s|=|$)/i.test(extra);
+  return `<span class="date-field${cls ? ` ${esc(cls)}` : ''}${off ? ' is-disabled' : ''}">${svgIcon('calendar', { size: 18 })}`
+    + `<span class="date-field-text${iso ? '' : ' placeholder'}" data-placeholder="${esc(placeholder)}">${esc(iso ? fmtDate(iso) : placeholder)}</span>`
+    + `<input type="date"${name ? ` name="${esc(name)}"` : ''} value="${esc(iso)}"${label ? ` aria-label="${esc(label)}"` : ''}${extra ? ` ${extra}` : ''}></span>`;
+}
+
+export { cardTitle, dateField }; // for UI checks in the browser: (await import('/js/app.js')).dateField(…)
+
+// Keeps the visible text in step with the picker (views that re-render redraw it anyway).
+function syncDateField(input) {
+  const out = input.closest('.date-field')?.querySelector('.date-field-text');
+  if (!out) return;
+  const iso = ISO_DAY.test(input.value) ? input.value : '';
+  out.textContent = iso ? fmtDate(iso) : out.dataset.placeholder || '';
+  out.classList.toggle('placeholder', !iso);
+}
+for (const type of ['input', 'change']) {
+  document.addEventListener(type, (e) => { if (e.target.matches?.('.date-field input')) syncDateField(e.target); });
+}
+// With a mouse, browsers only open the calendar from its small icon: open it from anywhere in the box.
+document.addEventListener('click', (e) => {
+  const input = e.target.closest?.('.date-field input');
+  if (!input || input.disabled || input.readOnly || !window.matchMedia?.('(pointer: fine)').matches) return;
+  try { input.showPicker?.(); } catch { /* not allowed here; the native control still works */ }
+});
 
 function dayHeading(iso) {
   const today = todayISO();
@@ -444,7 +497,7 @@ const views = {
       <div class="grid two">
         <div class="stack">
           <div class="card">
-            <div class="card-head"><h2>🏦 Bank connection</h2>${b.connections.length ? `<button class="btn small" type="button" data-action="sync-bank" ${b.syncing ? 'disabled' : ''}>${b.syncing ? 'Syncing…' : '↻ Sync now'}</button>` : ''}</div>
+            <div class="card-head">${cardTitle('bank', 'Bank connection')}${b.connections.length ? `<button class="btn small" type="button" data-action="sync-bank" ${b.syncing ? 'disabled' : ''}>${b.syncing ? 'Syncing…' : '↻ Sync now'}</button>` : ''}</div>
             ${flash === 'linked' ? '<div class="banner" style="margin-bottom:12px"><span class="banner-ico">✅</span><div><b>Bank linked.</b> Importing your transactions now…</div></div>' : ''}
             ${flash === 'error' ? `<div class="banner" style="margin-bottom:12px"><span class="banner-ico">⚠️</span><div><b>Bank linking didn't finish.</b> <span class="muted">${esc(ui.params.get('reason') || '')}</span></div></div>` : ''}
             ${!b.configured ? `<p>Bank sync runs on your home server through <b>Enable Banking</b> (PSD2 open banking, free for your own accounts — supports BT, BCR, BRD, ING, Raiffeisen, CEC, Revolut…).</p>
@@ -464,14 +517,14 @@ const views = {
               </div>`}
           </div>
           <div class="card">
-            <div class="card-head"><h2>📄 Import a bank statement (CSV)</h2></div>
+            <div class="card-head">${cardTitle('upload', 'Import a bank statement (CSV)')}</div>
             <p class="muted small">Works with CSV exports from BT, BCR, ING, Raiffeisen, BRD, Revolut and most other banks. Duplicates are skipped automatically.</p>
             <input type="file" accept=".csv,text/csv,text/plain" data-action="csv-file" aria-label="CSV file">
             ${S().transactions.some((t) => t.source === 'import') ? `<div class="setting"><span class="small">${S().transactions.filter((t) => t.source === 'import').length} imported transactions<div class="muted small">Start over: remove them, then import the statements again.</div></span><button class="btn small danger" type="button" data-action="delete-imported">Delete imported</button></div>` : ''}
             ${ui.csvPreview ? csvPreviewHTML(b) : ''}
           </div>
           <div class="card">
-            <div class="card-head"><h2>🧮 What counts as income and spending</h2></div>
+            <div class="card-head">${cardTitle('sliders', 'What counts as income and spending')}</div>
             <div class="settings-list">
               ${Object.entries(COUNT_MODES).map(([k, label]) => `<label class="checkbox"><input type="radio" name="count-mode" data-action="count-mode" value="${k}" ${L().mode === k ? 'checked' : ''}> ${esc(label)}</label>`).join('')}
               <p class="muted small" style="margin:6px 0 0">${L().mode === 'cashflow'
@@ -480,7 +533,7 @@ const views = {
             </div>
           </div>
           <div class="card">
-            <div class="card-head"><h2>📅 Budget month</h2></div>
+            <div class="card-head">${cardTitle('calendar', 'Budget month')}</div>
             <p class="muted small" style="margin-top:0">Count each month from payday to payday, so “left to spend” matches the money you actually have until the next salary.</p>
             <div class="settings-list">
               <label class="checkbox"><input type="radio" name="period-mode" data-action="period-mode" value="calendar" ${S().settings?.payday ? '' : 'checked'}> Calendar month (1st – last day)</label>
@@ -498,7 +551,7 @@ const views = {
               }).join('')}</div>` : ''}
           </div>
           <div class="card">
-            <div class="card-head"><h2>📱 App</h2></div>
+            <div class="card-head">${cardTitle('phone', 'App')}</div>
             <div class="settings-list">
               ${window.BudgetApp ? `<div class="setting"><span>Server address<div class="muted small num">${esc(window.BudgetApp.getServer())}</div></span><button class="btn small" type="button" data-action="change-server">Change</button></div>`
                 : `<div class="setting"><span>Install on this device</span>${ui.installPrompt ? '<button class="btn small primary" type="button" data-action="install">Install</button>' : '<span class="muted small" style="text-align:right">iPhone: Share → Add to Home Screen<br>Android: get the app (see README) or ⋮ → Add to Home screen</span>'}</div>`}
@@ -511,7 +564,7 @@ const views = {
         </div>
         <div class="stack">
           <div class="card">
-            <div class="card-head"><h2>🗂 Categories</h2><button class="btn small" type="button" data-action="add-category">+ Add</button></div>
+            <div class="card-head">${cardTitle('tag', 'Categories')}<button class="btn small" type="button" data-action="add-category">+ Add</button></div>
             <p class="muted small" style="margin-top:0">Essential categories are never cut by the planner.</p>
             ${S().categories.map((c, i) => `<div class="cat-row">
               <span style="font-size:20px;text-align:center" aria-hidden="true">${esc(c.icon)}</span>
@@ -521,7 +574,7 @@ const views = {
             </div>`).join('')}
           </div>
           <div class="card">
-            <div class="card-head"><h2>🧠 Category rules</h2><button class="btn small" type="button" data-action="add-rule">+ Add</button></div>
+            <div class="card-head">${cardTitle('rules', 'Category rules')}<button class="btn small" type="button" data-action="add-rule">+ Add</button></div>
             <p class="muted small" style="margin-top:0">“When the bank text contains <i>carrefour</i>, use <i>Groceries</i>.” Your rules win over the built-in ones and apply to every sync. Transactions you categorised by hand are never changed.</p>
             ${S().rules.length ? S().rules.map((r, i) => {
               const hits = S().transactions.filter((t) => ruleMatches(r, t));
@@ -628,7 +681,7 @@ function trashCardHTML() {
       ${list.length > shown.length ? `<button class="btn small" type="button" data-action="trash-all" style="margin-top:8px">Show all ${list.length}</button>` : ''}`;
   }
   return `<div class="card">
-    <div class="card-head"><h2>🗑 Trash</h2></div>
+    <div class="card-head">${cardTitle('trash', 'Trash')}</div>
     <p class="muted small" style="margin-top:0">Transactions you deleted, or that were merged as duplicates. They stay here for 60 days.</p>
     ${body}
   </div>`;
@@ -671,8 +724,9 @@ function render() {
   const focusFilter = view.contains(active) && active.dataset.filter === 'q' ? active.selectionStart : null;
   view.innerHTML = (views[ui.route] || views.overview)();
   if (focusFilter != null) {
+    // Gone when the route changed while typing (back button, a link): nothing to restore.
     const input = view.querySelector('[data-filter="q"]');
-    input.focus(); input.setSelectionRange(focusFilter, focusFilter);
+    if (input) { input.focus(); input.setSelectionRange(focusFilter, focusFilter); }
   }
   $('#view-title').textContent = TITLES[ui.route] || 'Overview';
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === ui.route));
@@ -1246,7 +1300,7 @@ function creditCardPanel(key) {
   const digits = [...L().byDigits].filter(([, a]) => cards.some((c) => c.uid === a.uid)).map(([x]) => x);
   const asOf = cards.length === 1 ? balanceAsOf(cards[0]) : null;
   return `<div class="card card-panel">
-    <div class="card-head"><h2>💳 Credit card${digits.length ? ` <span class="muted num" style="font-weight:400">**** ${esc(digits.join(', '))}</span>` : ''}</h2><a class="link" href="${accountTxLink(cards[0].uid, key)}">Card transactions →</a></div>
+    <div class="card-head">${cardTitle('card', 'Credit card', { after: digits.length ? ` <span class="muted num" style="font-weight:400">**** ${esc(digits.join(', '))}</span>` : '' })}<a class="link" href="${accountTxLink(cards[0].uid, key)}">Card transactions →</a></div>
     <div class="kpis">
       <div class="kpi"><span class="stat-label">Owed${asOf ? ` at ${esc(asOf.text)}` : ' now'}${asOf?.stale ? ' <span class="asof stale">· old</span>' : ''}</span><span class="kpi-value num">${formatRON(owed)}</span></div>
       <div class="kpi"><span class="stat-label">Spent on the card</span><span class="kpi-value num">${formatRON(now.spent)}</span><span class="stat-sub">this period${now.refunded ? ` · after ${formatRON(now.refunded, { short: true })} refunded` : ''}</span></div>
