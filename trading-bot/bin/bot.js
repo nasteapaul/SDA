@@ -6,10 +6,20 @@ import { IgClient } from '../lib/ig.js';
 import { Bot } from '../lib/bot.js';
 import { StateStore } from '../lib/state.js';
 import { orbLive } from '../lib/strategies.js';
+import { berlinClock, hhmm } from '../lib/session.js';
+import { telegramNotifier } from '../lib/notify.js';
 
 const env = process.env;
 const num = (k, d) => (env[k] === undefined ? d : Number(env[k]));
-const log = (m) => console.log(`${new Date().toISOString()} ${m}`);
+const notify = telegramNotifier({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID });
+const pendingNotes = [];
+const log = (m) => {
+  console.log(`${new Date().toISOString()} ${m}`);
+  if (notify) pendingNotes.push(notify(m));
+};
+// BOT_EXIT_AT=HH:MM (Frankfurt) ends the run cleanly, e.g. when a scheduled cloud job
+// has to finish. Open positions keep their stop and target at IG.
+const exitAt = env.BOT_EXIT_AT ? hhmm(env.BOT_EXIT_AT) : null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // orb: opening range breakout, 1 trade/day (the least bad in the 2011-2018 research).
@@ -38,13 +48,14 @@ const bot = new Bot({
   ...(env.BOT_RESOLUTION ? { resolution: env.BOT_RESOLUTION } : {}),
   size: num('BOT_SIZE', 1),
   maxDailyLoss: num('BOT_MAX_DAILY_LOSS', 100),
-  state: new StateStore(fileURLToPath(new URL('../data/state.json', import.meta.url))),
+  state: new StateStore(env.BOT_STATE ?? fileURLToPath(new URL('../data/state.json', import.meta.url))),
   log,
 });
 
 // Each poll makes 2 non-trading requests; IG allows about 60 per minute.
 const pollMs = Math.max(5000, num('BOT_POLL_MS', 5000));
 let stopping = false;
+let fatal = false;
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => { stopping = true; log('Oprire. Pozițiile deschise rămân în cont cu stop-ul lor.'); });
 }
@@ -53,7 +64,9 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 function backoff(e, failures) {
   if (e.fatal) {
     log(`Eroare de autentificare (${e.code}). Mă opresc ca să nu-ți blochez contul.`);
-    process.exit(1);
+    fatal = true;
+    stopping = true;
+    return 0;
   }
   if (e.status === 403 && /allowance/i.test(e.code ?? '')) return 15 * 60e3;
   return Math.min(5 * 60e3, 5000 * 2 ** (failures - 1));
@@ -75,6 +88,10 @@ while (!stopping) {
 }
 
 while (!stopping) {
+  if (exitAt != null && berlinClock(Date.now()).mod >= exitAt) {
+    log(`Program încheiat (${env.BOT_EXIT_AT} ora Frankfurt). Pozițiile deschise rămân cu stop și țintă la IG.`);
+    break;
+  }
   let wait = pollMs;
   try {
     await bot.tick();
@@ -86,3 +103,6 @@ while (!stopping) {
   }
   await sleep(wait);
 }
+
+await Promise.all(pendingNotes);
+if (fatal) process.exitCode = 1;

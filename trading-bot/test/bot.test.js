@@ -161,3 +161,13 @@ test('logs a status line every heartbeat interval', async () => {
   assert.equal(beats.length, 3);
   assert.match(beats[0], /Azi: 0 tranzacții, rezultat 0\.00 EUR\. Stare: aștept începutul/);
 });
+
+test('telegram notes go out only for trades, halts and stops', async () => {
+  const { telegramNotifier } = await import('../lib/notify.js');
+  assert.equal(telegramNotifier({}), null);
+  const sent = [];
+  const notify = telegramNotifier({ token: 't', chatId: 'c', fetchImpl: async (url, o) => sent.push(JSON.parse(o.body).text) });
+  await notify('Activ. E 1/2. Azi: 0 tranzacții.');
+  await notify('Deschis BUY 1 la 100, stop 10, țintă 20.');
+  assert.deepEqual(sent, ['🤖 DAX demo: Deschis BUY 1 la 100, stop 10, țintă 20.']);
+});
