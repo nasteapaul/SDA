@@ -19,6 +19,7 @@ const presets = {
   orb: {
     resolution: 'MINUTE',
     maxTradesPerDay: 1,
+    tradeUntil: '12:00', // orbLive takes no entries after noon either
     signal: orbLive({ rangeMin: num('ORB_RANGE_MIN', 15), targetR: num('ORB_TARGET_R', 2), stopFrac: num('ORB_STOP_FRAC', 1) }),
   },
   ema: {

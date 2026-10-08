@@ -14,13 +14,13 @@ export class Bot {
   constructor({
     client, epic, resolution = 'MINUTE_5', size, maxDailyLoss, strategy = {}, signal,
     tradeFrom = '09:15', tradeUntil = '17:00', flatAt = '17:30', maxTradesPerDay = Infinity,
-    state = new StateStore(null), log = console.log, now = Date.now,
+    state = new StateStore(null), log = console.log, now = Date.now, heartbeatMs = 5 * 60e3,
   }) {
     if (!RESOLUTIONS[resolution]) throw new Error(`Unknown resolution ${resolution}`);
     if (!(size > 0)) throw new Error('BOT_SIZE must be > 0');
     if (!(maxDailyLoss > 0)) throw new Error('BOT_MAX_DAILY_LOSS must be > 0');
     if (!(maxTradesPerDay >= 1)) throw new Error('maxTradesPerDay must be >= 1');
-    Object.assign(this, { client, epic, resolution, size, maxDailyLoss, maxTradesPerDay, state, log, now });
+    Object.assign(this, { client, epic, resolution, size, maxDailyLoss, maxTradesPerDay, state, log, now, heartbeatMs });
     this.signal = signal ?? ((candles) => emaCrossSignals(candles, strategy).at(-1));
     this.tradeFrom = hhmm(tradeFrom);
     this.tradeUntil = hhmm(tradeUntil);
@@ -59,6 +59,7 @@ export class Bot {
     }
     await this.checkRisk();
     await this.flattenAfterHours(now);
+    if (now - (this.lastBeat ?? -Infinity) >= this.heartbeatMs) this.heartbeat(now);
     const pending = this.pending;
     this.pending = [];
     for (const p of pending) await p;
@@ -132,6 +133,7 @@ export class Bot {
   async checkRisk() {
     const today = tradingDay(this.now());
     const equity = await this.client.equity();
+    this.equity = equity;
     if (this.risk.day !== today) {
       this.risk = { day: today, dayStartEquity: equity, halted: false, trades: 0 };
       this.state.save(this.risk);
@@ -151,6 +153,22 @@ export class Bot {
       await this.client.closePosition(p);
       this.log(`Închis ${p.direction} ${p.size} (sfârșitul sesiunii).`);
     }
+  }
+
+  // Periodic status line so a quiet console still shows the bot is alive and why it waits.
+  heartbeat(now) {
+    this.lastBeat = now;
+    const m = this.market ?? {};
+    const pnl = this.equity - this.risk.dayStartEquity;
+    const { mod } = berlinClock(now);
+    let what = 'caut semnal';
+    if (this.risk.halted) what = 'oprit pe azi (limita de pierdere)';
+    else if (this.stopped) what = 'oprit, verifică pozițiile în IG';
+    else if (m.status !== 'TRADEABLE') what = 'piața e închisă';
+    else if (mod < this.tradeFrom) what = 'aștept începutul ferestrei de tranzacționare';
+    else if (mod >= this.tradeUntil) what = 'nu mai deschid tranzacții azi';
+    else if (this.risk.trades >= this.maxTradesPerDay) what = 'am făcut tranzacțiile zilei';
+    this.log(`Activ. ${this.epic} ${m.bid ?? '-'}/${m.offer ?? '-'}. Azi: ${this.risk.trades} tranzacții, rezultat ${Number.isFinite(pnl) ? pnl.toFixed(2) : '-'} ${m.currency ?? ''}. Stare: ${what}.`);
   }
 
   halt(message) {

@@ -150,3 +150,14 @@ test('no new trades outside the trading window', async () => {
   await runUp(bot, client, 30);
   assert.equal(client.orders.length, 0);
 });
+
+test('logs a status line every heartbeat interval', async () => {
+  const client = fakeClient();
+  const lines = [];
+  const bot = makeBot(client, { log: (m) => lines.push(m), heartbeatMs: 5 * MIN, tradeFrom: '11:00' });
+  await bot.start();
+  await runUp(bot, client, 11);
+  const beats = lines.filter((l) => l.startsWith('Activ.'));
+  assert.equal(beats.length, 3);
+  assert.match(beats[0], /Azi: 0 tranzacții, rezultat 0\.00 EUR\. Stare: aștept începutul/);
+});
