@@ -23,6 +23,7 @@ export function loadBars(paths) {
   const bars = [];
   for (const p of paths) {
     const text = readFileSync(p, 'utf8');
+    if (!text.trim()) throw new Error(`${p} is empty: the download produced no data`);
     const rows = /^\d{8} \d{6};/.test(text) ? parseHistData(text) : parseCsv(text);
     for (const r of rows) bars.push(r);
   }
