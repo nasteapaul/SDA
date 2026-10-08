@@ -12,6 +12,10 @@
 - Tests: `cd budget-planner && npm test` (node:test). Run them after every code change.
 - NEVER commit secrets: `.env`, `*.pem`, `data/`, `.claude-flow/`, `settings.local.json`.
 - No new npm dependencies without asking — the server is deliberately dependency-free.
+- On the user's laptop the server runs from the `SDA` clone (`~/SDA/budget-planner`), which must
+  stay on branch `claude/budget-planner-bank-sync-03ykf8`. NEVER `git checkout`/`git switch`
+  another branch in that folder — other branches have no `budget-planner/`, so the app vanishes.
+  Work on other projects in a separate folder: `git worktree add ~/<project> <branch>` or a new clone.
 
 ## Rules
 

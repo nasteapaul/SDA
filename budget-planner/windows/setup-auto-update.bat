@@ -45,7 +45,16 @@ echo Budget Planner now lives in %APP%
 echo Check that the app works, then you can delete the old folder: %OLD%
 
 :schedule
-schtasks /Create /F /SC MINUTE /MO 10 /TN "Budget Planner Update" /TR "wscript.exe \"%APP%\windows\auto-update.vbs\"" /RL LIMITED >nul
+:: The updater runs from outside the app folder, so it keeps working even if
+:: that folder gets switched to another branch - and it switches it back.
+for /f "delims=" %%b in ('git -C "%APP%" rev-parse --abbrev-ref HEAD') do set "BRANCH=%%b"
+set "UPD=%LOCALAPPDATA%\BudgetPlanner"
+if not exist "%UPD%" mkdir "%UPD%"
+copy /y "%APP%\windows\auto-update.ps1" "%UPD%\" >nul
+copy /y "%APP%\windows\auto-update.vbs" "%UPD%\" >nul
+> "%UPD%\updater.ini" echo app=%APP%
+>> "%UPD%\updater.ini" echo branch=%BRANCH%
+schtasks /Create /F /SC MINUTE /MO 10 /TN "Budget Planner Update" /TR "wscript.exe \"%UPD%\auto-update.vbs\"" /RL LIMITED >nul
 if errorlevel 1 (
   echo Could not create the update task.
   pause & exit /b 1
@@ -53,6 +62,7 @@ if errorlevel 1 (
 schtasks /Run /TN "Budget Planner Update" >nul 2>&1
 echo.
 echo Done. Every 10 minutes Budget Planner checks GitHub for a new version and
-echo installs it by itself. What happened is written to data\update.log.
-echo To turn it off, run uninstall-autostart.bat.
+echo installs it by itself. It also keeps this folder on the app's branch
+echo (%BRANCH%) - work on other projects in another folder.
+echo What happened is written to data\update.log. To turn it off, run uninstall-autostart.bat.
 pause
