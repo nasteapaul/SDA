@@ -1,0 +1,13 @@
+{
+  "name": "trading-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Candle backtester and signal bot for IG (demo first). Zero dependencies.",
+  "type": "module",
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "test": "node --test",
+    "backtest": "node bin/backtest.js",
+    "research": "node bin/research.js"
+  }
+}

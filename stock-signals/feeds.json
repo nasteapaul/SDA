@@ -1,0 +1,8 @@
+{
+  "_comment": "Press-release feeds (free RSS). A feed that keeps failing is reported once on Telegram; remove or replace it here.",
+  "feeds": [
+    { "name": "GlobeNewswire", "url": "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies" },
+    { "name": "PR Newswire", "url": "https://www.prnewswire.com/rss/news-releases-list.rss" },
+    { "name": "Business Wire", "url": "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ==" }
+  ]
+}
