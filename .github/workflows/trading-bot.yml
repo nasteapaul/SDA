@@ -1,0 +1,82 @@
+# IG DEMO day-trading bot in the cloud, no PC needed.
+# Morning job: starts before the 09:00 Frankfurt open, trades the opening range breakout
+# (one trade at most, entries until 12:00), then exits; the position keeps its stop and
+# target at IG. Evening job: closes anything still open after 17:30 Frankfurt.
+# Does nothing until the IG_API_KEY secret exists. The bot refuses any non-demo account.
+name: trading-bot
+
+on:
+  schedule:
+    - cron: '45 5 * * 1-5'                # 07:45 Frankfurt in summer, 06:45 in winter
+    - cron: '35 15 * * 1-5'               # flatten (summer)
+    - cron: '35 16 * * 1-5'               # flatten (winter)
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'run = start the bot now, flatten = close open positions'
+        default: run
+        type: choice
+        options: [run, flatten]
+
+permissions:
+  contents: write   # daily-loss state on the trading-bot-data branch
+
+concurrency:
+  group: trading-bot
+  cancel-in-progress: false
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      HAS_IG: ${{ secrets.IG_API_KEY != '' }}
+      IG_API_KEY: ${{ secrets.IG_API_KEY }}
+      IG_USERNAME: ${{ secrets.IG_USERNAME }}
+      IG_PASSWORD: ${{ secrets.IG_PASSWORD }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      BOT_STATE: ${{ github.workspace }}/state/trading-state.json
+      BOT_EXIT_AT: '12:05'
+      JOB: ${{ github.event.inputs.job || (github.event.schedule == '45 5 * * 1-5' && 'run') || 'flatten' }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.HAS_IG == 'true'
+
+      - uses: actions/setup-node@v4
+        if: env.HAS_IG == 'true'
+        with:
+          node-version: 22
+
+      - name: Load state
+        if: env.HAS_IG == 'true'
+        run: |
+          if git fetch -q origin trading-bot-data; then
+            git worktree add -q state FETCH_HEAD
+          else
+            git worktree add -q --detach state
+            git -C state checkout -q --orphan trading-bot-data
+            git -C state rm -rfq . || true
+          fi
+
+      - name: Run bot
+        if: env.HAS_IG == 'true' && env.JOB == 'run'
+        run: node trading-bot/bin/bot.js
+
+      - name: Close open positions
+        if: env.HAS_IG == 'true' && env.JOB == 'flatten'
+        run: |
+          # Two crons cover summer and winter time; act only once it is past 17:30 in Frankfurt.
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=Europe/Berlin date +%H%M)" -lt 1730 ]; then
+            echo "Not 17:30 in Frankfurt yet; nothing to do."; exit 0
+          fi
+          node trading-bot/bin/flatten.js
+
+      - name: Save state
+        if: always() && env.HAS_IG == 'true'
+        run: |
+          cd state
+          [ -f trading-state.json ] || exit 0
+          git add trading-state.json
+          git -c user.name=trading-bot -c user.email=actions@users.noreply.github.com commit -qm "state" || exit 0
+          git push -q origin HEAD:refs/heads/trading-bot-data
