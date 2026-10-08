@@ -69,3 +69,19 @@ test('orbLive signals only on the candle that first closes outside the range', (
   assert.equal(sig(bars.slice(0, 18)), null); // not the first breakout any more
   assert.equal(sig(bars.slice(0, 10)), null); // range not finished
 });
+
+test('loadBars reads a folder of CSVs and skips empty downloads', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadBars } = await import('../lib/history.js');
+  const dir = mkdtempSync(join(tmpdir(), 'bars-'));
+  writeFileSync(join(dir, 'a.csv'), 'timestamp,open,high,low,close\n1704096000000,1,2,0.5,1.5\n');
+  writeFileSync(join(dir, 'empty.csv'), '');
+  writeFileSync(join(dir, 'notes.txt'), 'x');
+  const warnings = [];
+  const bars = loadBars([dir], (m) => warnings.push(m));
+  assert.equal(bars.length, 1);
+  assert.equal(warnings.length, 1);
+  assert.throws(() => loadBars([join(dir, 'empty.csv')], () => {}), /every input file is empty/);
+});

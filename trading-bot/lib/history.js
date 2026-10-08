@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseCsv, validateCandle } from './candles.js';
 import { berlinClock } from './session.js';
 
@@ -18,15 +19,23 @@ export function parseHistData(text) {
   return out;
 }
 
-// Loads one or more files; HistData format is detected, otherwise a headed CSV.
-export function loadBars(paths) {
+// Loads files or folders of .csv files (Windows shells don't expand data\*.csv);
+// HistData format is detected, otherwise a headed CSV. Empty downloads are skipped.
+export function loadBars(paths, warn = console.warn) {
+  const files = paths.flatMap((p) => (statSync(p).isDirectory()
+    ? readdirSync(p).filter((f) => f.toLowerCase().endsWith('.csv')).sort().map((f) => join(p, f))
+    : [p]));
   const bars = [];
-  for (const p of paths) {
+  for (const p of files) {
     const text = readFileSync(p, 'utf8');
-    if (!text.trim()) throw new Error(`${p} is empty: the download produced no data`);
+    if (!text.trim()) {
+      warn(`Sar peste ${p}: fișierul e gol.`);
+      continue;
+    }
     const rows = /^\d{8} \d{6};/.test(text) ? parseHistData(text) : parseCsv(text);
     for (const r of rows) bars.push(r);
   }
+  if (!bars.length) throw new Error('No data: every input file is empty');
   bars.sort((a, b) => a.time - b.time);
   return bars;
 }

@@ -3,7 +3,7 @@
 // Parameters are chosen on the in-sample years only; the out-of-sample years are reported
 // once, untouched, so you can see whether an edge survives on data it never saw.
 //
-//   node bin/research.js data/*.csv --split 2016 [--out report.md]
+//   node bin/research.js data --split 2016 [--out report.md]
 // Accepts HistData.com minute files or CSV with time,open,high,low,close.
 import { writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
