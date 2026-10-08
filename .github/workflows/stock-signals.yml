@@ -1,0 +1,55 @@
+# Stock alerts to Telegram, every 30 minutes, without a PC. Alerts only: it never trades.
+# State (what was already read, the alert journal) lives on the "signals-data" branch.
+name: stock-signals
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # save state to the signals-data branch
+  models: read      # free AI summaries through GitHub Models
+
+concurrency:
+  group: stock-signals
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Load state
+        run: |
+          if git fetch -q origin signals-data; then
+            git worktree add -q state FETCH_HEAD
+          else
+            git worktree add -q --detach state
+            git -C state checkout -q --orphan signals-data
+            git -C state rm -rfq . || true
+          fi
+
+      - name: Run
+        run: node stock-signals/bin/run.js
+        env:
+          STATE_DIR: state
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Save state
+        if: always()
+        run: |
+          cd state
+          [ -f state.json ] || exit 0
+          git add state.json
+          git -c user.name=stock-signals -c user.email=actions@users.noreply.github.com commit -qm "state" || exit 0
+          git push -q origin HEAD:refs/heads/signals-data

@@ -1,0 +1,11 @@
+{
+  "name": "stock-signals",
+  "private": true,
+  "type": "module",
+  "description": "Event-driven stock alerts (SEC filings, insider buys, press releases) sent to Telegram. Alerts only, never trades.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test",
+    "start": "node bin/run.js"
+  }
+}
