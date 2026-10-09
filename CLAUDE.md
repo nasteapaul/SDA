@@ -25,32 +25,41 @@
 - Validate input at system boundaries
 - Keep new modules small and focused (existing large files such as `app.js` are fine to edit in place)
 
-## Token budget — applies to every conversation and every agent
+## Efficient agents — applies to every conversation and every agent
 
-- Do the work yourself in the main conversation by default. Spawn agents only
-  when I ask (`/ruflo`, "swarm") or the task spans 3+ truly independent areas.
-- Swarm size: 2–3 agents by default; 5 only if I ask. No extra agents to
-  double-check other agents unless I ask.
-- Agent prompts stay lean: pass the agent file's role, rules and output format
-  only — skip its examples, `npx claude-flow` hook lines and memory/MCP sections.
-  Name the exact files or folders each agent should look at; no repo-wide exploration.
-- Read-only research/search agents run on a cheaper model (`model: sonnet`, or
-  `haiku` for plain file searches); keep the main model for code changes and the
-  final merge.
-- Every agent answers in at most ~300 words: bullet findings with `file:line`,
-  no restating the task, no pasted file contents.
-- Web: search only when the answer is not in the repo. One search, read at most
-  2–3 pages. Use search snippets before full page scrapes. Use Playwright only to
-  click, fill or screenshot — never just to read a page.
-- Do not call ruflo MCP tools (swarm_init, hive-mind, neural, memory, autopilot)
-  unless I ask — they add overhead, the agents do the real work. Never start the
-  ruflo daemon; if one is running, stop it (`npx ruflo@3.53.0 daemon stop`).
-- Don't re-read files already read in this conversation; read only the needed
-  line range of large files.
-- Before a run that will clearly be large (swarm, many web pages, many files),
-  say in one line roughly how many agents/searches it needs and wait for my OK.
-- When ruflo is not being used, the `claude-flow` MCP server can be turned off
-  in `/mcp` so its ~360 tool definitions don't fill the context.
+Use as many agents as the task has genuinely separate parts; the goal is that no
+token is spent twice, not fewer agents.
+
+1. **Context pack once.** Before spawning, the lead gathers the shared context a
+   single time — relevant files with line ranges, key facts, constraints from this
+   file — and writes it as one compact brief (≤ ~1 page). Every agent gets that
+   brief instead of exploring the repo itself.
+2. **Same prefix, cached.** Every agent prompt starts with the identical brief,
+   then its role, then its own task — so parallel agents reuse the prompt cache.
+   Pass only the agent file's role, rules and output format (skip its examples,
+   `npx claude-flow` hook lines and memory/MCP sections).
+3. **Disjoint scopes.** Each agent owns distinct files or a distinct question; no
+   two agents read the same files or run the same searches. Name the exact paths.
+4. **Right model per role.** `haiku` for finding/listing/grepping, `sonnet` for
+   analysis, review, tests and web research; the main model only for design
+   decisions, writing code and the final merge.
+5. **Structured, short output.** Each agent returns ≤ ~300 words: findings as
+   bullets with `file:line`, confidence, and what it did *not* check. No restating
+   the task, no pasted file contents. Pipelines hand the next agent this summary,
+   never raw transcripts.
+6. **Stop when answered.** Agents stop as soon as their question is answered;
+   no exhaustive sweeps "just in case", no agents re-checking other agents unless asked.
+7. **Web once, share it.** Search only when the answer is not in the repo. One
+   agent (or the lead) does the research and the results go into the brief; others
+   don't repeat it. Snippets before full scrapes, at most 2–3 pages per question;
+   Playwright only to click, fill or screenshot.
+8. **No orchestration overhead.** Agents are Claude Code subagents; ruflo MCP tools
+   (swarm_init, hive-mind, neural, memory, autopilot) and the ruflo daemon add
+   tokens without doing work — use them only when I ask, and stop the daemon
+   (`npx ruflo@3.53.0 daemon stop`). Turn the `claude-flow` server off in `/mcp`
+   when ruflo isn't in use.
+9. **No re-reading.** Don't re-read files already read in the conversation; read
+   only the needed line ranges of large files.
 
 ## Ruflo agents — usable in any conversation (laptop, web or phone)
 
