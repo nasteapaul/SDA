@@ -7,7 +7,12 @@ name: trading-bot
 
 on:
   schedule:
+    # GitHub often delays or drops scheduled runs, so the morning start has backups.
+    # Each one skips itself if the bot already ran today (manual runs always start).
     - cron: '45 5 * * 1-5'                # 07:45 Frankfurt in summer, 06:45 in winter
+    - cron: '5 6 * * 1-5'
+    - cron: '25 6 * * 1-5'
+    - cron: '45 6 * * 1-5'
     - cron: '35 15 * * 1-5'               # flatten (summer)
     - cron: '35 16 * * 1-5'               # flatten (winter)
   workflow_dispatch:
@@ -38,7 +43,7 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       BOT_STATE: ${{ github.workspace }}/state/trading-state.json
       BOT_EXIT_AT: '12:05'
-      JOB: ${{ github.event.inputs.job || (github.event.schedule == '45 5 * * 1-5' && 'run') || 'flatten' }}
+      JOB: ${{ github.event.inputs.job || (startsWith(github.event.schedule, '35 1') && 'flatten') || 'run' }}
     steps:
       - uses: actions/checkout@v4
         if: env.HAS_IG == 'true'
@@ -61,7 +66,12 @@ jobs:
 
       - name: Run bot
         if: env.HAS_IG == 'true' && env.JOB == 'run'
-        run: node trading-bot/bin/bot.js
+        run: |
+          # A backup start that finds today's state already saved means the bot has run.
+          if [ "${{ github.event_name }}" = "schedule" ] && grep -q "\"day\": \"$(TZ=Europe/Berlin date +%F)\"" "$BOT_STATE" 2>/dev/null; then
+            echo "The bot already ran today; nothing to do."; exit 0
+          fi
+          node trading-bot/bin/bot.js
 
       - name: Close open positions
         if: env.HAS_IG == 'true' && env.JOB == 'flatten'
