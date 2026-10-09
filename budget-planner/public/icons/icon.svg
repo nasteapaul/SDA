@@ -1,7 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#2a78d6"/>
-  <rect x="112" y="276" width="56" height="124" rx="14" fill="#fff" opacity=".55"/>
-  <rect x="200" y="220" width="56" height="180" rx="14" fill="#fff" opacity=".75"/>
-  <rect x="288" y="164" width="56" height="236" rx="14" fill="#fff"/>
-  <circle cx="380" cy="132" r="36" fill="none" stroke="#fff" stroke-width="20"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4c8cf8"/>
+      <stop offset="1" stop-color="#1d43c9"/>
+    </linearGradient>
+    <radialGradient id="shine" cx=".25" cy=".12" r=".9">
+      <stop offset="0" stop-color="#fff" stop-opacity=".22"/>
+      <stop offset=".6" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#shine)"/>
+  <!-- The budget split into parts (ring) and savings growing (arrow). -->
+  <g fill="none" stroke-width="58" transform="rotate(-90 256 256)">
+    <circle cx="256" cy="256" r="148" stroke="#fff" stroke-dasharray="437.96 491.95"/>
+    <circle cx="256" cy="256" r="148" stroke="#fff" stroke-opacity=".55" stroke-dasharray="262.77 667.14" stroke-dashoffset="-455.96"/>
+    <circle cx="256" cy="256" r="148" stroke="#6ee7b7" stroke-dasharray="175.18 754.73" stroke-dashoffset="-736.73"/>
+  </g>
+  <g fill="none" stroke="#fff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M196 292 236 252 266 276 314 224"/>
+    <path d="M276 218h42v42"/>
+  </g>
 </svg>
