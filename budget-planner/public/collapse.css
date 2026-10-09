@@ -1,0 +1,24 @@
+/* Collapsible sections (public/js/collapse.js): minimize long lists. */
+.collapse { border-top: 1px solid var(--border); }
+.collapse:first-child { border-top: 0; }
+.collapse-head {
+  list-style: none; display: flex; align-items: center; gap: 10px;
+  min-height: 48px; padding: 6px 0; cursor: pointer; user-select: none;
+  font-weight: 600; color: var(--text);
+}
+.collapse-head::-webkit-details-marker { display: none; }
+.collapse-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+.collapse-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.collapse-head .badge { flex: none; }
+.collapse-chev {
+  flex: none; width: 28px; height: 28px; border-radius: 999px; background: var(--fill, var(--surface-2));
+  display: grid; place-items: center;
+}
+.collapse-chev::before {
+  content: ""; width: 8px; height: 8px; margin-top: -3px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg); transition: transform .15s ease, margin .15s ease;
+}
+.collapse[open] > .collapse-head .collapse-chev::before { transform: rotate(-135deg); margin-top: 3px; }
+.collapse-body { padding-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { .collapse-chev::before { transition: none; } }
