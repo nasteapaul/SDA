@@ -169,6 +169,9 @@
 /* ---------- base & type ---------- */
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* No pull/bounce/stretch effect on the page: pulling down past the top (or up past the end)
+   must not drag the fixed tab bar and top bar with it (Android 12+ WebView stretch). */
+html, body { overscroll-behavior: none; }
 body {
   margin: 0;
   font-family: var(--font);

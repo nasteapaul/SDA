@@ -1,7 +1,7 @@
 // Service worker: keeps the app shell available offline (e.g. away from home
 // Wi-Fi). Data itself is cached by the app in localStorage; API calls are
 // never cached here. Network-first so updates show up immediately at home.
-const CACHE = 'budget-shell-v5';
+const CACHE = 'budget-shell-v6';
 // Every module the app imports, or the first offline start fails on the missing one.
 const SHELL = [
   '/', '/index.html', '/app.css', '/collapse.css', '/manifest.webmanifest', '/icons/icon.svg',

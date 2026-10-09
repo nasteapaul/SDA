@@ -262,6 +262,9 @@ public class MainActivity extends Activity {
     private void createWebView() {
         web = new WebView(this);
         web.setBackgroundColor(isNight() ? Color.parseColor("#0d0d0d") : Color.parseColor("#f6f6f3"));
+        // No stretch/glow when pulling past the top or bottom: the page (and its fixed
+        // tab bar) must stay put.
+        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
