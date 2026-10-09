@@ -3,25 +3,35 @@
 // (state.bank.balanceHistory[uid] = [{ date: ISO datetime, amount }], amount
 // as the bank reported it). Between two snapshots:
 //   previous balance + money in − money out (on that account) ≈ latest balance.
-// A difference means a missing or duplicate transaction — or card payments
-// the bank has taken from the balance but not booked yet.
+// A difference means a missing or duplicate transaction.
+//
+// Pending card payments: some banks (ING sends balance type XPCD, "expected")
+// report a balance that already has card payments taken off that are not
+// booked yet. The app only adds a payment once it is booked — often the next
+// day — so the same payment would count once in the balance and again as a
+// transaction. Each snapshot therefore stores `pending` (the signed total of
+// pending payments in that balance) and the check works on booked money:
+//   (balance − pending) at the earlier snapshot + transactions ≈ (balance − pending) now.
 
 import { round2 } from './money.js';
 import { accountKind, balanceMeaning } from './accounts.js';
 
 export const HISTORY_CAP = 400;
 export const TOLERANCE = 0.01;
+// Balance types that contain only booked money (no pending payments in them).
+export const BOOKED_BALANCE_TYPES = new Set(['CLBD', 'ITBD', 'OPBD', 'PRCD']);
 
 const dayOf = (iso) => String(iso).slice(0, 10);
 
 /** history + one snapshot (new array); skips an unchanged balance on the same day. */
-export function appendSnapshot(history, { date, amount } = {}, cap = HISTORY_CAP) {
+export function appendSnapshot(history, { date, amount, pending } = {}, cap = HISTORY_CAP) {
   const list = Array.isArray(history) ? history : [];
   const n = Number(amount);
   if (Number.isNaN(Date.parse(date)) || !Number.isFinite(n)) return list;
   const entry = { date: new Date(date).toISOString(), amount: round2(n) };
+  if (pending != null && Number.isFinite(Number(pending))) entry.pending = round2(Number(pending));
   const last = list[list.length - 1];
-  if (last && dayOf(last.date) === dayOf(entry.date) && last.amount === entry.amount) return list;
+  if (last && dayOf(last.date) === dayOf(entry.date) && last.amount === entry.amount && last.pending === entry.pending) return list;
   return [...list, entry].slice(-cap);
 }
 
@@ -68,9 +78,16 @@ export function reconcile(state, accountUid, { accountOf } = {}) {
   const pair = snapshotPair(state.bank.balanceHistory?.[accountUid]);
   if (!pair) return null;
   const { prev, last } = pair;
-  const before = signed(acc, Number(prev.amount));
-  const after = signed(acc, Number(last.amount));
-  if (before == null || after == null) return null;
+  const bookedOnly = BOOKED_BALANCE_TYPES.has(String(acc.balance?.type || '').toUpperCase());
+  // Pending payments inside the balances (0 for a booked-only balance).
+  const pendingOf = (snap) => (bookedOnly ? 0 : Number(snap.pending) || 0);
+  // Snapshots from before pending totals were recorded: can't tell pending from missing.
+  const uncertain = !bookedOnly && (prev.pending === undefined || last.pending === undefined);
+  const signedBefore = signed(acc, Number(prev.amount));
+  const signedAfter = signed(acc, Number(last.amount));
+  if (signedBefore == null || signedAfter == null) return null;
+  const before = round2(signedBefore - pendingOf(prev));
+  const after = round2(signedAfter - pendingOf(last));
   const currency = String(acc.balance?.currency || acc.currency || 'RON').toUpperCase();
   const fromDay = dayOf(prev.date);
   const toDay = dayOf(last.date);
@@ -93,6 +110,14 @@ export function reconcile(state, accountUid, { accountOf } = {}) {
     if (wider.ok) result = wider;
   }
   return {
-    ...result, from: prev.date, to: last.date, fromDay, toDay, actual: round2(after), pendingPossible: !result.ok,
+    ...result,
+    from: prev.date,
+    to: last.date,
+    fromDay,
+    toDay,
+    actual: round2(after),
+    pending: pendingOf(last), // pending payments in the latest balance (signed, 0 if none/unknown)
+    uncertain: !result.ok && uncertain,
+    pendingPossible: !result.ok,
   };
 }

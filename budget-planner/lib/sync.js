@@ -11,7 +11,7 @@ import { mainAccountOf } from '../public/js/shared/ledger.js';
 import { mergeDuplicatesToTrash } from './store.js';
 import { ownContext, ownTransferCategory, ibansIn } from '../public/js/shared/own.js';
 import { bnrRateOn } from './fx.js';
-import { appendSnapshot } from '../public/js/shared/reconcile.js';
+import { appendSnapshot, BOOKED_BALANCE_TYPES } from '../public/js/shared/reconcile.js';
 
 // Booked transactions are re-fetched this many days before the last sync:
 // banks backdate the booking date of long-pending card payments. The bankRef
@@ -91,10 +91,10 @@ export function moveAccount(s, from, to) {
  * the bank" check, shared/reconcile.js): at most 400 per account, an
  * unchanged balance on the same day is not stored again.
  */
-export function recordBalance(s, accountUid, balance, now = new Date()) {
+export function recordBalance(s, accountUid, balance, now = new Date(), pending = undefined) {
   if (!balance || !accountUid) return;
   s.bank.balanceHistory ||= {};
-  const next = appendSnapshot(s.bank.balanceHistory[accountUid], { date: now.toISOString(), amount: balance.amount });
+  const next = appendSnapshot(s.bank.balanceHistory[accountUid], { date: now.toISOString(), amount: balance.amount, pending });
   if (next.length) s.bank.balanceHistory[accountUid] = next;
 }
 
@@ -314,6 +314,24 @@ export function bankRef(accountUid, t, nth = 1) {
 }
 
 // Income or expense: the bank's credit/debit indicator, else the amount's sign.
+/**
+ * Signed total of the payments that are in the bank's balance but not booked
+ * yet (status PDNG/HOLD): money out negative. 0 for a booked-only balance type,
+ * which has none of them in it. Only payments in the balance's currency count.
+ */
+export function pendingTotal(txs, balance) {
+  if (!balance || BOOKED_BALANCE_TYPES.has(String(balance.type || '').toUpperCase())) return 0;
+  const currency = balance.currency || 'RON';
+  let sum = 0;
+  for (const t of txs || []) {
+    if (!['PDNG', 'HOLD'].includes(t.status)) continue;
+    if ((t.transaction_amount?.currency || 'RON') !== currency) continue;
+    const n = Math.abs(Number(t.transaction_amount?.amount));
+    if (Number.isFinite(n)) sum += directionOf(t) === 'income' ? n : -n;
+  }
+  return round2(sum);
+}
+
 function directionOf(t) {
   if (t.credit_debit_indicator === 'CRDT') return 'income';
   if (t.credit_debit_indicator === 'DBIT') return 'expense';
@@ -475,7 +493,7 @@ export async function syncBank(store, client, { lookbackDays = 90, rate = bnrRat
         added += 1;
       });
       target.balance = balance;
-      recordBalance(s, acc.uid, balance);
+      recordBalance(s, acc.uid, balance, new Date(), pendingTotal(txs, balance));
       // An incomplete fetch keeps the old date, so the next sync asks for the rest again.
       if (truncated) errors.push(`${acc.nickname || acc.name || acc.uid}: too many transactions, only part was fetched`);
       else target.lastSyncDate = todayISO();

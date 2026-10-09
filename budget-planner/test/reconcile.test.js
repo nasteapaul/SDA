@@ -221,3 +221,97 @@ test('syncBank: each successful balance fetch is recorded; failed accounts are n
   await syncBank(store, client, { rate: async () => 1 });
   assert.equal(store.get().bank.balanceHistory.a1.length, 1, 'unchanged on the same day: not stored twice');
 });
+
+// ---------------------------------------------------------------- pending card payments (ING "XPCD" balance)
+
+const xpcdState = ({ history, transactions, type = 'XPCD' }) => ({
+  bank: {
+    connections: [{ accounts: [{ uid: 'cur', kind: 'current', balance: { amount: history[history.length - 1].amount, currency: 'RON', type } }] }],
+    balanceHistory: { cur: history },
+  },
+  transactions,
+});
+const bankTx = (o) => ({ source: 'bank', accountId: 'cur', type: 'expense', date: '2026-10-09', category: 'Groceries', ...o });
+
+test('reconcile: a card payment pending at the earlier snapshot and booked later is not counted twice', () => {
+  // 8 Oct: the bank's expected balance (XPCD) already has the 175,12 purchase taken off, still pending.
+  // 9 Oct: the purchase is booked (booking date 9 Oct) and the balance is unchanged.
+  const r = reconcile(xpcdState({
+    history: [
+      { date: '2026-10-08T20:00:00.000Z', amount: 941.51, pending: -175.12 },
+      { date: '2026-10-09T09:12:00.000Z', amount: 941.51, pending: 0 },
+    ],
+    transactions: [bankTx({ amount: 175.12 })],
+  }), 'cur');
+  assert.equal(r.ok, true, `diff ${r.diff}`);
+  assert.equal(r.uncertain, false);
+});
+
+test('reconcile: payments still pending at the latest snapshot are expected in the balance', () => {
+  const r = reconcile(xpcdState({
+    history: [
+      { date: '2026-10-08T20:00:00.000Z', amount: 1000, pending: 0 },
+      { date: '2026-10-09T09:00:00.000Z', amount: 850, pending: -50 },
+    ],
+    transactions: [bankTx({ amount: 100 })],
+  }), 'cur');
+  assert.equal(r.ok, true, `diff ${r.diff}`);
+  assert.equal(r.pending, -50);
+});
+
+test('reconcile: a real gap is still reported when pending amounts are known', () => {
+  const r = reconcile(xpcdState({
+    history: [
+      { date: '2026-10-08T20:00:00.000Z', amount: 1000, pending: -20 },
+      { date: '2026-10-09T09:00:00.000Z', amount: 900, pending: 0 },
+    ],
+    transactions: [bankTx({ amount: 20 })], // booked 1020 → 1000 with the 20; the bank has 900: 100 RON missing
+  }), 'cur');
+  assert.equal(r.ok, false);
+  assert.equal(r.diff, -100);
+  assert.equal(r.uncertain, false);
+});
+
+test('reconcile: older snapshots without pending info on an XPCD balance are "uncertain", not an alarm', () => {
+  const r = reconcile(xpcdState({
+    history: [
+      { date: '2026-10-08T20:00:00.000Z', amount: 941.51 },
+      { date: '2026-10-09T09:12:00.000Z', amount: 941.51 },
+    ],
+    transactions: [bankTx({ amount: 175.12 })],
+  }), 'cur');
+  assert.equal(r.ok, false);
+  assert.equal(r.uncertain, true);
+});
+
+test('reconcile: a booked-only balance (CLBD) ignores pending amounts and is never uncertain', () => {
+  const r = reconcile(xpcdState({
+    type: 'CLBD',
+    history: [
+      { date: '2026-10-08T20:00:00.000Z', amount: 1000 },
+      { date: '2026-10-09T09:00:00.000Z', amount: 900 },
+    ],
+    transactions: [bankTx({ amount: 100 })],
+  }), 'cur');
+  assert.equal(r.ok, true);
+  assert.equal(r.uncertain, false);
+});
+
+test('appendSnapshot keeps the pending total and treats a changed pending total as a change', () => {
+  let h = appendSnapshot([], { date: '2026-10-09T08:00:00.000Z', amount: 100, pending: -10 });
+  assert.deepEqual(h, [{ date: '2026-10-09T08:00:00.000Z', amount: 100, pending: -10 }]);
+  h = appendSnapshot(h, { date: '2026-10-09T12:00:00.000Z', amount: 100, pending: 0 });
+  assert.equal(h.length, 2);
+});
+
+test('sync records the pending total of card payments with each balance snapshot (XPCD)', async () => {
+  const { pendingTotal } = await import('../lib/sync.js');
+  const txs = [
+    { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '50', currency: 'RON' } },
+    { status: 'PDNG', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '175.12', currency: 'RON' } },
+    { status: 'PDNG', credit_debit_indicator: 'CRDT', transaction_amount: { amount: '10', currency: 'RON' } },
+    { status: 'CNCL', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '999', currency: 'RON' } },
+  ];
+  assert.equal(pendingTotal(txs, { type: 'XPCD' }), -165.12);
+  assert.equal(pendingTotal(txs, { type: 'CLBD' }), 0, 'a booked balance has no pending payments in it');
+});

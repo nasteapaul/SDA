@@ -1775,9 +1775,12 @@ function reconcileHTML(a) {
   const span = `${fmtDate(r.fromDay, { day: 'numeric', month: 'short' })} – ${fmtDate(r.toDay, { day: 'numeric', month: 'short' })}`;
   const currency = String(a.balance?.currency || a.currency || 'RON').toUpperCase();
   const tip = `Bank balance ${span}, explained by ${r.txCount} transaction${r.txCount === 1 ? '' : 's'} in the app`;
-  if (r.ok) return `<a class="recon ok" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">${svgIcon('check', { size: 16 })}<span>Matches the bank <span class="recon-span">· ${esc(span)}</span></span></a>`;
+  const pendingNote = r.pending ? ` · ${fmtIn(r.pending, currency, { sign: true })} card payments pending` : '';
+  if (r.ok) return `<a class="recon ok" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">${svgIcon('check', { size: 16 })}<span>Matches the bank <span class="recon-span">· ${esc(span)}${esc(pendingNote)}</span></span></a>`;
+  // Older balance snapshots don't say how much was pending: no alarm, it settles after the next syncs.
+  if (r.uncertain) return `<a class="recon" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">${svgIcon('clock', { size: 16 })}<span>Bank check in progress <span class="recon-span">· card payments not booked yet are in the bank's balance; checked again after the next sync</span></span></a>`;
   return `<a class="recon off" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">${svgIcon('alert', { size: 16 })}<span>Differs from the bank by <span class="num">${esc(fmtIn(r.diff, currency, { sign: true }))}</span>
-    <span class="recon-span">${esc(span)} · missing or duplicate transactions, or card payments not booked yet</span></span>${svgIcon('chevron-right', { size: 16 })}</a>`;
+    <span class="recon-span">${esc(span)} · missing or duplicate transactions</span></span>${svgIcon('chevron-right', { size: 16 })}</a>`;
 }
 
 // Main card (O2). For the period you're in, the real balance of your MAIN current
