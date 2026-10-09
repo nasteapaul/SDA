@@ -1,5 +1,14 @@
 {
   "env": {
     "MCP_TIMEOUT": "180000"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git merge:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git worktree:*)",
+      "mcp__claude-code-remote__send_message"
+    ]
   }
 }
