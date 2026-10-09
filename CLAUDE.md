@@ -25,6 +25,42 @@
 - Validate input at system boundaries
 - Keep new modules small and focused (existing large files such as `app.js` are fine to edit in place)
 
+## Efficient agents — applies to every conversation and every agent
+
+Use as many agents as the task has genuinely separate parts; the goal is that no
+token is spent twice, not fewer agents.
+
+1. **Context pack once.** Before spawning, the lead gathers the shared context a
+   single time — relevant files with line ranges, key facts, constraints from this
+   file — and writes it as one compact brief (≤ ~1 page). Every agent gets that
+   brief instead of exploring the repo itself.
+2. **Same prefix, cached.** Every agent prompt starts with the identical brief,
+   then its role, then its own task — so parallel agents reuse the prompt cache.
+   Pass only the agent file's role, rules and output format (skip its examples,
+   `npx claude-flow` hook lines and memory/MCP sections).
+3. **Disjoint scopes.** Each agent owns distinct files or a distinct question; no
+   two agents read the same files or run the same searches. Name the exact paths.
+4. **Right model per role.** `haiku` for finding/listing/grepping, `sonnet` for
+   analysis, review, tests and web research; the main model only for design
+   decisions, writing code and the final merge.
+5. **Structured, short output.** Each agent returns ≤ ~300 words: findings as
+   bullets with `file:line`, confidence, and what it did *not* check. No restating
+   the task, no pasted file contents. Pipelines hand the next agent this summary,
+   never raw transcripts.
+6. **Stop when answered.** Agents stop as soon as their question is answered;
+   no exhaustive sweeps "just in case", no agents re-checking other agents unless asked.
+7. **Web once, share it.** Search only when the answer is not in the repo. One
+   agent (or the lead) does the research and the results go into the brief; others
+   don't repeat it. Snippets before full scrapes, at most 2–3 pages per question;
+   Playwright only to click, fill or screenshot.
+8. **No orchestration overhead.** Agents are Claude Code subagents; ruflo MCP tools
+   (swarm_init, hive-mind, neural, memory, autopilot) and the ruflo daemon add
+   tokens without doing work — use them only when I ask, and stop the daemon
+   (`npx ruflo@3.53.0 daemon stop`). Turn the `claude-flow` server off in `/mcp`
+   when ruflo isn't in use.
+9. **No re-reading.** Don't re-read files already read in the conversation; read
+   only the needed line ranges of large files.
+
 ## Ruflo agents — usable in any conversation (laptop, web or phone)
 
 Agent definitions are in `.claude/agents/` and command recipes in `.claude/commands/`.
