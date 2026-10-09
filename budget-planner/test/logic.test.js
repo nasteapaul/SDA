@@ -104,6 +104,20 @@ test('plan proposes cuts only in flexible categories', () => {
   assert.equal(housing.limit, 2500);
 });
 
+test('cut tips quote the same rounded limit as the suggested budgets', () => {
+  const a = analyzeHistory(history(), cats, { today: '2026-10-01' });
+  const plan = buildPlan(a, [{ id: 'g1', name: 'Car', target: 15000, saved: 0, deadline: '2027-04-01', priority: 'high' }], { today: '2026-10-01', intensity: 'aggressive' });
+  const ron = (s) => Number(s.replace(/\./g, ''));
+  const cutTips = plan.tips.filter((t) => t.text.includes('Keep it under'));
+  assert.ok(cutTips.length > 0);
+  for (const t of cutTips) {
+    const [, spend, limit, free] = t.text.match(/~([\d.]+) RON\/month\. Keep it under ([\d.]+) RON to free ([\d.]+) RON/);
+    const b = plan.budgets.find((x) => t.text.includes(`${x.name}:`));
+    assert.equal(ron(limit), b.limit, t.text);
+    assert.equal(ron(spend) - ron(limit), ron(free), t.text);
+  }
+});
+
 test('plan flags a stretch goal and gives a realistic date', () => {
   const a = analyzeHistory(history(), cats, { today: '2026-10-01' });
   const plan = buildPlan(a, [{ id: 'g1', name: 'House', target: 100000, saved: 0, deadline: '2027-04-01', priority: 'high' }], { today: '2026-10-01', intensity: 'gentle' });
