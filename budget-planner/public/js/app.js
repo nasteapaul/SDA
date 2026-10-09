@@ -17,6 +17,7 @@ import { ownTransferCategory } from './shared/own.js';
 import { importSeen, isSameTransaction } from './shared/dedupe.js';
 // foundation: SVG icons (named svgIcon here — icon() below is the category emoji)
 import { icon as svgIcon, iconTile } from './icons.js';
+import { collapsible } from './collapse.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -488,171 +489,305 @@ const views = {
       </div>`;
   },
 
+  // screens-settings: grouped sections; long lists are minimizable (shared collapsible()).
   settings() {
     const b = S().bank;
     const accounts = b.connections.flatMap((c) => c.accounts.map((a) => ({ ...a, bank: c.bank, validUntil: c.validUntil, sessionId: c.sessionId, archived: Boolean(c.archived) })));
-    const flash = ui.params.get('bank');
-    const theme = localStorage.getItem('bp.theme') || 'system';
+    const group = (id, label, cards) => `<section class="ss-group" aria-labelledby="ss-g-${id}">
+        <div class="section-label" id="ss-g-${id}">${esc(label)}</div>${cards}</section>`;
     return `
-      <div class="grid two">
-        <div class="stack">
-          <div class="card">
-            <div class="card-head">${cardTitle('bank', 'Bank connection')}${b.connections.length ? `<button class="btn small" type="button" data-action="sync-bank" ${b.syncing ? 'disabled' : ''}>${b.syncing ? 'Syncing…' : '↻ Sync now'}</button>` : ''}</div>
-            ${flash === 'linked' ? '<div class="banner" style="margin-bottom:12px"><span class="banner-ico">✅</span><div><b>Bank linked.</b> Importing your transactions now…</div></div>' : ''}
-            ${flash === 'error' ? `<div class="banner" style="margin-bottom:12px"><span class="banner-ico">⚠️</span><div><b>Bank linking didn't finish.</b> <span class="muted">${esc(ui.params.get('reason') || '')}</span></div></div>` : ''}
-            ${!b.configured ? `<p>Bank sync runs on your home server through <b>Enable Banking</b> (PSD2 open banking, free for your own accounts — supports BT, BCR, BRD, ING, Raiffeisen, CEC, Revolut…).</p>
-              <p class="muted small">To turn it on, set <code class="inline">EB_APP_ID</code> and <code class="inline">EB_PRIVATE_KEY_PATH</code> in the server's <code class="inline">.env</code> file and restart it. The README has a 5-minute walkthrough.</p>` : `
-              ${bankAccountsHTML(accounts)}
-              <div class="stack" style="gap:8px;margin-top:8px">
-                <label class="field">Link ${accounts.length ? 'another / re-link a' : 'your'} bank
-                  <select id="bank-select"><option value="">${ui.banks ? 'Choose your bank…' : 'Loading banks…'}</option>${(ui.banks || []).map((x) => `<option>${esc(x.name)}</option>`).join('')}</select>
-                </label>
-                <button class="btn primary" type="button" data-action="link-bank">Connect bank</button>
-                ${window.BudgetApp ? '<p class="muted small" style="margin:0">Your bank login opens in the browser. When it says the bank is linked, come back to this app.</p>' : ''}
-                <details><summary class="muted small">Redirect didn't come back to the app?</summary>
-                  <p class="muted small">Register <code class="inline">${esc(b.redirectUrl)}</code> as a redirect URL in the Enable Banking control panel. If your bank sent you to a different page, paste its full address here:</p>
-                  <div style="display:flex;gap:8px"><input id="bank-landed" placeholder="https://…?code=…"><button class="btn" type="button" data-action="complete-bank">Finish</button></div>
-                </details>
-                ${b.connections.map((c) => `<button class="btn danger small" type="button" data-action="unlink-bank" data-id="${esc(c.sessionId)}">Unlink ${esc(c.bank)}${c.archived ? ' (old link)' : ''}</button>`).join('')}
-              </div>`}
-          </div>
-          <div class="card">
-            <div class="card-head">${cardTitle('upload', 'Import a bank statement (CSV)')}</div>
-            <p class="muted small">Works with CSV exports from BT, BCR, ING, Raiffeisen, BRD, Revolut and most other banks. Duplicates are skipped automatically.</p>
-            <input type="file" accept=".csv,text/csv,text/plain" data-action="csv-file" aria-label="CSV file">
-            ${S().transactions.some((t) => t.source === 'import') ? `<div class="setting"><span class="small">${S().transactions.filter((t) => t.source === 'import').length} imported transactions<div class="muted small">Start over: remove them, then import the statements again.</div></span><button class="btn small danger" type="button" data-action="delete-imported">Delete imported</button></div>` : ''}
-            ${ui.csvPreview ? csvPreviewHTML(b) : ''}
-          </div>
-          <div class="card">
-            <div class="card-head">${cardTitle('sliders', 'What counts as income and spending')}</div>
-            <div class="settings-list">
-              ${Object.entries(COUNT_MODES).map(([k, label]) => `<label class="checkbox"><input type="radio" name="count-mode" data-action="count-mode" value="${k}" ${L().mode === k ? 'checked' : ''}> ${esc(label)}</label>`).join('')}
-              <p class="muted small" style="margin:6px 0 0">${L().mode === 'cashflow'
-                ? 'Income is everything coming into your current account; spending is everything leaving it — including paying off the credit card. “Left over” is then exactly how much your current account balance changed. Card and savings-account transactions are listed (marked “not counted”) but not added up, so nothing is counted twice.'
-                : 'Every account is added up: credit-card purchases are spending, and paying off the card is a transfer.'}</p>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-head">${cardTitle('calendar', 'Budget month')}</div>
-            <p class="muted small" style="margin-top:0">Count each month from payday to payday, so “left to spend” matches the money you actually have until the next salary.</p>
-            <div class="settings-list">
-              <label class="checkbox"><input type="radio" name="period-mode" data-action="period-mode" value="calendar" ${S().settings?.payday ? '' : 'checked'}> Calendar month (1st – last day)</label>
-              <label class="checkbox"><input type="radio" name="period-mode" data-action="period-mode" value="payday" ${S().settings?.payday ? 'checked' : ''}> From payday, on day
-                <input type="number" min="1" max="28" inputmode="numeric" data-action="payday-day" value="${S().settings?.payday || 10}" style="width:70px;min-height:34px;padding:4px 8px" aria-label="Payday"></label>
-              <p class="muted small" style="margin:6px 0 0">If the day falls on a Saturday the period starts on Friday, on a Sunday it starts on Monday. When the salary has arrived, its real date is used.${S().settings?.payday ? ` Current period: <b>${esc(P().rangeLabel(P().current()))}</b>.` : ''}</p>
-            </div>
-            ${S().settings?.payday ? `<div class="card-head" style="margin:14px 0 6px"><h2 class="small">Salary date for each month</h2></div>
-              <p class="muted small" style="margin:0 0 6px">Set the exact day the salary came in. Each month runs from that day until the day before the next salary.</p>
-              <div class="settings-list">${Array.from({ length: 12 }, (_, i) => addMonths(P().current(), 1 - i)).map((k) => {
-                const set = S().settings?.paydays?.[k];
-                return `<div class="setting"><span>${esc(P().label(k))}<div class="muted small">${set ? 'set by you' : 'automatic'} · runs until ${esc(new Date(P().end(k)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}</div></span>
-                  <span style="display:flex;gap:6px;align-items:center"><input type="date" data-action="salary-date" data-key="${k}" value="${esc(P().start(k))}" style="width:auto;min-height:34px;padding:4px 8px" aria-label="Salary date ${esc(P().label(k))}">
-                  ${set ? `<button class="btn small" type="button" data-action="salary-auto" data-key="${k}" title="Back to automatic">↺</button>` : ''}</span></div>`;
-              }).join('')}</div>` : ''}
-          </div>
-          <div class="card">
-            <div class="card-head">${cardTitle('phone', 'App')}</div>
-            <div class="settings-list">
-              ${window.BudgetApp ? `<div class="setting"><span>Server address<div class="muted small num">${esc(window.BudgetApp.getServer())}</div></span><button class="btn small" type="button" data-action="change-server">Change</button></div>`
-                : `<div class="setting"><span>Install on this device</span>${ui.installPrompt ? '<button class="btn small primary" type="button" data-action="install">Install</button>' : '<span class="muted small" style="text-align:right">iPhone: Share → Add to Home Screen<br>Android: get the app (see README) or ⋮ → Add to Home screen</span>'}</div>`}
-              <div class="setting"><span>Theme</span><select data-action="theme" style="width:auto">${['system', 'light', 'dark'].map((t) => `<option value="${t}" ${t === theme ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div>
-              <div class="setting"><span>Export all data (JSON)</span><button class="btn small" type="button" data-action="export">Download</button></div>
-              <div class="setting"><span>App version</span><span class="muted small num">${esc(S().appVersion || '?')}</span></div>
-              <div class="setting"><span>Sign out of this device</span><button class="btn small" type="button" data-action="logout">Sign out</button></div>
-            </div>
-          </div>
+      <div class="grid two ss-settings">
+        <div class="stack ss-col">
+          ${group('bank', 'Accounts & data', bankCardHTML(b, accounts) + importCardHTML(b))}
+          ${group('budget', 'Budget', countModeCardHTML() + budgetMonthCardHTML())}
         </div>
-        <div class="stack">
-          <div class="card">
-            <div class="card-head">${cardTitle('tag', 'Categories')}<button class="btn small" type="button" data-action="add-category">+ Add</button></div>
-            <p class="muted small" style="margin-top:0">Essential categories are never cut by the planner.</p>
-            ${S().categories.map((c, i) => `<div class="cat-row">
-              <span style="font-size:20px;text-align:center" aria-hidden="true">${esc(c.icon)}</span>
-              <span>${esc(c.name)} <span class="muted small">${c.kind === 'income' ? 'income' : c.kind === 'both' ? '' : ''}</span></span>
-              ${c.kind === 'expense' ? `<label class="checkbox small"><input type="checkbox" data-action="toggle-essential" data-index="${i}" ${c.essential ? 'checked' : ''}> Essential</label>` : '<span></span>'}
-              ${c.role ? '<span class="muted small">built-in</span>' : `<button class="btn small danger" type="button" data-action="delete-category" data-index="${i}" aria-label="Delete ${esc(c.name)}">✕</button>`}
-            </div>`).join('')}
-          </div>
-          <div class="card">
-            <div class="card-head">${cardTitle('rules', 'Category rules')}<button class="btn small" type="button" data-action="add-rule">+ Add</button></div>
-            <p class="muted small" style="margin-top:0">“When the bank text contains <i>carrefour</i>, use <i>Groceries</i>.” Your rules win over the built-in ones and apply to every sync. Transactions you categorised by hand are never changed.</p>
-            ${S().rules.length ? S().rules.map((r, i) => {
-              const hits = S().transactions.filter((t) => ruleMatches(r, t));
-              const n = hits.length;
-              const incomeHidden = cat(r.category).role === 'transfer' ? hits.filter((t) => t.type === 'income' && !t.manualCategory).reduce((s, t) => s + t.amount, 0) : 0;
-              return `<div class="setting"><span><code class="inline">${esc(r.keyword || r.pattern)}</code> → ${esc(icon(r.category))} ${esc(r.category)} <span class="muted small">· ${n} match${n === 1 ? '' : 'es'}</span>
-                ${incomeHidden > 1000 ? `<div class="small" style="color:var(--critical-text)">⚠️ Hides ${formatRON(incomeHidden, { short: true })} of income as transfers — check this rule</div>` : ''}</span>
-                <button class="btn small" type="button" data-action="edit-rule" data-index="${i}">Edit</button></div>`;
-            }).join('') : '<p class="muted small">None yet.</p>'}
-            <div class="setting"><span class="small">Re-run automatic categories on bank transactions<div class="muted small">Useful after changing rules. Your manual choices are kept.</div></span><button class="btn small" type="button" data-action="recategorize">Re-run</button></div>
-          </div>
-          ${trashCardHTML()}
+        <div class="stack ss-col">
+          ${group('cats', 'Categories & rules', categoriesCardHTML() + rulesCardHTML())}
+          ${group('app', 'App', appCardHTML() + trashCardHTML())}
+          ${group('danger', 'Danger zone', dangerCardHTML(b))}
         </div>
       </div>`;
   },
 };
 
-// ---------------------------------------------------------------- settings (ux-1)
-// Linked accounts with their balance time, plus the prompts that keep the totals honest.
+// ---------------------------------------------------------------- settings (screens-settings)
+// Settings cards. Every data-action, id and field name is the same as before;
+// only the layout changed: grouped sections, long lists minimized with the
+// shared collapsible() (keys 'settings.*'), destructive actions in a
+// "Danger zone" at the end.
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const last4Of = (a) => String(a.iban || '').replace(/\s/g, '').slice(-4);
+const NO_BREAK = String.fromCharCode(160);
+
+// Account title without the holder's name (the bank sends the person's full name
+// as the account name): nickname, otherwise "Current account ··7204".
+// Local fallback — screens-overview owns the shared account-name helper.
+function settingsAccountName(a) {
+  if (a.nickname) return a.nickname;
+  const last4 = last4Of(a);
+  // A no-break space keeps "··7204" next to the account type when the name wraps.
+  if (last4) return `${ACCOUNT_KINDS[accountView(a).kind]}${NO_BREAK}··${last4}`;
+  return ACCOUNT_KINDS[accountView(a).kind];
+}
+
+const ACCOUNT_ICON = { current: 'wallet', savings: 'savings', credit: 'card' };
+
+// ---- Accounts & data: bank connection
+function bankCardHTML(b, accounts) {
+  const flash = ui.params.get('bank');
+  const banner = (tone, ico, html) => `<div class="banner ${tone} ss-banner" role="status"><span class="banner-ico" aria-hidden="true">${svgIcon(ico, { size: 20 })}</span><div>${html}</div></div>`;
+  const sync = b.connections.length
+    ? `<button class="btn small ss-sync${b.syncing ? ' is-syncing' : ''}" type="button" data-action="sync-bank" title="Sync now" ${b.syncing ? 'disabled' : ''}>${svgIcon('refresh')}<span class="ss-sync-label">${b.syncing ? 'Syncing…' : 'Sync now'}</span></button>` : '';
+  let body;
+  if (!b.configured) {
+    body = `<p class="ss-help">Bank sync runs on your home server through <b>Enable Banking</b> (PSD2 open banking, free for your own accounts: BT, BCR, BRD, ING, Raiffeisen, CEC, Revolut and more).</p>
+      <p class="ss-help">To turn it on, set <code class="inline">EB_APP_ID</code> and <code class="inline">EB_PRIVATE_KEY_PATH</code> in the server’s <code class="inline">.env</code> file and restart it. The README has a 5-minute walkthrough.</p>`;
+  } else {
+    const link = `<div class="ss-link">
+        <label class="field">Bank
+          <select id="bank-select"><option value="">${ui.banks ? 'Choose your bank…' : 'Loading banks…'}</option>${(ui.banks || []).map((x) => `<option>${esc(x.name)}</option>`).join('')}</select>
+        </label>
+        <button class="btn primary block" type="button" data-action="link-bank">${svgIcon('link')}Connect bank</button>
+        ${window.BudgetApp ? '<p class="ss-help">Your bank’s login opens in the browser. When it says the bank is linked, come back here.</p>' : ''}
+        <details class="ss-more-help"><summary>Redirect didn’t come back to the app?</summary>
+          <p class="ss-help">Register <code class="inline">${esc(b.redirectUrl)}</code> as a redirect URL in the Enable Banking control panel. If your bank sent you to a different page, paste its full address here:</p>
+          <div class="ss-inline-form"><input id="bank-landed" placeholder="https://…?code=…" aria-label="Address the bank sent you to"><button class="btn" type="button" data-action="complete-bank">Finish</button></div>
+        </details>
+      </div>`;
+    body = accounts.length
+      ? `${bankAccountsHTML(accounts)}${collapsible({ key: 'settings.bank-link', title: 'Add or reconnect a bank', body: link })}`
+      : `<p class="ss-help">Link your bank to import transactions and balances automatically.</p>${link}`;
+  }
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('bank', 'Bank connection')}${sync}</div>
+      ${flash === 'linked' ? banner('good', 'check', '<b>Bank linked.</b> Importing your transactions now…') : ''}
+      ${flash === 'error' ? banner('critical', 'alert', `<b>Bank linking didn’t finish.</b> <span class="muted">${esc(ui.params.get('reason') || '')}</span>`) : ''}
+      ${body}
+    </div>`;
+}
+
+// Linked accounts: one freshness line for the card, one row per account, and the
+// prompts that keep the totals honest (card balance meaning / limit).
 function bankAccountsHTML(accounts) {
   const b = S().bank;
-  if (!accounts.length) return '<p class="muted">No bank linked yet.</p>';
-  const stale = ageHours(b.lastSync) > 24;
+  if (!accounts.length) return '<p class="ss-help">No bank linked yet.</p>';
+  const live = accounts.filter((a) => !a.archived);
+  const until = live.map((a) => a.validUntil?.slice(0, 10)).filter(Boolean).sort()[0];
+  const renewSoon = until && (Date.parse(until) - Date.now()) / (24 * HOUR) < 14;
+  const stale = ageHours(b.lastSync) > 12;
+  const fresh = `<div class="ss-fresh">
+      <span class="ss-fresh-item">${svgIcon('clock', { size: 16 })}<span>${b.lastSync ? `Updated ${esc(bankTime(b.lastSync))}` : 'Not synced yet'}</span>${b.lastSync && stale ? '<span class="badge warning">Stale</span>' : ''}</span>
+      ${until ? `<span class="ss-fresh-item">${svgIcon('lock', { size: 16 })}<span>Bank access until ${esc(fmtDate(until))}</span>${renewSoon ? '<span class="badge warning">Renew soon</span>' : ''}</span>` : ''}
+    </div>`;
   const rows = accounts.map((a) => {
     const v = accountView(a);
+    const name = settingsAccountName(a);
     const amount = v.excludedForeign ? `${esc(String(v.amount))} ${esc(v.currency)}`
-      : !v.known ? '—' : v.kind === 'credit' ? `Owed ${formatRON(v.owed)}` : formatRON(v.cash);
-    const sub = v.kind === 'credit'
-      ? (v.limit ? `${formatRON(v.available)} available of ${formatRON(v.limit, { short: true })}` : 'No credit limit set')
-      : a.archived ? 'not synced any more' : `consent until ${fmtDate(a.validUntil?.slice(0, 10))}`;
-    const when = a.archived
-      ? `<div class="small muted">Last balance${a.lastSyncDate ? ` from ${esc(fmtDate(a.lastSyncDate))}` : ''}</div>`
-      : (v.known || v.excludedForeign) ? `<div class="small ${stale ? 'ux1-stale' : 'muted'}">Bank balance as of ${esc(bankTime(b.lastSync))}</div>` : '';
+      : !v.known ? '—' : v.kind === 'credit' ? formatRON(v.owed) : formatRON(v.cash);
+    const details = [a.bank, a.nickname && last4Of(a) ? `··${last4Of(a)}` : ''];
+    if (a.archived) details.push(`old link${a.lastSyncDate ? `, last balance ${fmtDate(a.lastSyncDate)}` : ''}`);
+    else if (v.kind === 'credit') details.push(v.limit ? `${formatRON(v.available)} available of ${formatRON(v.limit, { short: true })}` : 'no credit limit set');
     let prompt = '';
     if (v.excludedForeign) {
-      prompt = `<div class="ux1-note small">Not included in your totals: no RON exchange rate for ${esc(v.currency)} yet.</div>`;
+      prompt = `<div class="ss-note">${svgIcon('info', { size: 18 })}<span>Not in your totals: no RON exchange rate for ${esc(v.currency)} yet.</span></div>`;
     } else if (v.kind === 'credit' && v.balanceUncertain && !a.archived) {
       const raw = Number(a.balance?.amount);
       prompt = v.limit
-        ? `<div class="ux1-note small"><span>The bank reports <b class="num">${formatRON(Math.abs(raw))}</b> for this card. Is that what you owe, or what you can still spend?</span>
-            <span class="ux1-note-actions"><button class="btn small" type="button" data-action="balance-meaning" data-id="${esc(a.uid)}" data-value="owed">What I owe</button>
-            <button class="btn small" type="button" data-action="balance-meaning" data-id="${esc(a.uid)}" data-value="available">What I can spend</button></span></div>`
-        : `<div class="ux1-note small"><span>Enter the card’s credit limit so the app can work out how much you owe.</span>
-            <span class="ux1-note-actions"><button class="btn small" type="button" data-action="edit-account" data-id="${esc(a.uid)}">Set limit</button></span></div>`;
+        ? `<div class="ss-note warn">${svgIcon('alert', { size: 18 })}<div class="ss-note-body"><span>The bank reports <b class="num">${formatRON(Math.abs(raw))}</b> for this card. Is that what you owe, or what you can still spend?</span>
+            <span class="ss-note-actions"><button class="btn small" type="button" data-action="balance-meaning" data-id="${esc(a.uid)}" data-value="owed">What I owe</button>
+            <button class="btn small" type="button" data-action="balance-meaning" data-id="${esc(a.uid)}" data-value="available">What I can spend</button></span></div></div>`
+        : `<div class="ss-note warn">${svgIcon('alert', { size: 18 })}<div class="ss-note-body"><span>Enter the card’s credit limit so the app can work out how much you owe.</span>
+            <span class="ss-note-actions"><button class="btn small" type="button" data-action="edit-account" data-id="${esc(a.uid)}">Set limit</button></span></div></div>`;
     }
-    return `<div class="acct${a.archived ? ' ux1-archived' : ''}">
-      <div><b>${esc(a.nickname || a.name || 'Account')}</b> <span class="badge">${esc(ACCOUNT_KINDS[v.kind])}</span>${a.archived ? ' <span class="badge ux1-old">old link</span>' : ''} <span class="muted small">${esc(a.bank)}</span><div class="muted small num ux1-iban">${esc(a.iban || '')}</div></div>
-      <div class="ux1-acct-side" style="text-align:right"><b class="num">${amount}</b><div class="muted small">${sub}</div>${when}
-        <button class="btn small" type="button" data-action="edit-account" data-id="${esc(a.uid)}" style="margin-top:4px">Edit</button></div>
+    return `<div class="ss-acct${a.archived ? ' is-archived' : ''}">
+      ${iconTile(ACCOUNT_ICON[v.kind] || 'wallet', { tone: 'neutral' })}
+      <div class="ss-acct-body"><div class="ss-acct-grid">
+        <span class="ss-acct-name">${esc(name)}</span>
+        <span class="ss-acct-amt"><span class="num">${amount}</span>${v.kind === 'credit' && v.known ? '<span class="ss-acct-owed">owed</span>' : ''}</span>
+        <span class="ss-acct-sub">${esc(details.filter(Boolean).join(' · '))}</span>
+      </div></div>
+      <button class="btn small icon-only ghost ss-icon-btn" type="button" data-action="edit-account" data-id="${esc(a.uid)}" aria-label="Edit ${esc(name)}" title="Account settings">${svgIcon('edit')}</button>
       ${prompt}
     </div>`;
   }).join('');
-  const live = accounts.filter((a) => !a.archived);
-  const { excludedForeign } = bankTotals(live);
-  const foreign = excludedForeign ? `<p class="muted small">Not included in totals: ${excludedForeign.map((x) => `${esc(String(x.amount))} ${esc(x.currency)} (${esc(x.name)})`).join(', ')}.</p>` : '';
   const currents = live.filter((a) => accountView(a).kind === 'current');
   const main = L().mainAccount;
   const chosen = S().settings?.mainAccountId || '';
-  const label = (a) => `${a.nickname || a.name || 'Account'} · …${String(a.iban || a.uid).slice(-4)}`;
-  const mainSelect = currents.length ? `<label class="field ux1-main">Main current account
+  const mainSelect = currents.length ? `<label class="field ss-main">Main current account
       <select data-action="main-account">
-        <option value="" ${chosen ? '' : 'selected'}>Automatic${main && !chosen ? ` (${esc(label(main))})` : ''}</option>
-        ${currents.map((a) => `<option value="${esc(a.uid)}" ${a.uid === chosen ? 'selected' : ''}>${esc(label(a))}</option>`).join('')}
+        <option value="" ${chosen ? '' : 'selected'}>Automatic${main && !chosen && last4Of(main) ? ` (··${esc(last4Of(main))})` : ''}</option>
+        ${currents.map((a) => `<option value="${esc(a.uid)}" ${a.uid === chosen ? 'selected' : ''}>${esc(settingsAccountName(a))}</option>`).join('')}
       </select>
-      <span class="muted small">Money in and out of this account is your income and spending. The other accounts are shown for information.</span></label>` : '';
-  const lastSync = b.lastSync
-    ? `Last sync <span class="${ageHours(b.lastSync) > 12 ? 'ux1-stale' : ''}">${esc(bankTime(b.lastSync))}</span>.`
-    : 'Not synced yet.';
+      <span class="ss-help">Its money in and out is your income and spending. Other accounts are for information.</span></label>` : '';
   let error = '';
   if (b.lastError) {
     const { lines, parts } = friendlyBankError(b.lastError);
-    error = `<div class="banner ux1-error"><span class="banner-ico">⚠️</span><div class="ux1-error-body"><b>Last bank sync failed</b>
+    error = `<div class="banner critical ss-banner"><span class="banner-ico" aria-hidden="true">${svgIcon('alert', { size: 20 })}</span><div class="ss-error-body"><b>Last bank sync failed</b>
       ${lines.map((l) => `<div class="small">${esc(l)}</div>`).join('')}
-      <details><summary class="muted small">Technical details</summary><ul class="ux1-raw small muted">${parts.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details></div></div>`;
+      <details class="ss-more-help"><summary>Technical details</summary><ul class="ux1-raw small muted">${parts.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details></div></div>`;
   }
-  return `${rows}${foreign}${mainSelect}
-    <p class="muted small">${lastSync} The server syncs automatically every few hours, and whenever you open the app on your home Wi-Fi.</p>
-    ${error}`;
+  return `${fresh}${error}${collapsible({ key: 'settings.accounts', title: 'Accounts', count: accounts.length, open: true, body: `<div class="ss-accts">${rows}</div>` })}${mainSelect}`;
+}
+
+// ---- Accounts & data: CSV import
+function importCardHTML(b) {
+  const file = ui.csvPreview && ui.csvFile ? ui.csvFile : '';
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('upload', 'Import a CSV statement')}</div>
+      <p class="ss-help">Exports from BT, BCR, ING, Raiffeisen, BRD, Revolut and most other banks work. Duplicates are skipped.</p>
+      <div class="ss-file">
+        <label class="btn ss-file-btn">${svgIcon('file')}<span>Choose CSV file</span><input class="sr-only" type="file" accept=".csv,text/csv,text/plain" data-action="csv-file" aria-label="CSV file"></label>
+        <span class="ss-file-name${file ? '' : ' muted'}">${file ? esc(file) : 'No file chosen'}</span>
+      </div>
+      ${ui.csvPreview ? csvPreviewHTML(b) : ''}
+    </div>`;
+}
+
+// ---- Budget: what counts
+const COUNT_MODE_COPY = {
+  cashflow: ['Current account', 'Money in is income, money out is spending'],
+  all: ['All accounts', 'Card purchases count, card repayments don’t'],
+};
+function countModeCardHTML() {
+  const options = Object.entries(COUNT_MODES).map(([k, label]) => {
+    const [title, sub] = COUNT_MODE_COPY[k] || [label, ''];
+    return `<label class="ss-option"><input type="radio" name="count-mode" data-action="count-mode" value="${esc(k)}" ${L().mode === k ? 'checked' : ''}>
+        <span><span class="row-label">${esc(title)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span></label>`;
+  }).join('');
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('sliders', 'Income and spending')}</div>
+      <div class="ss-options" role="radiogroup" aria-label="What counts as income and spending">${options}</div>
+      <details class="ss-more-help"><summary>How this works</summary>
+        <p class="ss-help">${L().mode === 'cashflow'
+          ? 'Income is everything coming into your current account; spending is everything leaving it, including paying off the credit card. “Left over” is then exactly how much the current account balance changed. Card and savings transactions are listed (marked “not counted”) but not added up, so nothing counts twice.'
+          : 'Every account is added up: credit-card purchases are spending, and paying off the card is a transfer.'}</p>
+      </details>
+    </div>`;
+}
+
+// ---- Budget: budget month + salary date per month
+function budgetMonthCardHTML() {
+  const payday = S().settings?.payday;
+  const seg = (value, label, on) => `<label><input class="sr-only" type="radio" name="period-mode" data-action="period-mode" value="${value}" ${on ? 'checked' : ''}><span>${label}</span></label>`;
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('calendar', 'Budget month')}</div>
+      <p class="ss-help">Start each month on payday, so “left to spend” lasts until the next salary.</p>
+      <div class="segmented ss-seg" role="radiogroup" aria-label="Budget month">${seg('calendar', 'Calendar month', !payday)}${seg('payday', 'From payday', Boolean(payday))}</div>
+      <div class="list ss-list">
+        <div class="row"${payday ? '' : ' hidden'}><span><span class="row-label">Payday</span><span class="sub">Day of the month. A weekend payday moves to the nearest weekday.</span></span>
+          <input class="ss-day" type="number" min="1" max="28" inputmode="numeric" data-action="payday-day" value="${esc(String(payday || 10))}" aria-label="Payday, day of the month"></div>
+      </div>
+      ${payday ? salaryDatesHTML() : ''}
+    </div>`;
+}
+
+// 12 months (next one first): the 3 most recent as rows, the rest behind "Show all".
+function salaryDatesHTML() {
+  const keys = Array.from({ length: 12 }, (_, i) => addMonths(P().current(), 1 - i));
+  const row = (k) => {
+    const set = S().settings?.paydays?.[k];
+    const month = P().label(k, { month: 'short', year: 'numeric' });
+    return `<div class="row ss-salary">
+        <span><span class="row-label">${esc(month)}</span> <span class="badge${set ? ' accent' : ''}">${set ? 'Set' : 'Auto'}</span>
+          <span class="sub">${esc(P().rangeLabel(k))}${k === P().current() ? ' · now' : ''}</span></span>
+        <span class="ss-salary-edit">${dateField({ value: P().start(k), label: `Salary date, ${P().label(k)}`, attrs: { 'data-action': 'salary-date', 'data-key': k }, cls: 'compact' })}${set
+          ? `<button class="btn small icon-only ghost ss-icon-btn" type="button" data-action="salary-auto" data-key="${esc(k)}" aria-label="Back to automatic for ${esc(month)}" title="Back to automatic">${svgIcon('undo')}</button>` : ''}</span>
+      </div>`;
+  };
+  return `<div class="ss-sub">
+      <div class="section-label">Salary date for each month</div>
+      <p class="ss-help">When the salary came in. Each month runs until the day before the next salary.</p>
+      <div class="list ss-list">${keys.slice(0, 3).map(row).join('')}</div>
+      ${collapsible({ key: 'settings.salary-dates', title: 'Earlier months', count: keys.length - 3, body: `<div class="list ss-list">${keys.slice(3).map(row).join('')}</div>` })}
+    </div>`;
+}
+
+// ---- Categories & rules
+function categoriesCardHTML() {
+  const all = S().categories.map((c, i) => ({ c, i }));
+  const groups = [
+    ['Spending', all.filter((x) => x.c.kind === 'expense')],
+    ['Income', all.filter((x) => x.c.kind === 'income')],
+    ['Savings & transfers', all.filter((x) => x.c.kind !== 'expense' && x.c.kind !== 'income')],
+  ].filter(([, list]) => list.length);
+  const row = ({ c, i }) => `<div class="ss-cat">
+      <span class="ico-tile neutral" aria-hidden="true">${esc(c.icon || '•')}</span>
+      <span class="ss-cat-name">${esc(c.name)}</span>
+      ${c.kind === 'expense' ? `<label class="ss-switch" title="Essential: never cut by the planner"><input type="checkbox" role="switch" data-action="toggle-essential" data-index="${i}" ${c.essential ? 'checked' : ''} aria-label="${esc(c.name)} is essential"><span class="ss-switch-track" aria-hidden="true"></span></label>` : '<span></span>'}
+      ${c.role ? `<span class="ss-locked" role="img" aria-label="Built-in, can’t be deleted" title="Built-in">${svgIcon('lock', { size: 16 })}</span>`
+        : `<button class="btn small icon-only ghost ss-icon-btn ss-del" type="button" data-action="delete-category" data-index="${i}" aria-label="Delete ${esc(c.name)}" title="Delete">${svgIcon('trash')}</button>`}
+    </div>`;
+  const list = groups.map(([label, items]) => `<div class="ss-cat-head"><span>${esc(label)}</span>${label === 'Spending' ? '<span>Essential</span>' : ''}</div>${items.map(row).join('')}`).join('');
+  const essential = all.filter((x) => x.c.kind === 'expense' && x.c.essential).length;
+  const income = all.filter((x) => x.c.kind === 'income').length;
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('tag', 'Categories')}<button class="btn small" type="button" data-action="add-category">${svgIcon('plus')}Add</button></div>
+      <p class="ss-help">${plural(essential, 'essential category', 'essential categories')}, never cut by the planner · ${income} for income.</p>
+      ${collapsible({ key: 'settings.categories', title: 'All categories', count: all.length, body: `<div class="ss-cats">${list}</div>` })}
+    </div>`;
+}
+
+function rulesCardHTML() {
+  const rules = S().rules;
+  let unused = 0;
+  const rows = rules.map((r, i) => {
+    const hits = S().transactions.filter((t) => ruleMatches(r, t));
+    const n = hits.length;
+    if (!n) unused += 1;
+    const incomeHidden = cat(r.category).role === 'transfer' ? hits.filter((t) => t.type === 'income' && !t.manualCategory).reduce((s, t) => s + t.amount, 0) : 0;
+    const key = r.keyword || r.pattern;
+    return `<div class="ss-rule">
+        <div class="ss-rule-main"><code class="ss-rule-key">${esc(key)}</code>
+          <span class="sub"><span aria-hidden="true">${esc(icon(r.category))}</span> ${esc(r.category)} · ${n ? plural(n, 'match', 'matches') : 'no matches yet'}</span>
+          ${incomeHidden > 1000 ? `<span class="ss-rule-warn">${svgIcon('alert', { size: 16 })}<span>Hides ${formatRON(incomeHidden, { short: true })} of income as transfers. Check this rule.</span></span>` : ''}</div>
+        <button class="btn small icon-only ghost ss-icon-btn" type="button" data-action="edit-rule" data-index="${i}" aria-label="Edit rule ${esc(key)}" title="Edit">${svgIcon('edit')}</button>
+      </div>`;
+  }).join('');
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('rules', 'Category rules')}<button class="btn small" type="button" data-action="add-rule">${svgIcon('plus')}Add</button></div>
+      <p class="ss-help">Bank text that contains a word gets that category. Your rules beat the built-in ones.</p>
+      ${rules.length ? collapsible({ key: 'settings.rules', title: 'All rules', count: rules.length,
+        body: `${unused ? `<p class="ss-help ss-body-note">${plural(unused, 'rule has', 'rules have')} no matches yet.</p>` : ''}<div class="ss-rules">${rows}</div>` }) : '<p class="ss-empty-line">No rules yet.</p>'}
+      <div class="list ss-list ss-top-line">
+        <div class="row"><span><span class="row-label">Re-run automatic categories</span><span class="sub">After changing rules. Your manual choices stay.</span></span>
+          <button class="btn small" type="button" data-action="recategorize">${svgIcon('refresh')}Re-run</button></div>
+      </div>
+    </div>`;
+}
+
+// ---- App
+function appCardHTML() {
+  const theme = localStorage.getItem('bp.theme') || 'system';
+  const install = window.BudgetApp
+    ? `<div class="row"><span><span class="row-label">Server</span><span class="sub ss-url">${esc(window.BudgetApp.getServer())}</span></span><button class="btn small" type="button" data-action="change-server">Change</button></div>`
+    : `<div class="row"><span><span class="row-label">Install on this device</span>${ui.installPrompt ? '' : '<span class="sub">iPhone: Share, then Add to Home Screen. Android: get the app (see the README) or use the browser menu, then Add to Home screen.</span>'}</span>${ui.installPrompt ? `<button class="btn small primary" type="button" data-action="install">${svgIcon('download')}Install</button>` : ''}</div>`;
+  const seg = (t) => `<label><input class="sr-only" type="radio" name="theme" data-action="theme" value="${t}" ${t === theme ? 'checked' : ''}><span>${t[0].toUpperCase() + t.slice(1)}</span></label>`;
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('phone', 'App')}</div>
+      <div class="list ss-list">
+        ${install}
+        <div class="row stack ss-theme"><span><span class="row-label">Theme</span></span>
+          <div class="segmented ss-seg three" role="radiogroup" aria-label="Theme">${['system', 'light', 'dark'].map(seg).join('')}</div></div>
+        <div class="row"><span><span class="row-label">Export all data</span><span class="sub">One JSON file with everything</span></span><button class="btn small" type="button" data-action="export">${svgIcon('download')}Download</button></div>
+        <div class="row"><span><span class="row-label">Version</span></span><span class="row-value muted num">${esc(S().appVersion || '?')}</span></div>
+      </div>
+    </div>`;
+}
+
+// ---- Danger zone: unlink, delete imported, sign out
+function dangerCardHTML(b) {
+  const imported = S().transactions.filter((t) => t.source === 'import').length;
+  const row = (title, sub, button) => `<div class="row"><span><span class="row-label">${title}</span><span class="sub">${sub}</span></span>${button}</div>`;
+  const rows = [
+    ...(b.configured ? b.connections.map((c) => row(`Unlink ${esc(c.bank)}${c.archived ? ' (old link)' : ''}`, 'Stops syncing. Transactions already imported stay.',
+      `<button class="btn small danger" type="button" data-action="unlink-bank" data-id="${esc(c.sessionId)}">Unlink</button>`)) : []),
+    imported ? row('Delete imported transactions', `${esc(plural(imported, 'transaction'))} from CSV files. Bank and manual ones stay.`,
+      '<button class="btn small danger" type="button" data-action="delete-imported">Delete</button>') : '',
+    row('Sign out', 'Of this device. Your data stays on the server.',
+      `<button class="btn small danger" type="button" data-action="logout">${svgIcon('logout')}Sign out</button>`),
+  ];
+  return `<div class="card ss-card ss-danger"><div class="list ss-list">${rows.join('')}</div></div>`;
 }
 
 const TRASH_REASONS = { delete: 'Deleted', 'delete-imported': 'Import removed', 'duplicate-merge': 'Duplicate merged' };
@@ -668,21 +803,23 @@ function trashCardHTML() {
   const list = Array.isArray(ui.trash) ? ui.trash : null;
   const shown = list ? (ui.trashAll ? list : list.slice(0, 8)) : [];
   let body;
-  if (ui.trash === 'error') body = '<p class="muted small">Couldn’t load the trash. Try again when you’re online.</p>';
-  else if (!list) body = '<p class="muted small">Loading…</p>';
-  else if (!list.length) body = '<p class="muted small">Empty.</p>';
-  else {
-    body = `<div class="settings-list">${shown.map((e) => `<div class="setting ux1-trash">
-        <span class="ux1-trash-main"><span class="ux1-trash-desc">${esc(e.tx?.description || '(no description)')}</span>
-          <span class="muted small">${esc(fmtDate(e.tx?.date))} · ${esc(TRASH_REASONS[e.reason] || 'Removed')} ${esc(bankTime(e.removedAt))}</span></span>
-        <span class="ux1-trash-side">${e.tx ? amountHTML(e.tx) : ''}
-          <button class="btn small" type="button" data-action="restore-tx" data-id="${esc(e.tx?.id || '')}">Restore</button></span>
-      </div>`).join('')}</div>
-      ${list.length > shown.length ? `<button class="btn small" type="button" data-action="trash-all" style="margin-top:8px">Show all ${list.length}</button>` : ''}`;
+  if (ui.trash === 'error') body = '<p class="ss-empty-line">Couldn’t load the trash. Try again when you’re online.</p>';
+  else if (!list) body = '<p class="ss-empty-line">Loading…</p>';
+  else if (!list.length) {
+    body = '<div class="ss-empty"><b>Trash is empty</b><span class="sub">Deleted and merged transactions stay here for 60 days.</span></div>';
+  } else {
+    const rows = shown.map((e) => `<div class="ss-trash">
+        <div class="ss-trash-main"><span class="ss-trash-desc">${esc(e.tx?.description || '(no description)')}</span>
+          <span class="sub">${esc(fmtDate(e.tx?.date))} · ${esc(TRASH_REASONS[e.reason] || 'Removed')} ${esc(bankTime(e.removedAt))}</span></div>
+        <div class="ss-trash-side">${e.tx ? amountHTML(e.tx) : ''}
+          <button class="btn small" type="button" data-action="restore-tx" data-id="${esc(e.tx?.id || '')}">${svgIcon('undo')}Restore</button></div>
+      </div>`).join('');
+    body = `<p class="ss-help">Deleted and merged transactions stay here for 60 days.</p>
+      ${collapsible({ key: 'settings.trash', title: 'Deleted transactions', count: list.length, body: `<div class="ss-trash-list">${rows}</div>
+        ${list.length > shown.length ? `<button class="btn small ghost ss-show-all" type="button" data-action="trash-all">Show all ${list.length}</button>` : ''}` })}`;
   }
-  return `<div class="card">
+  return `<div class="card ss-card">
     <div class="card-head">${cardTitle('trash', 'Trash')}</div>
-    <p class="muted small" style="margin-top:0">Transactions you deleted, or that were merged as duplicates. They stay here for 60 days.</p>
     ${body}
   </div>`;
 }
@@ -864,24 +1001,25 @@ function csvPreviewHTML(b) {
   const shown = [...m.rows.filter((r) => r.isNew), ...m.rows.filter((r) => !r.isNew)].slice(0, 8);
   const income = m.rows.filter((r) => r.t.type === 'income').length;
   const fx = p.needsFx || 0;
-  const label = m.fresh
-    ? `Import ${m.fresh}${m.already ? ` · skip ${m.already} already in app` : ''}`
-    : 'Nothing new to import';
-  return `<div class="stack qc-preview" style="gap:8px;margin-top:12px">
-    <p style="margin:0"><b>${m.rows.length}</b> transaction${m.rows.length === 1 ? '' : 's'} found (${income} income, ${m.rows.length - income} expenses): <b>${m.fresh} new</b>, ${m.already} already in app.</p>
-    ${p.skipped ? `<p class="muted small" style="margin:0">${p.skipped} row${p.skipped === 1 ? '' : 's'} skipped (not a transaction, or not completed).</p>` : ''}
-    ${fx ? `<div class="banner qc-warn" role="note"><span class="banner-ico" aria-hidden="true">⚠️</span><div class="small"><b>${fx} row${fx === 1 ? ' is' : 's are'} in another currency.</b> After import ${fx === 1 ? 'it is' : 'they are'} converted to RON at the BNR rate of ${fx === 1 ? 'its' : 'their'} date (marked “needs conversion” until the rate can be fetched).</div></div>` : ''}
-    <div class="qc-rows">${shown.map((r) => `<div class="qc-row${r.isNew ? '' : ' qc-dup'}">
-      <span class="qc-row-main"><span class="qc-row-desc">${esc(r.t.description || '—')}</span>
-        <span class="muted small">${esc(fmtDate(r.t.date))}${r.isNew ? ` · ${esc(icon(r.category))} ${esc(r.category)}` : ''}${r.raw.needsFx ? ` · ${esc(r.raw.originalCurrency || '')} → RON at BNR rate` : ''}</span></span>
-      <span class="qc-row-end"><span class="num ${r.t.type === 'income' ? 'pos' : ''}">${r.t.type === 'income' ? '+' : '−'}${r.raw.needsFx ? `${esc(amountFmt.format(r.t.amount))} ${esc(r.raw.originalCurrency || '')}` : formatRON(r.t.amount)}</span>
-        <span class="qc-tag ${r.isNew ? 'qc-tag-new' : ''}">${r.isNew ? 'New' : 'Already in app'}</span></span>
+  const accounts = b.connections.flatMap((c) => c.accounts);
+  // The account comes first: "New" / "Already in app" below depend on it.
+  const account = accounts.length ? `<label class="field">Statement from
+      <select data-action="csv-account">${accounts.map((a) => `<option value="${esc(a.uid)}" ${a.uid === ui.csvAccount ? 'selected' : ''}>${esc(settingsAccountName(a))}</option>`).join('')}<option value="" ${!ui.csvAccount ? 'selected' : ''}>Other / not linked</option></select></label>` : '';
+  return `<div class="ss-csv">
+    ${account}
+    <div class="ss-csv-sum"><b>${esc(plural(m.rows.length, 'transaction'))} found</b>
+      <span class="ss-csv-chips"><span class="badge${m.fresh ? ' good' : ''}">${m.fresh} new</span>${m.already ? `<span class="badge">${m.already} already in app</span>` : ''}</span>
+      <span class="sub">${income} income, ${m.rows.length - income} expenses${p.skipped ? ` · ${plural(p.skipped, 'row')} skipped (not a transaction, or not completed)` : ''}</span></div>
+    ${fx ? `<div class="banner warn ss-banner" role="note"><span class="banner-ico" aria-hidden="true">${svgIcon('alert', { size: 20 })}</span><div class="small"><b>${fx} row${fx === 1 ? ' is' : 's are'} in another currency.</b> After import ${fx === 1 ? 'it is' : 'they are'} converted to RON at the BNR rate of ${fx === 1 ? 'its' : 'their'} date (marked “needs conversion” until the rate can be fetched).</div></div>` : ''}
+    ${collapsible({ key: 'settings.csv-preview', title: 'Preview', count: m.rows.length, open: true, cls: 'ss-csv-collapse', body: `<div class="ss-csv-rows">${shown.map((r) => `<div class="ss-csv-row${r.isNew ? '' : ' is-dup'}">
+      <span class="ss-csv-main"><span class="ss-csv-desc">${esc(r.t.description || '—')}</span>
+        <span class="sub">${esc(fmtDate(r.t.date))}${r.isNew ? ` · <span aria-hidden="true">${esc(icon(r.category))}</span> ${esc(r.category)}` : ''}${r.raw.needsFx ? ` · ${esc(r.raw.originalCurrency || '')}, converted at the BNR rate` : ''}</span></span>
+      <span class="ss-csv-end"><span class="num ${r.t.type === 'income' ? 'pos' : ''}">${r.t.type === 'income' ? '+' : '−'}${r.raw.needsFx ? `${esc(amountFmt.format(r.t.amount))} ${esc(r.raw.originalCurrency || '')}` : formatRON(r.t.amount)}</span>
+        <span class="badge${r.isNew ? ' good' : ''}">${r.isNew ? 'New' : 'In app'}</span></span>
     </div>`).join('')}</div>
-    ${m.rows.length > shown.length ? `<p class="muted small" style="margin:0">…and ${m.rows.length - shown.length} more.</p>` : ''}
-    ${b.connections.length ? `<label class="field">Which account is this statement from?
-      <select data-action="csv-account">${b.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === ui.csvAccount ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))} · ${esc(a.nickname || a.name || '')}</option>`).join('')}<option value="" ${!ui.csvAccount ? 'selected' : ''}>Other / not linked</option></select></label>` : ''}
-    <div class="qc-actions"><button class="btn" type="button" data-action="csv-cancel">Cancel</button>
-      <button class="btn primary" type="button" data-action="csv-import" ${m.fresh ? '' : 'disabled'}>${esc(label)}</button></div>
+    ${m.rows.length > shown.length ? `<p class="ss-help">And ${m.rows.length - shown.length} more.</p>` : ''}` })}
+    <div class="ss-csv-actions"><button class="btn" type="button" data-action="csv-cancel">Cancel</button>
+      <button class="btn primary" type="button" data-action="csv-import" ${m.fresh ? '' : 'disabled'}>${m.fresh ? `${svgIcon('download')}Import ${m.fresh} new` : 'Nothing new to import'}</button></div>
   </div>`;
 }
 
@@ -1684,6 +1822,7 @@ view.addEventListener('change', async (e) => {
     case 'csv-file': {
       const file = el.files?.[0];
       if (!file) return;
+      ui.csvFile = file.name; // shown next to the "Choose CSV file" button (screens-settings)
       const buf = await file.arrayBuffer();
       let text = new TextDecoder('utf-8').decode(buf);
       if (text.includes('�')) text = new TextDecoder('windows-1250').decode(buf); // older Romanian exports
