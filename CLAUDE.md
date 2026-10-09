@@ -25,6 +25,33 @@
 - Validate input at system boundaries
 - Keep new modules small and focused (existing large files such as `app.js` are fine to edit in place)
 
+## Token budget — applies to every conversation and every agent
+
+- Do the work yourself in the main conversation by default. Spawn agents only
+  when I ask (`/ruflo`, "swarm") or the task spans 3+ truly independent areas.
+- Swarm size: 2–3 agents by default; 5 only if I ask. No extra agents to
+  double-check other agents unless I ask.
+- Agent prompts stay lean: pass the agent file's role, rules and output format
+  only — skip its examples, `npx claude-flow` hook lines and memory/MCP sections.
+  Name the exact files or folders each agent should look at; no repo-wide exploration.
+- Read-only research/search agents run on a cheaper model (`model: sonnet`, or
+  `haiku` for plain file searches); keep the main model for code changes and the
+  final merge.
+- Every agent answers in at most ~300 words: bullet findings with `file:line`,
+  no restating the task, no pasted file contents.
+- Web: search only when the answer is not in the repo. One search, read at most
+  2–3 pages. Use search snippets before full page scrapes. Use Playwright only to
+  click, fill or screenshot — never just to read a page.
+- Do not call ruflo MCP tools (swarm_init, hive-mind, neural, memory, autopilot)
+  unless I ask — they add overhead, the agents do the real work. Never start the
+  ruflo daemon; if one is running, stop it (`npx ruflo@3.53.0 daemon stop`).
+- Don't re-read files already read in this conversation; read only the needed
+  line range of large files.
+- Before a run that will clearly be large (swarm, many web pages, many files),
+  say in one line roughly how many agents/searches it needs and wait for my OK.
+- When ruflo is not being used, the `claude-flow` MCP server can be turned off
+  in `/mcp` so its ~360 tool definitions don't fill the context.
+
 ## Ruflo agents — usable in any conversation (laptop, web or phone)
 
 Agent definitions are in `.claude/agents/` and command recipes in `.claude/commands/`.
