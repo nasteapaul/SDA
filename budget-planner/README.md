@@ -142,6 +142,30 @@ There are two ways to get it:
 
 ---
 
+## 5. Run it in the cloud (no PC left on)
+
+`deploy/setup-linux.sh` sets everything up on a small Linux server in one command: Node.js, the app, your data and bank key, Tailscale (a private HTTPS address; nothing is opened to the internet), a service that starts at boot, and automatic updates from GitHub every 10 minutes. It is made for Google Cloud's free **e2-micro** VM and works on any Debian/Ubuntu machine (e.g. a Raspberry Pi).
+
+**Google Cloud e2-micro (free tier):**
+1. Create a project at [console.cloud.google.com](https://console.cloud.google.com) and add billing (a card is required). Under *Billing → Budgets & alerts*, add a 5 USD budget with e-mail alerts.
+2. *Compute Engine → VM instances → Create instance*:
+   - Region **us-central1** (Iowa), **us-west1** or **us-east1** — the free tier only covers these.
+   - Machine type **e2-micro**.
+   - Boot disk: **Debian**, disk type **Standard persistent disk**, **30 GB** (Balanced/SSD disks are billed).
+   - Leave networking as it is (the VM needs its ephemeral external IP to reach your bank and GitHub; don't tick HTTP/HTTPS traffic). Google bills in-use external IPv4 addresses (about 3.6 USD/month at the time of writing), so check your billing report after the first days.
+3. On the laptop, stop the server first (`windows\uninstall-autostart.bat`) so the data doesn't change after you copy it.
+4. Click **SSH** next to the VM. In that window use **Upload file** to upload `data\budget.json`, `enablebanking.pem` and `.env` from the laptop.
+5. Run:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/nasteapaul/SDA/claude/budget-planner-bank-sync-03ykf8/budget-planner/deploy/setup-linux.sh | sudo bash
+   ```
+   Open the Tailscale link it prints and log in with the same account as your phone.
+6. In the phone app: *Settings → Server address → Change* → the `https://budget.<tailnet>.ts.net` address it shows. In the Enable Banking control panel, add `https://budget.<tailnet>.ts.net/bank/callback` as a redirect URL (needed when you re-link the bank).
+
+Logs: `journalctl -u budget-planner -f`. Update log: `journalctl -u budget-planner-update`. Your data is in `/opt/budget/SDA/budget-planner/data` (daily backups in `data/backups`); also keep a copy elsewhere now and then (*Settings → Export all data*).
+
+---
+
 ## Security
 
 - Set `APP_PASSWORD`. Without it, the server only listens on `localhost`, so your phone can't reach it.
