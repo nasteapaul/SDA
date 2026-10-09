@@ -7,7 +7,7 @@ import { SAVINGS_CATEGORY, merchantKey, escapeForRule, isUselessKeyword, ruleMat
 import { analyzeHistory, buildPlan, goalSaved, INTENSITY, cardPeriod, cardPace } from './shared/planner.js';
 import { reconcile } from './shared/reconcile.js';
 import { csvToTransactions } from './shared/csv.js';
-import { ACCOUNT_KINDS, accountView, bankTotals, balanceMeaning } from './shared/accounts.js';
+import { ACCOUNT_KINDS, accountKind, accountView, bankTotals, balanceMeaning } from './shared/accounts.js';
 import { ownContext, isOwnTransfer } from './shared/own.js';
 import { makePeriods } from './shared/periods.js';
 import { makeLedger, COUNT_MODES } from './shared/ledger.js';
@@ -17,6 +17,7 @@ import { ownTransferCategory } from './shared/own.js';
 import { importSeen, isSameTransaction } from './shared/dedupe.js';
 // foundation: SVG icons (named svgIcon here — icon() below is the category emoji)
 import { icon as svgIcon, iconTile } from './icons.js';
+import { collapsible } from './collapse.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -219,12 +220,10 @@ function txIcon(t) {
   return t.goalId ? (S().goals.find((g) => g.id === t.goalId)?.icon || icon(t.category)) : icon(t.category);
 }
 
-// Short name of an account for chips and filters: "Credit card", "Savings account", "Revolut · 1234".
+// Short name of an account for chips and filters: the nickname, else "Current ··7204", "Card ··8391"
+// (O1: never the bank's account name, which is the holder's full name). See accountName().
 function accountLabel(a) {
-  const kind = accountView(a).kind;
-  const last4 = String(a.iban || '').replace(/\s/g, '').slice(-4);
-  if (kind !== 'current') return ACCOUNT_KINDS[kind];
-  return [a.nickname || a.name || a.bank || ACCOUNT_KINDS[kind], last4].filter(Boolean).join(' · ');
+  return accountName(a, { short: true });
 }
 
 function txRow(t, { showDelete = true } = {}) {
@@ -268,31 +267,65 @@ const views = {
     const recent = sortTx(S().transactions.filter((t) => keyOf(t.date) === key)).slice(0, 6);
     const budgetTotal = rows.reduce((sum, r) => sum + (r.limit || 0), 0);
 
+    // G11: a brand-new budget (no transactions, no bank) gets a welcome card instead of a wall of zeros.
+    if (!S().transactions.length && !linkedAccounts().length) return welcomeCard(goals);
+
+    const salaryDay = P().payday ? new Date(P().start(key)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+    const salarySet = Boolean(S().settings?.paydays?.[key]);
+    const before = prevSamePoint(key);
+    // Income / Spending / Saved: one grouped list, each row opens the matching transactions.
+    const flowRow = ({ href, icon: ico, tone, label, value, cls = '', sub = '' }) => `<a class="row ov-row" href="${href}">
+        ${iconTile(ico, { tone })}
+        <span class="ov-row-main">
+          <span class="ov-row-top"><span class="row-label">${label}</span><span class="ov-row-value num ${cls}">${value}</span></span>
+          ${sub ? `<span class="sub">${sub}</span>` : ''}
+        </span>
+        ${svgIcon('chevron-right', { size: 18, cls: 'ov-go' })}
+      </a>`;
+    const incomeSub = s.ownIn
+      ? `${formatRON(s.income - s.ownIn, { short: true })} earned + ${formatRON(s.ownIn, { short: true })} from your own accounts or cash`
+      : pctChange(s.income, before.income, isCurrent, true);
+    const spendSub = budgetTotal
+      ? `Budget ${formatRON(budgetTotal, { short: true })}${s.spend > budgetTotal ? ` · ${formatRON(s.spend - budgetTotal, { short: true })} over` : ` · ${formatRON(budgetTotal - s.spend, { short: true })} left`}`
+      : pctChange(s.spend, before.spend, isCurrent, false);
+    const linkHead = (href, text) => `<a class="link" href="${href}">${esc(text)}${svgIcon('chevron-right', { size: 16 })}</a>`;
+
     return `
-      <div class="month-switch" role="group" aria-label="Month">
-        <button type="button" data-action="month" data-delta="-1" aria-label="Previous month">‹</button>
-        <span>${esc(P().label(key))}${P().payday ? `<small class="muted" style="display:block;font-weight:400;font-size:11.5px">${esc(P().rangeLabel(key))}</small>` : ''}</span>
-        <button type="button" data-action="month" data-delta="1" aria-label="Next month">›</button>
+      <div class="ov-period">
+        <div class="month-switch" role="group" aria-label="Month">
+          <button class="btn ghost icon-only" type="button" data-action="month" data-delta="-1" aria-label="Previous month">${svgIcon('chevron-left')}</button>
+          <span class="ms-label"><span class="ms-month">${esc(P().label(key))}</span>${P().payday ? `<span class="ms-range">${esc(P().rangeLabel(key))}</span>` : ''}</span>
+          <button class="btn ghost icon-only" type="button" data-action="month" data-delta="1" aria-label="Next month">${svgIcon('chevron-right')}</button>
+        </div>
+        ${P().payday ? `<button class="btn ov-salary" type="button" data-action="edit-payday" data-key="${esc(key)}" title="Change the salary date for this period">${svgIcon('calendar')}<span>Salary · ${esc(salaryDay)}</span>${salarySet ? '<span class="badge accent">Set</span>' : ''}${svgIcon('edit', { size: 16, cls: 'ov-salary-edit' })}</button>` : ''}
       </div>
-      ${P().payday ? `<button class="btn small" type="button" data-action="edit-payday" data-key="${esc(key)}" style="margin-left:8px">💼 Salary on ${esc(new Date(P().start(key)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))}${S().settings?.paydays?.[key] ? ' (set by you)' : ''} ✎</button>` : ''}
       ${unassignedBanner()}
-      ${s.count ? '' : `<div class="banner" style="margin-top:12px"><span class="banner-ico" aria-hidden="true">📭</span><div class="small"><b>No current-account transactions in this period.</b> The bank connection only goes back about 90 days — for older months import the current account statement (CSV) in Settings and pick the current account.</div></div>`}
-      <div class="hero">
-        ${heroCard({ s, key, isCurrent, used, daysLeft, accounts })}
-        <a class="card stat-link" href="${txLink({ month: key, type: 'income', counted: 1 })}" title="See these transactions"><span class="stat-label">Income <span class="stat-go" aria-hidden="true">›</span></span><span class="stat-value num pos">${formatRON(s.income)}</span><span class="stat-sub">${s.ownIn ? `${formatRON(s.income - s.ownIn, { short: true })} earned + ${formatRON(s.ownIn, { short: true })} from your own accounts / cash` : pctChange(s.income, prevSamePoint(key).income, isCurrent)}</span></a>
-        <a class="card stat-link" href="${txLink({ month: key, type: 'expense', counted: 1 })}" title="See these transactions"><span class="stat-label">Spending <span class="stat-go" aria-hidden="true">›</span></span><span class="stat-value num">${formatRON(s.spend)}</span><span class="stat-sub">${budgetTotal ? `Budget ${formatRON(budgetTotal, { short: true })}` : pctChange(s.spend, prevSamePoint(key).spend, isCurrent)}</span></a>
-        <a class="card stat-link" href="${txLink({ month: key, type: 'saved', counted: 1 })}" title="See these transactions"><span class="stat-label">Saved to goals <span class="stat-go" aria-hidden="true">›</span></span><span class="stat-value num">${formatRON(s.saved)}</span><span class="stat-sub">${s.income ? `${Math.round((s.saved / s.income) * 100)}% savings rate` : '—'}</span></a>
+      ${s.count ? '' : `<div class="banner info ov-banner">${iconTile('info', { tone: 'accent' })}<div><b>No current-account transactions ${isCurrent ? 'yet this period' : 'in this period'}</b>
+        <div class="small muted">${isCurrent
+          ? (linkedAccounts().length ? 'New ones show up after the next bank sync.' : 'Add one with the + button, or import a statement in Settings.')
+          : `${linkedAccounts().length ? 'The bank connection only goes back about 90 days. ' : ''}For older months, import the current account’s CSV statement in Settings and pick the current account.`}</div></div></div>`}
+      <div class="ov-top">
+        ${heroCard({ s, key, isCurrent, used, daysLeft })}
+        <div class="card ov-flow" role="group" aria-label="This period">
+          <div class="list ov-bleed">
+            ${flowRow({ href: txLink({ month: key, type: 'income', counted: 1 }), icon: 'arrow-down-left', tone: 'good', label: 'Income', value: formatRON(s.income), cls: s.income > 0 ? 'pos' : '', sub: incomeSub })}
+            ${flowRow({ href: txLink({ month: key, type: 'expense', counted: 1 }), icon: 'arrow-up-right', tone: 'accent', label: 'Spending', value: formatRON(s.spend), sub: spendSub })}
+            ${flowRow({ href: txLink({ month: key, type: 'saved', counted: 1 }), icon: 'savings', tone: 'neutral', label: 'Saved to goals', value: formatRON(s.saved), sub: s.income ? `${Math.round((s.saved / s.income) * 100)}% of income` : '' })}
+          </div>
+        </div>
       </div>
       ${accountsStrip()}
       ${creditCardPanel(key)}
-      <div class="grid two">
+      <div class="grid two ov-grid">
         <div class="stack">
           <div class="card">
-            <div class="card-head"><h2>Spending by category</h2><a class="link" href="#plan">Set budgets →</a></div>
-            ${categoryBars(rows.filter((r) => r.value > 0 || r.limit), s.spend)}
+            <div class="card-head">${cardTitle('pie', 'Spending by category')}${linkHead('#plan', 'Budgets')}</div>
+            ${categoryBars(rows.filter((r) => r.value > 0 || r.limit), s.spend, {
+              split: (items) => moreRows({ key: 'overview.categories', rows: items, shown: 5, title: 'More categories', cls: 'ov-more-bleed', wrap: (h) => `<div class="bars" role="list">${h}</div>` }),
+            })}
           </div>
           <div class="card">
-            <div class="card-head"><h2>Income vs spending</h2>
+            <div class="card-head">${cardTitle('bars', 'Income vs spending')}
               <div class="legend"><span><i style="background:var(--series-1)"></i>Income</span><span><i style="background:var(--series-2)"></i>Spending</span></div>
             </div>
             ${trendChart(months.map((m) => ({ ...m, noData: !m.count, partial: isPartialPeriod(m.key) })))}
@@ -300,16 +333,22 @@ const views = {
         </div>
         <div class="stack">
           <div class="card">
-            <div class="card-head"><h2>Goals</h2><a class="link" href="#goals">All goals →</a></div>
-            ${goals.length ? goals.map((g) => `
-              <div class="mini-goal">
-                <div class="row"><span>${esc(g.icon || '🎯')} ${esc(g.name)}</span><span class="num"><b>${formatRON(g.saved, { short: true })}</b> <span class="muted">/ ${formatRON(g.target, { short: true })}</span></span></div>
-                <div class="progress" role="progressbar" aria-valuenow="${Math.round(g.pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(g.name)}"><i style="width:${(g.pct * 100).toFixed(1)}%"></i></div>
-              </div>`).join('') : `<div class="empty"><b>No goals yet</b><button class="btn small" type="button" data-action="add-goal">Add a goal</button></div>`}
+            <div class="card-head">${cardTitle('goals', 'Goals')}${goals.length ? linkHead('#goals', 'All goals') : ''}</div>
+            ${goals.length ? `<div class="list ov-bleed">${goals.map((g) => `
+              <a class="row ov-row ov-goal" href="#goals">
+                <span class="ico-tile neutral" aria-hidden="true">${esc(g.icon || '🎯')}</span>
+                <span class="ov-row-main">
+                  <span class="ov-row-top"><span class="row-label">${esc(g.name)}</span><span class="ov-row-value"><span class="num">${formatRON(g.saved, { short: true })}</span> <span class="muted num">of ${formatRON(g.target, { short: true })}</span></span></span>
+                  <span class="progress" role="progressbar" aria-valuenow="${Math.round(g.pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(g.name)}"><i style="width:${(g.pct * 100).toFixed(1)}%"></i></span>
+                </span>
+                ${svgIcon('chevron-right', { size: 18, cls: 'ov-go' })}
+              </a>`).join('')}</div>` : emptyState({ icon: 'goals', title: 'No goals yet', text: 'Save for a holiday, an emergency fund or anything else.', action: '<button class="btn primary" type="button" data-action="add-goal">Add a goal</button>' })}
           </div>
           <div class="card">
-            <div class="card-head"><h2>Recent</h2><a class="link" href="#transactions">See all →</a></div>
-            <div class="tx-list">${recent.length ? recent.map((t) => txRow(t, { showDelete: false })).join('') : '<div class="empty">Nothing this month yet.</div>'}</div>
+            <div class="card-head">${cardTitle('transactions', 'Recent')}${recent.length ? linkHead('#transactions', 'See all') : ''}</div>
+            ${recent.length
+              ? moreRows({ key: 'overview.recent', rows: recent.map((t) => txRow(t, { showDelete: false })), shown: 3, title: 'Earlier this period', wrap: (h) => `<div class="tx-list">${h}</div>` })
+              : `<div class="tx-list">${emptyState({ icon: 'transactions', title: 'Nothing in this period yet', text: 'New transactions show up here as soon as they sync.' })}</div>`}
           </div>
         </div>
       </div>`;
@@ -380,39 +419,56 @@ const views = {
   goals() {
     const { plan } = currentPlan(null);
     const goals = goalsWithProgress();
-    const cards = goals.map((g) => {
+    const card = (g) => {
       const p = plan.goals.find((x) => x.id === g.id);
       const monthsLeft = g.deadline ? monthsBetween(todayISO(), g.deadline) : null;
       const needed = g.deadline && !g.done ? (g.target - g.saved) / Math.max(monthsLeft, 1) : null;
       const status = g.done ? 'done' : p?.status;
+      // GO2: a flexible goal has no "needs", but the plan still sets money aside for it each month.
+      const planned = !g.deadline && !g.done && p?.eta ? (g.target - g.saved) / Math.max(monthsBetween(todayISO(), p.eta), 1) : null;
+      const perMonth = g.done ? '—' : g.deadline ? formatRON(needed, { short: true }) : planned != null ? `≈ ${formatRON(planned, { short: true })}` : 'Not funded yet';
+      const priority = PRIORITY_LABELS[g.priority] || PRIORITY_LABELS.medium;
       return `<div class="card goal">
         <div class="goal-top">
-          <span class="goal-ico" aria-hidden="true">${esc(g.icon || '🎯')}</span>
-          <div style="flex:1;min-width:0"><div class="goal-name">${esc(g.name)}</div><div class="muted small">${esc(g.priority || 'medium')} priority</div></div>
-          ${status ? statusChip(status) : ''}
+          <span class="ico-tile neutral lg goal-ico" aria-hidden="true">${esc(g.icon || '🎯')}</span>
+          <div class="goal-head">
+            <h2 class="goal-name">${esc(g.name)}</h2>
+            <div class="goal-tags">${status ? statusChip(status) : ''}<span class="badge">${priority}</span></div>
+          </div>
+          <button class="btn ghost icon-only goal-edit" type="button" data-action="edit-goal" data-id="${esc(g.id)}" aria-label="Edit ${esc(g.name)}" title="Edit goal">${svgIcon('edit')}</button>
         </div>
-        <div class="goal-amounts"><b class="num">${formatRON(g.saved)}</b><span class="muted num">of ${formatRON(g.target)}</span></div>
+        <div class="goal-amounts"><span class="goal-saved">${bigAmount(g.saved)}</span><span class="goal-of">of <span class="num">${formatRON(g.target)}</span> · ${Math.round(g.pct * 100)}%</span></div>
         <div class="progress" role="progressbar" aria-valuenow="${Math.round(g.pct * 100)}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(g.name)} progress"><i style="width:${(g.pct * 100).toFixed(1)}%"></i></div>
         <div class="goal-facts">
           <div><span>Remaining</span><b class="num">${formatRON(Math.max(g.target - g.saved, 0))}</b></div>
-          <div><span>Deadline</span><b>${g.deadline ? fmtDate(g.deadline) : 'Flexible'}</b></div>
-          <div><span>${g.deadline ? 'Needs per month' : 'Planned per month'}</span><b class="num">${needed != null ? formatRON(needed, { short: true }) : '—'}</b></div>
-          <div><span>Projected</span><b>${g.done ? 'Done 🎉' : p?.eta ? fmtDate(p.eta, { month: 'short', year: 'numeric' }) : '—'}</b></div>
+          <div><span>Deadline</span><b>${g.deadline ? fmtDate(g.deadline) : 'No deadline'}</b></div>
+          <div><span>${g.deadline ? 'Needs per month' : 'Planned per month'}</span><b class="num">${perMonth}</b></div>
+          <div><span>${g.done ? 'Status' : 'Ready by'}</span><b>${g.done ? 'Reached' : p?.eta ? fmtDate(p.eta, { month: 'short', year: 'numeric' }) : '—'}</b></div>
         </div>
         <div class="goal-actions">
-          <button class="btn primary small" type="button" data-action="contribute" data-id="${esc(g.id)}">+ Add money</button>
-          <button class="btn small" type="button" data-action="withdraw" data-id="${esc(g.id)}">Withdraw</button>
-          <button class="btn small" type="button" data-action="edit-goal" data-id="${esc(g.id)}">Edit</button>
+          <button class="btn primary" type="button" data-action="contribute" data-id="${esc(g.id)}">${svgIcon('plus')}Add money</button>
+          <button class="btn" type="button" data-action="withdraw" data-id="${esc(g.id)}">Withdraw</button>
         </div>
       </div>`;
-    }).join('');
+    };
+    // Long lists stay short: 4 goals in view, the rest and the reached ones minimized.
+    const active = goals.filter((g) => !g.done);
+    const reached = goals.filter((g) => g.done);
+    const grid = (html) => `<div class="goals-grid">${html}</div>`;
+    if (!goals.length) {
+      return `<div class="card">${emptyState({
+        icon: 'goals', title: 'No goals yet', text: 'A holiday, an emergency fund, a new laptop — add as many as you like and save towards them at the same time.',
+        action: `<button class="btn primary" type="button" data-action="add-goal">${svgIcon('plus')}Create your first goal</button>`,
+      })}</div>`;
+    }
     return `
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-        <p class="muted" style="margin:0">Save towards several goals at once. The <a href="#plan">Plan</a> tab shows how to reach them from your real spending habits.</p>
-        <button class="btn primary" type="button" data-action="add-goal">+ New goal</button>
+      <div class="goals-head">
+        <p class="muted">Save towards several goals at once. The Plan tab shows how to reach them from your real spending.</p>
+        <button class="btn primary" type="button" data-action="add-goal">${svgIcon('plus')}New goal</button>
       </div>
       ${goalsVsSavings(goals)}
-      ${goals.length ? `<div class="goals-grid">${cards}</div>` : '<div class="card empty"><b>No goals yet</b>Holiday, emergency fund, a new laptop… add as many as you like.<br><br><button class="btn primary" type="button" data-action="add-goal">Create your first goal</button></div>'}`;
+      ${active.length ? moreRows({ key: 'goals.more', rows: active.map(card), shown: 4, title: 'More goals', wrap: grid, cls: 'ov-more-page' }) : ''}
+      ${reached.length ? collapsible({ key: 'goals.reached', title: 'Reached goals', count: reached.length, body: grid(reached.map(card).join('')), cls: 'ov-more ov-more-page' }) : ''}`;
   },
 
   plan() {
@@ -420,69 +476,90 @@ const views = {
     const { analysis, plan } = currentPlan();
     const intensity = S().settings?.planIntensity || 'balanced';
     if (analysis.status === 'no-data') {
-      return '<div class="card empty"><b>Not enough history yet</b>Link your bank, import a CSV statement in Settings, or add a few weeks of transactions — the plan learns from your real spending.</div>';
+      return `<div class="card">${emptyState({
+        icon: 'plan', title: 'Not enough history yet',
+        text: 'The plan learns from your real spending. Link your bank or import a CSV statement, or add a few weeks of transactions.',
+        action: `<a class="btn primary" href="#settings">${svgIcon('bank')}Connect bank or import</a><button class="btn" type="button" data-action="add-tx">${svgIcon('plus')}Add a transaction</button>`,
+      })}</div>`;
     }
     const selected = ui.planGoals || all.map((g) => g.id);
     const banner = {
-      'on-track': ['✅', 'You can reach these goals without changing your habits.', 'Keep saving the amount below every month.'],
-      'needs-cuts': ['✂️', 'Reachable with a few small cuts.', 'Trim the flexible categories below and every goal stays on schedule.'],
-      stretch: ['⚠️', 'Not every goal fits your current budget.', 'The plan below gets you as close as possible — see the realistic dates and suggestions.'],
-      'no-data': ['ℹ️', 'Add some transactions first.', ''],
+      'on-track': ['check', 'good', 'You can reach these goals without changing your habits', 'Keep saving the amount below every month.'],
+      'needs-cuts': ['sliders', 'accent', 'Reachable with a few small cuts', 'Trim the flexible categories below and every goal stays on schedule.'],
+      stretch: ['alert', 'warning', 'Not every goal fits your current budget', 'The plan gets you as close as possible. See the realistic dates and the tips below.'],
     }[plan.status];
     const budgetsApplied = plan.budgets.every((b) => S().budgets?.[b.name] === b.limit);
+    const short = (n) => formatRON(n, { short: true });
+    const month = (iso) => fmtDate(iso, { month: 'short', year: 'numeric' });
+    const n = analysis.monthKeys.length;
+    const stat = (label, value, sub, cls = '') => `<div class="card pl-stat"><span class="pl-stat-label">${label}</span><span class="pl-stat-value num ${cls}">${value}</span><span class="pl-stat-sub">${sub}</span></div>`;
+    const hint = INTENSITY[intensity]?.hint || '';
+    const tips = plan.tips.map(tipRow);
+    const TIPS_SHOWN = 4;
     return `
-      <div class="stack">
-        <div class="card" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
-          <div class="stack" style="gap:8px">
-            <span class="stat-label">How hard should the plan push?</span>
+      <div class="stack plan">
+        <div class="card plan-controls">
+          <div class="pc-block">
+            <span class="section-label">How hard should the plan push?</span>
             <div class="segmented" role="group" aria-label="Plan intensity">${Object.entries(INTENSITY).map(([k, v]) => `<button type="button" data-action="intensity" data-value="${k}" aria-pressed="${k === intensity}" title="${esc(v.hint)}">${v.label}</button>`).join('')}</div>
+            ${hint ? `<span class="caption">${esc(hint.charAt(0).toUpperCase() + hint.slice(1))}</span>` : ''}
           </div>
-          ${all.length ? `<div class="stack" style="gap:8px"><span class="stat-label">Goals in this plan</span><div class="goal-check">${all.map((g) => `<label class="chip-check"><input type="checkbox" data-action="plan-goal" value="${esc(g.id)}" ${selected.includes(g.id) ? 'checked' : ''}> ${esc(g.icon || '🎯')} ${esc(g.name)}</label>`).join('')}</div></div>` : '<a class="btn" href="#goals">Add a goal to plan for</a>'}
+          <div class="pc-block">
+            <span class="section-label">Goals in this plan</span>
+            ${all.length ? `<div class="goal-check">${all.map((g) => `<label class="chip-check"><input type="checkbox" data-action="plan-goal" value="${esc(g.id)}" ${selected.includes(g.id) ? 'checked' : ''}><span aria-hidden="true">${esc(g.icon || '🎯')}</span><span>${esc(g.name)}</span></label>`).join('')}</div>` : `<a class="btn" href="#goals">${svgIcon('plus')}Add a goal to plan for</a>`}
+          </div>
           ${dataCoverage()}
         </div>
         <div class="plan-summary">
-          <div class="card"><span class="stat-label">Typical monthly income</span><span class="stat-value num">${formatRON(plan.income, { short: true })}</span><span class="stat-sub">avg of ${analysis.monthKeys.length} month${analysis.monthKeys.length === 1 ? '' : 's'}</span></div>
-          <div class="card"><span class="stat-label">Typical monthly spending</span><span class="stat-value num">${formatRON(plan.spend, { short: true })}</span><span class="stat-sub">excl. savings & transfers</span></div>
-          <div class="card"><span class="stat-label">Free each month today</span><span class="stat-value num ${plan.surplus < 0 ? 'neg' : ''}">${formatRON(plan.surplus, { short: true })}</span><span class="stat-sub">goals need ${formatRON(plan.totalRequired, { short: true })}/mo</span></div>
-          <div class="card"><span class="stat-label">Save each month</span><span class="stat-value num">${formatRON(plan.monthlySaving, { short: true })}</span><span class="stat-sub">≈ ${formatRON(plan.perWeek, { short: true })}/week · ${formatRON(plan.perDay, { short: true })}/day</span></div>
+          ${stat('Income / month', short(plan.income), `Average of ${n} month${n === 1 ? '' : 's'}`)}
+          ${stat('Spending / month', short(plan.spend), 'Excl. savings and transfers')}
+          ${stat('Free / month', short(plan.surplus), `Goals need ${short(plan.totalRequired)}`, plan.surplus < 0 ? 'neg' : '')}
+          ${stat('Save / month', short(plan.monthlySaving), `≈ ${short(plan.perWeek)} a week`)}
         </div>
         ${debtBanner()}
-        ${banner ? `<div class="banner"><span class="banner-ico" aria-hidden="true">${banner[0]}</span><div><b>${esc(banner[1])}</b><div class="muted small">${esc(banner[2])}</div></div></div>` : ''}
+        ${banner ? `<div class="banner callout">${iconTile(banner[0], { tone: banner[1] })}<div><b>${esc(banner[2])}</b><div class="muted small">${esc(banner[3])}</div></div></div>` : ''}
         ${plan.goals.length ? `<div class="card">
-          <div class="card-head"><h2>Goal timeline</h2></div>
-          <div class="table-wrap"><table class="data">
-            <thead><tr><th>Goal</th><th class="r hide-sm">Remaining</th><th class="r">Deadline</th><th class="r hide-sm">Needs / month</th><th class="r">With this plan</th><th class="hide-sm">Status</th></tr></thead>
-            <tbody>${plan.goals.map((g) => `<tr>
-              <td>${esc(S().goals.find((x) => x.id === g.id)?.icon || '🎯')} ${esc(g.name)}<div class="show-sm goal-status-sm">${statusChip(g.status)}</div></td>
-              <td class="r hide-sm">${formatRON(g.remaining, { short: true })}</td>
-              <td class="r">${g.deadline ? fmtDate(g.deadline, { month: 'short', year: 'numeric' }) : 'Flexible'}</td>
-              <td class="r hide-sm">${g.deadline ? formatRON(g.required, { short: true }) : '—'}</td>
-              <td class="r">${g.eta ? fmtDate(g.eta, { month: 'short', year: 'numeric' }) : 'Not funded'}</td>
-              <td class="hide-sm">${statusChip(g.status)}</td></tr>`).join('')}</tbody>
-          </table></div>
+          <div class="card-head">${cardTitle('flag', 'Goal timeline')}</div>
+          ${moreRows({ key: 'plan.timeline', shown: 5, title: 'More goals', wrap: (h) => `<div class="list">${h}</div>`, rows: plan.goals.map((g) => `<div class="row ov-row pl-row">
+              <span class="ico-tile neutral" aria-hidden="true">${esc(S().goals.find((x) => x.id === g.id)?.icon || '🎯')}</span>
+              <span class="ov-row-main">
+                <span class="ov-row-top"><span class="row-label">${esc(g.name)}</span>${statusChip(g.status)}</span>
+                <span class="sub">${g.eta ? `Ready ${esc(month(g.eta))}` : 'Not funded yet'}${g.deadline ? ` · due ${esc(month(g.deadline))}` : ' · no deadline'}</span>
+                <span class="sub"><span class="num">${short(g.remaining)}</span> to go${g.deadline ? ` · needs <span class="num">${short(g.required)}</span> a month` : ''}</span>
+              </span>
+            </div>`) })}
         </div>` : ''}
         <div class="grid two">
           <div class="card">
-            <div class="card-head"><h2>Suggested monthly budgets</h2>
-              <button class="btn small ${budgetsApplied ? '' : 'primary'}" type="button" data-action="apply-budgets" ${budgetsApplied ? 'disabled' : ''}>${budgetsApplied ? 'Applied ✓' : 'Use as my budgets'}</button>
+            <div class="card-head">${cardTitle('sliders', 'Suggested monthly budgets')}
+              <button class="btn small ${budgetsApplied ? '' : 'primary'}" type="button" data-action="apply-budgets" ${budgetsApplied ? 'disabled' : ''}>${budgetsApplied ? `${svgIcon('check')}Applied` : 'Use as my budgets'}</button>
             </div>
-            <div class="table-wrap"><table class="data">
-              <thead><tr><th>Category</th><th class="r">You spend</th><th class="r">Budget</th><th class="r hide-sm">Change</th></tr></thead>
-              <tbody>${plan.budgets.map((b) => {
-                const diff = b.limit - b.avg;
-                return `<tr><td>${esc(b.icon)} ${esc(b.name)}${b.essential ? ' <span class="badge hide-sm">essential</span>' : ''}</td>
-                  <td class="r">${formatRON(b.avg, { short: true })}</td><td class="r"><b>${formatRON(b.limit, { short: true })}</b></td>
-                  <td class="r hide-sm ${diff < -1 ? 'pos' : 'muted'}">${diff < -1 ? `−${formatRON(-diff, { short: true })}` : '—'}</td></tr>`;
-              }).join('')}</tbody>
-            </table></div>
-            <p class="muted small">Essential categories (rent, bills, groceries, transport, health) are never cut. Change which categories are essential in Settings.</p>
+            <div class="pl-list-head"><span>Category</span><span>Budget / month</span></div>
+            ${moreRows({ key: 'plan.budgets', shown: 5, title: 'More categories', wrap: (h) => `<div class="list">${h}</div>`, rows: plan.budgets.map((b) => {
+              const diff = b.limit - b.avg;
+              return `<div class="row ov-row pl-row">
+                <span class="ico-tile neutral" aria-hidden="true">${esc(b.icon)}</span>
+                <span class="ov-row-main">
+                  <span class="ov-row-top"><span class="row-label">${esc(b.name)}</span><span class="ov-row-value num">${short(b.limit)}</span></span>
+                  <span class="sub">You spend <span class="num">${short(b.avg)}</span>${diff < -1 ? ` · <span class="pos"><span class="num">${short(-diff)}</span> less</span>` : ''}${b.essential ? ' · essential' : ''}</span>
+                </span>
+              </div>`;
+            }) })}
+            <p class="caption pl-foot">Essential categories (rent, bills, groceries, transport, health) are never cut. Choose which ones are essential in Settings.</p>
           </div>
           <div class="stack">
-            <div class="card"><div class="card-head"><h2>What to do</h2></div>
-              <ul class="tips">${plan.tips.map((t) => `<li class="${esc(t.level)}"><span>${esc(t.text)}</span></li>`).join('') || '<li>Nothing to change — nice.</li>'}</ul>
+            <div class="card"><div class="card-head">${cardTitle('bulb', 'What to do')}</div>
+              ${tips.length ? moreRows({ key: 'plan.tips', rows: tips, shown: TIPS_SHOWN, title: 'More tips', wrap: (h) => `<ul class="list pl-tips">${h}</ul>` })
+                : `<ul class="list pl-tips">${tipRow({ level: 'good', text: 'Nothing to change. Nice.' })}</ul>`}
             </div>
-            ${analysis.recurring.length ? `<div class="card"><div class="card-head"><h2>Recurring payments</h2></div>
-              <table class="data"><tbody>${analysis.recurring.map((r) => `<tr><td>${esc(icon(r.category))} ${esc(r.label)}</td><td class="r">${formatRON(r.avg)}/mo</td></tr>`).join('')}</tbody></table></div>` : ''}
+            ${analysis.recurring.length ? `<div class="card"><div class="card-head">${cardTitle('repeat', 'Recurring payments')}</div>
+              ${moreRows({ key: 'plan.recurring', shown: 4, title: 'More payments', wrap: (h) => `<div class="list">${h}</div>`, rows: analysis.recurring.map((r) => `<div class="row ov-row pl-row">
+                <span class="ico-tile neutral" aria-hidden="true">${esc(icon(r.category))}</span>
+                <span class="ov-row-main">
+                  <span class="ov-row-top"><span class="row-label pl-rec">${esc(r.label)}</span><span class="ov-row-value num">${short(r.avg)}</span></span>
+                  <span class="sub">${esc(r.category)} · every month</span>
+                </span>
+              </div>`) })}</div>` : ''}
           </div>
         </div>
       </div>`;
@@ -709,14 +786,21 @@ function prevSamePoint(key) {
   return L().totals(S().transactions.filter((t) => t.date <= cutoff && keyOf(t.date) === prev));
 }
 
-function pctChange(now, before, samePoint = false) {
-  const prev = `${samePoint ? 'same point ' : ''}${P().payday ? (samePoint ? 'last period' : 'previous period') : 'last month'}`;
-  if (!before) return `vs ${prev}: —`;
+// "↗ 12% more than this time last period" (HTML). For the period you're in, the comparison is
+// at the same point of the previous one. upIsGood colours the arrow + % (green / red); '' = no data.
+function pctChange(now, before, samePoint = false, upIsGood = null) {
+  if (!before || (samePoint && !now)) return ''; // nothing yet this period: "100% less" would only be noise
+  const prev = P().payday
+    ? (samePoint ? 'this time last period' : 'the previous period')
+    : (samePoint ? 'this time last month' : 'the previous month');
   const p = Math.round(((now - before) / before) * 100);
-  return `${p > 0 ? '▲' : p < 0 ? '▼' : '='} ${Math.abs(p)}% vs ${prev}`;
+  if (!p) return `About the same as ${prev}`;
+  const up = p > 0;
+  const tone = upIsGood == null ? '' : up === upIsGood ? ' good' : ' bad';
+  return `<span class="delta ${up ? 'up' : 'down'}${tone}">${svgIcon('arrow-up-right', { size: 14 })}${Math.abs(p)}%</span> ${up ? 'more' : 'less'} than ${prev}`;
 }
 
-const TITLES = { overview: 'Overview', transactions: 'Transactions', goals: 'Goals', plan: 'Savings plan', settings: 'Settings' };
+const TITLES = { overview: 'Overview', transactions: 'Transactions', goals: 'Goals', plan: 'Plan', settings: 'Settings' };
 
 function render() {
   if (!S()) return;
@@ -728,6 +812,8 @@ function render() {
     const input = view.querySelector('[data-filter="q"]');
     if (input) { input.focus(); input.setSelectionRange(focusFilter, focusFilter); }
   }
+  // Per-screen CSS hook (hive proposal.route-attr): body[data-route="goals"] etc. — e.g. no + button on Goals / Plan / Settings.
+  document.body.dataset.route = views[ui.route] ? ui.route : 'overview';
   $('#view-title').textContent = TITLES[ui.route] || 'Overview';
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === ui.route));
   document.querySelectorAll('[data-nav]').forEach((a) => (a.dataset.nav === ui.route ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
@@ -1195,11 +1281,77 @@ function openContributionModal(goal, withdraw = false) {
 
 // ---------------------------------------------------------------- ux-4: balances, reconciliation, accounts
 const linkedAccounts = () => S().bank.connections.filter((c) => !c.archived).flatMap((c) => c.accounts || []);
-const accountName = (a) => a.nickname || a.name || (a.iban ? `…${String(a.iban).slice(-4)}` : 'Account');
 const STALE_MS = 24 * 3600 * 1000;
+
+// ---------------------------------------------------------------- screens-overview: account names (O1)
+const SHORT_KINDS = { current: 'Current', savings: 'Savings', credit: 'Card' };
+
+// The 4 digits people know an account by: its card number (set on the account, or learnt from
+// bank transactions — "**** 7204"), else the end of its IBAN / account number.
+function accountDigits(a) {
+  if (!a) return '';
+  const card = (a.cardDigits || []).find((d) => /^\d{4}$/.test(d))
+    || [...L().byDigits].find(([, x]) => x.uid === a.uid)?.[0];
+  if (card) return card;
+  const number = String(a.iban || a.number || a.accountNumber || a.bban || '').replace(/\s/g, '');
+  return number.length >= 4 ? number.slice(-4) : '';
+}
+
+/**
+ * How an account is named everywhere (hero, strip, filters, chips, Settings, modals):
+ * the nickname you gave it, else its kind + last 4 digits. The bank's own account
+ * "name" is usually the holder's full name, so it is never shown.
+ *   accountName(a)                  → "Current account ··7204" (or the nickname)
+ *   accountName(a, { short: true }) → "Current ··7204" / "Card ··8391" / "Savings ··1021"
+ */
+function accountName(a, { short = false } = {}) {
+  if (!a) return '';
+  const nick = String(a.nickname || '').trim();
+  if (nick) return nick;
+  const kind = accountKind(a);
+  const label = (short ? SHORT_KINDS : ACCOUNT_KINDS)[kind] || ACCOUNT_KINDS.current;
+  const digits = accountDigits(a);
+  return digits ? `${label} ··${digits}` : label; // no-break space: "··7204" never wraps on its own
+}
+
+// "1.202,73" + a smaller "RON": the big figure of a card (hero, goal).
+function bigAmount(n, { sign = false } = {}) {
+  return `<span class="big-amount"><span class="big-amount-n">${formatRON(n, { sign }).replace(/\s*RON$/u, '')}</span><span class="big-amount-cur">RON</span></span>`;
+}
+
+// One shared empty state (G11): icon tile, title, one line, optional buttons (trusted HTML).
+function emptyState({ icon: ico = 'info', title, text = '', action = '', cls = '' }) {
+  return `<div class="empty${cls ? ` ${cls}` : ''}">${iconTile(ico, { tone: 'neutral' })}<b>${esc(title)}</b>${text ? `<p>${esc(text)}</p>` : ''}${action ? `<div class="empty-actions">${action}</div>` : ''}</div>`;
+}
+
+// Long lists (user request, shared collapse.js): the first `shown` rows stay visible, the rest
+// sit in a minimized section that remembers its state per `key`. rows: HTML strings.
+// wrap(html) puts each part in its list container. Hiding just one row isn't worth a tap.
+function moreRows({ key, rows, shown = 5, title = 'Show more', wrap = (html) => html, open = false, cls = '' }) {
+  if (rows.length <= shown + 1) return wrap(rows.join(''));
+  return wrap(rows.slice(0, shown).join(''))
+    + collapsible({ key, title: esc(title), count: rows.length - shown, body: wrap(rows.slice(shown).join('')), open, cls: `ov-more${cls ? ` ${cls}` : ''}` });
+}
+
+// First run: nothing synced, imported or typed in yet.
+function welcomeCard() {
+  return `<div class="card welcome">
+    ${iconTile('wallet', { cls: 'lg' })}
+    <h2>Welcome to your budget</h2>
+    <p class="muted">Bring in your transactions to see what you have until payday, where the money goes and how to reach your goals.</p>
+    <div class="welcome-actions">
+      <a class="btn primary" href="#settings">${svgIcon('bank')}Connect your bank</a>
+      <a class="btn" href="#settings">${svgIcon('upload')}Import a CSV statement</a>
+      <button class="btn" type="button" data-action="add-tx">${svgIcon('plus')}Add a transaction</button>
+    </div>
+  </div>`;
+}
+
+const PRIORITY_LABELS = { high: 'High priority', medium: 'Medium priority', low: 'Low priority' };
 
 // When the bank last confirmed this account's balance: the sync time when the
 // account was synced in the last run, else its latest stored snapshot / sync day.
+// text: "today 18:26", "yesterday 18:26", "6 Oct, 18:26" (same wording as bankTime).
 function balanceAsOf(a) {
   const hist = S().bank.balanceHistory?.[a.uid];
   const snap = hist?.length ? hist[hist.length - 1].date : null;
@@ -1211,16 +1363,18 @@ function balanceAsOf(a) {
   const d = new Date(iso);
   const hasTime = iso.length > 10 && !iso.endsWith('T00:00:00');
   const today = todayISO();
+  const time = hasTime ? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
   const day = todayISO(d) === today ? 'today' : todayISO(d) === todayISO(new Date(Date.now() - 86400000)) ? 'yesterday'
-    : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-  const time = hasTime ? `, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : '';
-  return { iso, text: `${day}${time}`, stale: Date.now() - d.getTime() > STALE_MS };
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: todayISO(d).slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric' });
+  const text = time ? (day === 'today' || day === 'yesterday' ? `${day} ${time}` : `${day}, ${time}`) : day;
+  return { iso, text, stale: Date.now() - d.getTime() > STALE_MS };
 }
 
-function asOfHTML(a, prefix = 'Bank balance at') {
+// "Updated today 18:26" + an amber "Stale" badge when the bank balance is over a day old (G12).
+function updatedHTML(a) {
   const at = balanceAsOf(a);
   if (!at) return '';
-  return `<span class="asof${at.stale ? ' stale' : ''}" title="${esc(new Date(at.iso).toLocaleString('en-GB'))}">${esc(prefix)} ${esc(at.text)}${at.stale ? ' (over a day old)' : ''}</span>`;
+  return `<span class="updated" title="${esc(new Date(at.iso).toLocaleString('en-GB'))}">${svgIcon('clock', { size: 14 })}<span>Updated ${esc(at.text)}</span>${at.stale ? '<span class="badge warning">Stale</span>' : ''}</span>`;
 }
 
 const fmtIn = (n, currency, opts = {}) => (!currency || currency === 'RON' ? formatRON(n, opts)
@@ -1229,52 +1383,65 @@ const fmtIn = (n, currency, opts = {}) => (!currency || currency === 'RON' ? for
 // #transactions link for one account and one period (format agreed with ux-2: proposal.route).
 const accountTxLink = (uid, month) => `#transactions?account=${encodeURIComponent(uid)}&month=${encodeURIComponent(month)}`;
 
-// "Matches the bank ✓" or the difference, for the account's latest two balances.
+// "Matches the bank" or the difference, for the account's latest two balances (one compact line).
 function reconcileHTML(a) {
   const r = reconcile(S(), a.uid, { accountOf: (t) => L().accountOf(t) });
   if (!r) return '';
   const month = keyOf(r.fromDay) === keyOf(r.toDay) ? keyOf(r.toDay) : 'all';
-  const span = `${fmtDate(r.fromDay, { day: 'numeric', month: 'short' })} → ${fmtDate(r.toDay, { day: 'numeric', month: 'short' })}`;
+  const span = `${fmtDate(r.fromDay, { day: 'numeric', month: 'short' })} – ${fmtDate(r.toDay, { day: 'numeric', month: 'short' })}`;
   const currency = String(a.balance?.currency || a.currency || 'RON').toUpperCase();
   const tip = `Bank balance ${span}, explained by ${r.txCount} transaction${r.txCount === 1 ? '' : 's'} in the app`;
-  if (r.ok) return `<a class="recon ok" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">Matches the bank ✓ <span class="recon-span">${esc(span)}</span></a>`;
-  return `<a class="recon off" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">Difference ${esc(fmtIn(r.diff, currency, { sign: true }))} — possibly missing or duplicate transactions →<span class="recon-span">${esc(span)} · may also be card payments the bank hasn't booked yet</span></a>`;
+  if (r.ok) return `<a class="recon ok" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">${svgIcon('check', { size: 16 })}<span>Matches the bank <span class="recon-span">· ${esc(span)}</span></span></a>`;
+  return `<a class="recon off" href="${accountTxLink(a.uid, month)}" title="${esc(tip)}">${svgIcon('alert', { size: 16 })}<span>Differs from the bank by <span class="num">${esc(fmtIn(r.diff, currency, { sign: true }))}</span>
+    <span class="recon-span">${esc(span)} · missing or duplicate transactions, or card payments not booked yet</span></span>${svgIcon('chevron-right', { size: 16 })}</a>`;
 }
 
-// Main card. For the period you're in, the real balance of your MAIN current
+// Main card (O2). For the period you're in, the real balance of your MAIN current
 // account is the truth ("what I have until payday"); past periods show what was left over.
-function heroCard({ s, key, isCurrent, used, daysLeft }) {
+function heroCard({ s, isCurrent, used, daysLeft }) {
   const main = L().mainAccount;
   const v = main?.balance ? accountView(main) : null;
-  const until = P().payday ? 'until payday' : 'until the end of the month';
+  const until = P().payday ? 'payday' : 'month end';
   const pct = Math.round(used * 100);
-  const meter = `<div class="meter" role="img" aria-label="${s.income ? `${pct}% of income spent` : 'No income recorded'}"><i style="width:${(used * 100).toFixed(1)}%"></i></div>
-    <span class="meter-label">${s.income ? `${pct}% of income spent${s.saved ? ' or saved' : ''}` : 'No income recorded yet'}</span>`;
+  // The fill carries severity: accent, then amber from 85%, red when everything is used.
+  const level = !s.income ? '' : used >= 1 ? ' critical' : used >= 0.85 ? ' warning' : '';
+  const meterText = s.income ? `${pct}% of income spent${s.saved ? ' or saved' : ''}` : 'No income recorded yet';
+  const meter = `<div class="hero-meter${level}">
+      <div class="meter" role="img" aria-label="${esc(meterText)}"><i style="width:${(used * 100).toFixed(1)}%"></i></div>
+      <span class="meter-label">${esc(meterText)}</span>
+    </div>`;
+  const mini = (label, value, sub = '', cls = '') => `<div class="hero-mini"><span class="hero-mini-label">${label}</span><span class="hero-mini-value num ${cls}">${value}</span>${sub ? `<span class="hero-mini-sub">${sub}</span>` : ''}</div>`;
+  const days = `${daysLeft} day${daysLeft === 1 ? '' : 's'} left`;
+  const net = round2(s.income - s.spend);
   if (isCurrent && v?.known) {
     const balance = v.cash;
     const perDay = balance > 0 && daysLeft ? balance / daysLeft : 0;
-    return `<div class="card balance">
-      <span class="stat-label">In your current account · ${esc(accountName(main))}</span>
-      <span class="stat-value big num">${formatRON(balance)}</span>
-      ${asOfHTML(main)}
+    return `<div class="card hero-card">
+      <span class="hero-label">${svgIcon('wallet', { size: 18 })}<span>${esc(accountName(main))}</span></span>
+      ${bigAmount(balance)}
+      ${updatedHTML(main)}
       ${meter}
-      <span class="stat-sub">${perDay ? `≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} day${daysLeft === 1 ? '' : 's'} ${until}` : `${daysLeft} days ${until}`} · this period so far: ${formatRON(s.income - s.spend, { sign: true })} (in ${formatRON(s.income, { short: true })}, out ${formatRON(s.spend, { short: true })})</span>
+      <div class="hero-minis">
+        ${mini(`Per day until ${until}`, perDay ? `≈ ${formatRON(perDay, { short: true })}` : formatRON(0, { short: true }), days)}
+        ${mini('This period', formatRON(net, { sign: true, short: true }), 'Money in − out', net < 0 ? 'neg' : '')}
+      </div>
       ${reconcileHTML(main)}
     </div>`;
   }
   const perDay = isCurrent && s.left > 0 && daysLeft ? s.left / daysLeft : 0;
   const foreign = isCurrent && v?.excludedForeign
-    ? `<span class="asof">${esc(accountName(main))} shows ${esc(fmtIn(v.amount, v.currency))} — in another currency, so it isn't used here.</span>` : '';
-  return `<div class="card balance">
-    <span class="stat-label">${isCurrent ? `Left to spend ${until}` : (P().payday ? 'Left over that pay period' : 'Left over that month')}</span>
-    <span class="stat-value big num">${formatRON(s.left)}</span>
+    ? `<span class="hero-note">${esc(accountName(main))} shows ${esc(fmtIn(v.amount, v.currency))}: another currency, so it isn’t used here.</span>` : '';
+  return `<div class="card hero-card">
+    <span class="hero-label">${svgIcon('wallet', { size: 18 })}<span>${isCurrent ? `Left to spend until ${until}` : (P().payday ? 'Left over that pay period' : 'Left over that month')}</span></span>
+    ${bigAmount(s.left)}
+    <span class="hero-note">${L().mode === 'cashflow' ? 'Money in − money out of the current account' : 'All accounts added up'}</span>
     ${foreign}
     ${meter}
-    <span class="stat-sub">${perDay ? `≈ ${formatRON(perDay, { short: true })}/day for ${daysLeft} days · ` : ''}${L().mode === 'cashflow' ? 'money in − money out of the current account' : 'all accounts'}</span>
+    ${isCurrent ? `<div class="hero-minis">${mini(`Per day until ${until}`, perDay ? `≈ ${formatRON(perDay, { short: true })}` : formatRON(0, { short: true }), days)}</div>` : ''}
   </div>`;
 }
 
-// Credit card: what was spent on it, what was paid back, what's still owed,
+// Credit card (O6): what was spent on it, what was paid back, what's still owed,
 // and when it's cleared at the current pace (shared/planner.js cardPeriod / cardPace).
 function creditCardPanel(key) {
   const cards = linkedAccounts().filter((a) => accountView(a).kind === 'credit');
@@ -1289,25 +1456,35 @@ function creditCardPanel(key) {
   const past = [1, 2, 3].map((i) => periodOf(addMonths(P().current(), -i)));
   const covered = past.filter((p) => (firstKey ? p.key >= firstKey : p.count > 0));
   const { periods, avgSpent, avgRepaid, net } = cardPace(past, { firstKey });
-  const span = `${periods} period${periods === 1 ? '' : 's'}`;
+  const span = periods === 1 ? 'last period' : `last ${periods} periods`;
   const top = Object.entries(now.cats).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 4);
   const in12 = owed / 12 + avgSpent;
-  let pace;
-  if (!owed) pace = 'Nothing owed 🎉';
-  else if (!covered.length) pace = 'Not enough card history yet to work out your repayment pace.';
-  else if (net > 1 && owed / net <= 120) pace = `At your pace of the last ${span} (repaid ${formatRON(avgRepaid, { short: true })}, spent ${formatRON(avgSpent, { short: true })} on the card a period), it's cleared in about <b>${Math.ceil(owed / net)} months</b>.`;
-  else pace = `In the last ${span} you spent ${formatRON(avgSpent, { short: true })} a period on the card and repaid ${formatRON(avgRepaid, { short: true })} — <b>the debt isn't going down</b>.`;
+  const short = (n) => formatRON(n, { short: true });
   const digits = [...L().byDigits].filter(([, a]) => cards.some((c) => c.uid === a.uid)).map(([x]) => x);
   const asOf = cards.length === 1 ? balanceAsOf(cards[0]) : null;
-  return `<div class="card card-panel">
-    <div class="card-head">${cardTitle('card', 'Credit card', { after: digits.length ? ` <span class="muted num" style="font-weight:400">**** ${esc(digits.join(', '))}</span>` : '' })}<a class="link" href="${accountTxLink(cards[0].uid, key)}">Card transactions →</a></div>
-    <div class="kpis">
-      <div class="kpi"><span class="stat-label">Owed${asOf ? ` at ${esc(asOf.text)}` : ' now'}${asOf?.stale ? ' <span class="asof stale">· old</span>' : ''}</span><span class="kpi-value num">${formatRON(owed)}</span></div>
-      <div class="kpi"><span class="stat-label">Spent on the card</span><span class="kpi-value num">${formatRON(now.spent)}</span><span class="stat-sub">this period${now.refunded ? ` · after ${formatRON(now.refunded, { short: true })} refunded` : ''}</span></div>
-      <div class="kpi"><span class="stat-label">Paid back</span><span class="kpi-value num pos">${formatRON(now.repaid)}</span><span class="stat-sub">this period</span></div>
+  // Label and value share the top line (the value drops under the label only when it can't fit); the note goes below.
+  const kpi = (label, value, sub = '', cls = '') => `<div class="cc-kpi"><span class="cc-kpi-top"><span class="cc-kpi-label">${label}</span><span class="cc-kpi-value num ${cls}">${value}</span></span>${sub ? `<span class="cc-kpi-sub">${sub}</span>` : ''}</div>`;
+  const row = (label, value, sub = '', cls = '') => `<div class="row cc-row"><span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${label}</span><span class="ov-row-value ${cls}">${value}</span></span>${sub ? `<span class="sub">${sub}</span>` : ''}</span></div>`;
+  let pace;
+  if (!owed) pace = `<p class="cc-note good">${svgIcon('check', { size: 16 })}Nothing owed on the card.</p>`;
+  else if (!covered.length) pace = '<p class="cc-note">Not enough card history yet to work out your repayment pace.</p>';
+  else {
+    const clears = net > 1 && owed / net <= 120;
+    pace = `<div class="list cc-pace">
+      ${row('At your pace', clears ? `Debt-free in ~${Math.ceil(owed / net)} months` : 'Not going down', `Repaid ${short(avgRepaid)}, spent ${short(avgSpent)} a period (${span})`, clears ? '' : 'warn')}
+      ${row('Debt-free in 12 months', `<span class="num">${short(in12)}</span> a month`, `Repay this and keep card spending at ${short(avgSpent)} or less`)}
+    </div>`;
+  }
+  return `<div class="card card-panel cc-panel">
+    <div class="card-head">${cardTitle('card', 'Credit card', { after: digits.length ? ` <span class="cc-digits num">··${esc(digits.join(', ··'))}</span>` : '' })}<a class="link" href="${accountTxLink(cards[0].uid, key)}">Transactions${svgIcon('chevron-right', { size: 16 })}</a></div>
+    <div class="cc-kpis">
+      ${kpi('Owed', formatRON(owed), asOf ? `Updated ${esc(asOf.text)}${asOf.stale ? ' <span class="badge warning">Stale</span>' : ''}` : 'Now')}
+      ${kpi('Spent this period', formatRON(now.spent), now.refunded ? `After ${short(now.refunded)} refunded` : '')}
+      ${kpi('Paid back this period', formatRON(now.repaid), '', now.repaid > 0 ? 'pos' : '')}
     </div>
-    ${top.length ? `<div class="chips">${top.map(([c, v]) => `<span class="chip"><span aria-hidden="true">${esc(icon(c))}</span> ${esc(c)} <b class="num">${formatRON(v, { short: true })}</b></span>`).join('')}</div>` : ''}
-    <p class="small muted" style="margin:12px 0 0">${pace}${owed && covered.length ? ` To be debt-free in 12 months: repay about <b>${formatRON(in12, { short: true })}</b> a month and keep card spending around ${formatRON(avgSpent, { short: true })} (or less).` : ''}</p>
+    ${pace}
+    ${top.length ? `<span class="section-label cc-top-label">Top on the card this period (RON)</span>
+      <div class="chips cc-chips">${top.map(([c, v]) => `<span class="chip"><span class="chip-emoji" aria-hidden="true">${esc(icon(c))}</span>${esc(c)} <b class="num">${short(v).replace(/\s*RON$/u, '')}</b></span>`).join('')}</div>` : ''}
   </div>`;
 }
 
@@ -1319,37 +1496,53 @@ function accountsStrip() {
   const t = bankTotals(accs);
   const sum = (kind) => rows.filter((x) => x.v.kind === kind).reduce((n, x) => n + x.v.cash, 0);
   const has = (kind) => rows.some((x) => x.v.kind === kind);
-  const cell = (label, value, cls = '', sub = '') => `<div class="strip-cell"><span class="stat-label">${label}</span><span class="strip-value num ${cls}">${value}</span>${sub ? `<span class="stat-sub">${sub}</span>` : ''}</div>`;
-  const n = (kind) => rows.filter((x) => x.v.kind === kind && x.v.known).length;
-  const excluded = t.excludedForeign?.length
-    ? `<p class="small muted strip-note">Not included: ${t.excludedForeign.map((x) => `${esc(fmtIn(x.amount, x.currency))} (${esc(x.name)})`).join(', ')} — no RON value yet.</p>` : '';
+  const of = (kind) => rows.filter((x) => x.v.kind === kind && x.v.known);
+  // One account of a kind: its nickname or last digits ("··1021"); several: how many.
+  const who = (kind) => {
+    const list = of(kind);
+    if (list.length > 1) return `${list.length} accounts`;
+    if (!list.length) return '';
+    const a = list[0].a;
+    return String(a.nickname || '').trim() || (accountDigits(a) ? `··${accountDigits(a)}` : '');
+  };
+  const cell = (ico, label, value, cls = '', sub = '') => `<div class="strip-cell"><span class="strip-label">${ico ? svgIcon(ico, { size: 16 }) : ''}${label}</span><span class="strip-value num ${cls}">${value}</span>${sub ? `<span class="strip-sub">${esc(sub)}</span>` : ''}</div>`;
+  const foreign = rows.filter((x) => x.v.excludedForeign);
+  const excluded = foreign.length
+    ? `<p class="caption strip-note">Not included: ${foreign.map((x) => `${esc(fmtIn(x.v.amount, x.v.currency))} (${esc(accountName(x.a, { short: true }))})`).join(', ')}, no RON value yet.</p>` : '';
   return `<div class="card accounts-strip" aria-label="Bank accounts">
     <div class="strip-cells">
-      ${cell('Current', formatRON(sum('current')), '', n('current') > 1 ? `${n('current')} accounts` : '')}
-      ${cell('Savings', has('savings') ? formatRON(sum('savings')) : '—', '', has('savings') ? '' : 'none linked')}
-      ${cell('Card owed', has('credit') ? (t.owed ? `−${formatRON(t.owed)}` : formatRON(0)) : '—', t.owed ? 'neg' : '', has('credit') ? '' : 'no card linked')}
-      ${cell('Net', formatRON(t.net, { sign: true }), t.net < 0 ? 'neg' : '', 'cash − card debt')}
+      ${cell('wallet', 'Current', formatRON(sum('current')), '', who('current'))}
+      ${cell('savings', 'Savings', has('savings') ? formatRON(sum('savings')) : '—', '', has('savings') ? who('savings') : 'None linked')}
+      ${cell('card', 'Card owed', has('credit') ? (t.owed ? `−${formatRON(t.owed)}` : formatRON(0)) : '—', t.owed ? 'neg' : '', has('credit') ? who('credit') : 'No card linked')}
+      ${cell('', 'Net', formatRON(t.net, { sign: true }), t.net < 0 ? 'neg' : '', 'Cash − card debt')}
     </div>
     ${excluded}
   </div>`;
 }
 
-// Goals page: what the goals hold vs what's really in the savings account.
+// Goals page (GO3): what the goals hold vs what's really in the savings account.
 function goalsVsSavings(goals) {
   const active = goals.filter((g) => !g.archived);
   if (!active.length) return '';
   const total = round2(active.reduce((n, g) => n + (g.saved || 0), 0));
   const savings = linkedAccounts().filter((a) => a.balance && accountView(a).kind === 'savings');
-  if (!savings.length) return `<p class="small muted goals-total">Goals total <b class="num">${formatRON(total)}</b> · no savings account linked to compare with.</p>`;
+  const stat = (label, value, sub = '') => `<div class="gs-stat"><span class="gs-label">${label}</span><span class="gs-value num">${value}</span>${sub ? `<span class="caption">${sub}</span>` : ''}</div>`;
+  const goalsStat = stat('In your goals', formatRON(total), `${active.length} goal${active.length === 1 ? '' : 's'}`);
+  if (!savings.length) {
+    return `<div class="card goals-summary"><div class="gs-stats">${goalsStat}${stat('Savings account', '—', 'None linked to compare with')}</div></div>`;
+  }
   const bal = round2(savings.reduce((n, a) => n + accountView(a).cash, 0));
   const short = round2(total - bal);
-  return `<div class="${short > 0.01 ? 'banner goals-total warn' : 'small muted goals-total'}">${short > 0.01 ? '<span class="banner-ico" aria-hidden="true">⚠️</span>' : ''}<div>
-    Goals total <b class="num">${formatRON(total)}</b> · Savings account <b class="num">${formatRON(bal)}</b>
-    ${short > 0.01 ? `<div class="small muted">Your goals count ${formatRON(short)} more than the savings account holds. Move that money to savings, or withdraw it from a goal so the goals match reality.</div>` : ''}
-  </div></div>`;
+  return `<div class="card goals-summary">
+    <div class="gs-stats">${goalsStat}${stat(savings.length === 1 ? esc(accountName(savings[0])) : 'Savings accounts', formatRON(bal), 'Bank balance')}</div>
+    ${short > 0.01
+    ? `<div class="banner warn gs-alert">${iconTile('alert', { tone: 'warning' })}<div><b>Your goals count ${formatRON(short)} more than the savings account holds</b>
+        <div class="small muted">Move that money to savings, or withdraw it from a goal so the goals match reality.</div></div></div>`
+    : `<p class="gs-ok">${svgIcon('check', { size: 16 })}The savings account covers all your goals.</p>`}
+  </div>`;
 }
 
-// Plan header: which dates each account has transactions for.
+// Plan header (P4): which dates each account has transactions for, one row per account, with years.
 function dataCoverage() {
   const by = new Map();
   for (const t of S().transactions) {
@@ -1362,14 +1555,10 @@ function dataCoverage() {
     by.set(k, e);
   }
   if (!by.size) return '';
-  const label = (a) => {
-    if (!a) return 'No account';
-    const kind = accountView(a).kind;
-    return a === L().mainAccount ? 'Current account' : kind === 'credit' ? 'Card' : kind === 'savings' ? 'Savings' : accountName(a);
-  };
-  const d = (iso) => fmtDate(iso, { day: 'numeric', month: 'short', year: iso.slice(0, 4) === todayISO().slice(0, 4) ? undefined : 'numeric' });
-  const parts = [...by.values()].sort((x, y) => x.first.localeCompare(y.first)).map((e) => `<span>${esc(label(e.a))}: ${esc(d(e.first))} – ${esc(d(e.last))}</span>`);
-  return `<p class="coverage small muted"><b>Data coverage</b> · ${parts.join(' · ')}</p>`;
+  const rows = [...by.values()].sort((x, y) => x.first.localeCompare(y.first)).map((e) => `<div class="row">
+      <span><span class="row-label">${esc(e.a ? accountName(e.a) : 'No account')}</span><span class="sub pl-dates">${esc(fmtDate(e.first))} – ${esc(fmtDate(e.last))}</span></span>
+    </div>`);
+  return `<div class="pc-block pl-coverage"><span class="section-label">Data the plan learns from</span><div class="list">${rows.join('')}</div></div>`;
 }
 
 // First counted transaction date: periods starting before it are only partly covered.
@@ -1383,18 +1572,34 @@ function unassignedBanner() {
   if (accounts.length < 2) return '';
   const n = S().transactions.filter((t) => t.source === 'import' && !t.accountId).length;
   if (!n) return '';
-  return `<div class="banner" style="margin-top:12px"><span class="banner-ico" aria-hidden="true">⚠️</span><div class="small"><b>${n} imported transactions don't know which account they're from</b>, so card purchases may be counted as current-account spending. For exact totals: Settings → Import → <i>Delete imported</i>, then import each statement again and pick its account.</div></div>`;
+  return `<div class="banner warn ov-banner">${iconTile('alert', { tone: 'warning' })}<div><b>${n} imported transactions don’t know their account</b>
+    <div class="small muted">Card purchases may be counted as current-account spending. For exact totals, delete the imported transactions in Settings, then import each statement again and pick its account.</div></div></div>`;
 }
 
 function debtBanner() {
   const { owed } = bankTotals(S().bank.connections.flatMap((c) => c.accounts));
   if (!owed) return '';
   const hasGoal = S().goals.some((g) => /card/i.test(g.name));
-  return `<div class="banner"><span class="banner-ico" aria-hidden="true">💳</span><div style="flex:1">
-    <b>You owe ${formatRON(owed)} on your credit card.</b>
+  return `<div class="banner callout">${iconTile('card', { tone: 'warning' })}<div>
+    <b>You owe ${formatRON(owed)} on your credit card</b>
     <div class="muted small">Card interest is usually much higher than anything savings earn, so paying it off first is the best “saving” there is. Repay the full statement balance before the grace period ends to pay no interest at all.</div>
-    ${hasGoal ? '' : '<button class="btn small primary" type="button" data-action="debt-goal" style="margin-top:8px">Make paying it off a goal</button>'}
+    ${hasGoal ? '' : '<button class="btn small primary" type="button" data-action="debt-goal">Make paying it off a goal</button>'}
   </div></div>`;
+}
+
+// Plan tips (P1): a tinted icon per level, the first clause bold, the rest muted.
+const TIP_LOOK = { info: ['bulb', 'accent'], warning: ['alert', 'warning'], critical: ['alert', 'critical'], good: ['check', 'good'] };
+function tipRow(t) {
+  const [ico, tone] = TIP_LOOK[t.level] || TIP_LOOK.info;
+  const text = String(t.text || '').replace(/^\p{Extended_Pictographic}[️‍\p{Extended_Pictographic}]*\s*/u, '');
+  // "Shopping: you spend …" → lead "Shopping"; otherwise everything up to the last sentence is the lead
+  // ("… total ~1.240 RON/month (names). | Cancel any you no longer use."), so merchant names never split it.
+  const colon = text.indexOf(': ');
+  const stop = text.lastIndexOf('. ', text.length - 2);
+  let lead = text; let rest = '';
+  if (colon > 0 && colon <= 40) { lead = text.slice(0, colon); rest = text.slice(colon + 2); } else if (stop > 0) { lead = text.slice(0, stop + 1); rest = text.slice(stop + 2); }
+  rest = rest.charAt(0).toUpperCase() + rest.slice(1);
+  return `<li class="row pl-tip">${iconTile(ico, { tone })}<span class="pl-tip-text"><b>${esc(lead)}</b>${rest ? ` <span class="muted">${esc(rest)}</span>` : ''}</span></li>`;
 }
 
 function openAccountModal(accUid) {

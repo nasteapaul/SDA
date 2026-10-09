@@ -2,32 +2,42 @@
 // Single series → one colour (slot 1); text always uses ink tokens.
 
 import { formatRON, monthLabel } from './shared/money.js';
+import { icon, iconTile } from './icons.js';
 
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 /**
- * Horizontal bars of spending by category, sorted descending.
- * rows: [{ name, icon, value, count, limit? }]
+ * Spending by category (O5): one row per category, the name and amount on top and a
+ * full-width bar under them, so long names wrap instead of being cut.
+ * rows: [{ name, icon, value, count, limit? }] (sorted by the caller)
  */
-export function categoryBars(rows, total) {
-  if (!rows.length) return '<div class="empty"><b>No spending yet</b>Add an expense or link your bank.</div>';
+export function categoryBars(rows, total, { split = null } = {}) {
+  if (!rows.length) return `<div class="empty">${iconTile('pie', { tone: 'neutral' })}<b>No spending yet</b><p>Each category shows up here once money goes out.</p></div>`;
   const max = Math.max(...rows.map((r) => Math.max(r.value, r.limit || 0)));
-  return `<div class="bars" role="list">${rows.map((r) => {
+  const items = rows.map((r) => {
     const pct = max ? (r.value / max) * 100 : 0;
     const share = total ? Math.round((r.value / total) * 100) : 0;
     const over = r.limit && r.value > r.limit;
     const tip = `<b>${esc(r.name)}</b><br>${formatRON(r.value)} · ${share}% of spending<br>${r.count} transaction${r.count === 1 ? '' : 's'}${r.limit ? `<br>Budget ${formatRON(r.limit, { short: true })}${over ? ` — over by ${formatRON(r.value - r.limit, { short: true })}` : ` — ${formatRON(r.limit - r.value, { short: true })} left`}` : ''}`;
-    return `<button class="bar-row" role="listitem" data-category="${esc(r.name)}" data-tip="${esc(tip)}" aria-label="${esc(`${r.name}: ${formatRON(r.value)}, ${share}% of spending${r.limit ? `, budget ${formatRON(r.limit)}` : ''}`)}">
-      <span class="bar-name"><span aria-hidden="true">${esc(r.icon)}</span><span>${esc(r.name)}</span></span>
-      <span class="bar-track">
-        <span class="bar-fill" style="width:${pct.toFixed(2)}%"></span>
-        ${r.limit ? `<span class="bar-limit" style="left:calc(${((r.limit / max) * 100).toFixed(2)}% - 1px)" title="Budget"></span>` : ''}
+    const caption = over
+      ? `<span class="bar-over">${icon('alert', { size: 14 })}${formatRON(r.value - r.limit, { short: true })} over the ${formatRON(r.limit, { short: true })} budget</span>`
+      : r.limit ? `${formatRON(r.limit - r.value, { short: true })} left of ${formatRON(r.limit, { short: true })}` : `${share}% of spending`;
+    return `<button type="button" class="bar-row" role="listitem" data-category="${esc(r.name)}" data-tip="${esc(tip)}" aria-label="${esc(`${r.name}: ${formatRON(r.value)}, ${share}% of spending${r.limit ? `, budget ${formatRON(r.limit)}` : ''}`)}">
+      <span class="ico-tile neutral bar-ico" aria-hidden="true">${esc(r.icon)}</span>
+      <span class="bar-body">
+        <span class="bar-top"><span class="bar-name">${esc(r.name)}</span><span class="bar-value num">${formatRON(r.value, { short: true })}</span></span>
+        <span class="bar-track">
+          <span class="bar-fill${over ? ' over' : ''}" style="width:${pct.toFixed(2)}%"></span>
+          ${r.limit ? `<span class="bar-limit" style="left:calc(${((r.limit / max) * 100).toFixed(2)}% - 1px)" title="Budget"></span>` : ''}
+        </span>
+        <span class="bar-cap">${caption}</span>
       </span>
-      <span class="bar-value num">${formatRON(r.value, { short: true })}<small>${over ? `<span class="bar-over">▲ over budget</span>` : r.limit ? `of ${formatRON(r.limit, { short: true })}` : `${share}%`}</small></span>
     </button>`;
-  }).join('')}</div>`;
+  });
+  // split(items): the caller may show the first rows and minimize the rest (each part wrapped in .bars).
+  return split ? split(items) : `<div class="bars" role="list">${items.join('')}</div>`;
 }
 
 /**
@@ -35,23 +45,28 @@ export function categoryBars(rows, total) {
  * months: [{ key, income, spend, noData?, partial? }]
  * partial: the data starts part-way through that month — its bars are
  * hatched and lighter, and its label gets an asterisk.
+ * No money in or out in any month: an empty state instead of an empty grid (G11).
  */
 export function trendChart(months) {
-  const W = 560; const H = 200; const padL = 44; const padB = 24; const padT = 8;
+  if (!months.some((m) => m.income > 0 || m.spend > 0)) {
+    return `<div class="empty chart-empty">${iconTile('bars', { tone: 'neutral' })}<b>No history yet</b><p>Income and spending for each month show up here once transactions come in.</p></div>`;
+  }
+  const W = 560; const H = 210; const padL = 44; const padB = 28; const padT = 10;
   const innerW = W - padL; const innerH = H - padB - padT;
-  const max = Math.max(1, ...months.flatMap((m) => [m.income, m.spend]));
-  const step = niceStep(max / 4);
-  const top = Math.ceil(max / step) * step;
+  const max = Math.max(...months.flatMap((m) => [m.income, m.spend]));
+  // Clean ticks: 0 and 3–4 round steps (never fractions of a leu, never repeated labels).
+  const step = Math.max(1, niceStep(max / 4));
+  const top = Math.max(step, Math.ceil(max / step) * step);
   const y = (v) => padT + innerH - (v / top) * innerH;
   const groupW = innerW / months.length;
-  const barW = Math.min(22, (groupW - 14) / 2);
+  const barW = Math.min(22, (groupW - 16) / 2);
 
   let svg = months.some((m) => m.partial)
     ? `<defs>${[1, 2].map((n) => `<pattern id="hatch-${n}" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--series-${n})" fill-opacity=".28"/><rect width="2.5" height="6" fill="var(--series-${n})"/></pattern>`).join('')}</defs>`
     : '';
   for (let v = 0; v <= top + 0.001; v += step) {
     svg += `<line class="${v === 0 ? 'base-line' : 'grid-line'}" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/>`;
-    svg += `<text x="${padL - 8}" y="${y(v) + 4}" text-anchor="end">${shortNum(v)}</text>`;
+    svg += `<text class="tick" x="${padL - 8}" y="${y(v) + 4}" text-anchor="end">${shortNum(v)}</text>`;
   }
   months.forEach((m, i) => {
     const cx = padL + groupW * i + groupW / 2;
@@ -62,8 +77,8 @@ export function trendChart(months) {
       const h = Math.max(0, y(0) - y(v));
       if (h > 0) svg += `<path d="${roundedTop(x, y(v), barW, h, Math.min(4, h))}" fill="${color}"/>`;
     }
-    svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${esc(monthLabel(m.key, { month: 'short' }))}${m.partial ? '*' : ''}</text>`;
-    if (m.noData) svg += `<text x="${cx}" y="${y(0) - 8}" text-anchor="middle">no data</text>`;
+    svg += `<text class="month" x="${cx}" y="${H - 8}" text-anchor="middle">${esc(monthLabel(m.key, { month: 'short' }))}${m.partial ? '*' : ''}</text>`;
+    if (m.noData) svg += `<text class="nodata" x="${cx}" y="${y(0) - 8}" text-anchor="middle">no data</text>`;
     const net = m.income - m.spend;
     const tip = `<b>${esc(monthLabel(m.key, { month: 'long', year: 'numeric' }))}</b><br>Income ${formatRON(m.income)}<br>Spending ${formatRON(m.spend)}<br>Net ${formatRON(net, { sign: true })}${m.partial ? '<br><i>* Partial: your data starts part-way through this month</i>' : ''}`;
     svg += `<rect class="hit" x="${padL + groupW * i}" y="${padT}" width="${groupW}" height="${innerH}" data-tip="${esc(tip)}" tabindex="0" aria-label="${esc(`${monthLabel(m.key, { month: 'long', year: 'numeric' })}: income ${formatRON(m.income)}, spending ${formatRON(m.spend)}${m.partial ? ' (partial month: data starts part-way through)' : ''}`)}"/>`;

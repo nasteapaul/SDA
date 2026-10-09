@@ -332,10 +332,13 @@ function buildTips(analysis, { surplus, cuts, planGoals, totalRequired, monthlyS
     tips.push({ level: 'critical', text: `You currently spend about ${lei(-surplus)} more than you earn each month. The plan below closes that gap first.` });
   }
   for (const c of [...cuts].sort((a, b) => b.cut - a.cut).slice(0, 4)) {
+    // Quote the same rounded limit as the suggested budgets (plan.budgets), so the numbers on screen agree.
+    const limit = roundUp(c.limit);
+    if (c.current - limit < 1) continue; // rounding ate the cut: the budget already allows today's spending
     let why = '';
     if (c.smallPerMonth >= 6) why = ` Most of it is ${Math.round(c.smallPerMonth)} small purchases (${lei(c.smallTotalPerMonth)}) a month — skipping a few of those does the job.`;
     else if (c.trend && c.trend > 0.2) why = ` It went up ${Math.round(c.trend * 100)}% last month.`;
-    tips.push({ level: 'info', text: `${c.icon} ${c.name}: you spend ~${lei(c.current)}/month. Keep it under ${lei(c.limit)} to free ${lei(c.cut)}.${why}` });
+    tips.push({ level: 'info', text: `${c.icon} ${c.name}: you spend ~${lei(c.current)}/month. Keep it under ${lei(limit)} to free ${lei(c.current - limit)}.${why}` });
   }
   const rising = analysis.categories.filter((c) => c.trend && c.trend > 0.25 && c.lastMonth > 100 && !cuts.some((x) => x.name === c.name));
   for (const c of rising.slice(0, 2)) {
