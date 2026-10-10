@@ -17,7 +17,13 @@ const WINDOW_DAYS = 60;
 const DAY = 86400000;
 
 const textOf = (t) => `${t.description || ''} ${t.note || ''}`;
-const keyOf = (t) => merchantKey(textOf(t).replace(new RegExp(REFUND_RE.source, 'gi'), ' '));
+const REFUND_G = new RegExp(REFUND_RE.source, 'gi');
+const keyMemo = new WeakMap();
+const keyOf = (t) => {
+  let k = keyMemo.get(t);
+  if (k === undefined) { REFUND_G.lastIndex = 0; k = merchantKey(textOf(t).replace(REFUND_G, ' ')); keyMemo.set(t, k); }
+  return k;
+};
 const daysBetween = (a, b) => (Date.parse(b) - Date.parse(a)) / DAY;
 
 function excluded(t, roles) {
@@ -41,7 +47,15 @@ export function makeRefunds(state) {
 
   // The purchase a refund belongs to: same merchant (and account, when both
   // are known), up to 60 days before; one at least as big when there is one.
-  function purchaseOf(t, { needCover = false } = {}) {
+  const purchaseMemo = [new WeakMap(), new WeakMap()];
+  function purchaseOf(t, opts = {}) {
+    const memo = purchaseMemo[opts.needCover ? 1 : 0];
+    if (memo.has(t)) return memo.get(t);
+    const p = findPurchase(t, opts);
+    memo.set(t, p);
+    return p;
+  }
+  function findPurchase(t, { needCover = false } = {}) {
     const k = t.date && keyOf(t);
     if (!k || !byMerchant.has(k)) return null;
     const amount = Number(t.amount) || 0;
@@ -54,17 +68,23 @@ export function makeRefunds(state) {
     return covering || (needCover ? null : candidates[0] || null);
   }
 
+  const isRefundMemo = new WeakMap();
   function isRefund(t) {
     if (!t || excluded(t, roles)) return false;
-    if (t.category === 'Refunds' || REFUND_RE.test(textOf(t))) return true;
-    return Boolean(purchaseOf(t, { needCover: true }));
+    if (typeof t === 'object' && isRefundMemo.has(t)) return isRefundMemo.get(t);
+    const r = t.category === 'Refunds' || REFUND_RE.test(textOf(t)) || Boolean(purchaseOf(t, { needCover: true }));
+    if (typeof t === 'object') isRefundMemo.set(t, r);
+    return r;
   }
 
   // Category whose spending the refund lowers.
+  const catMemo = new WeakMap();
   function categoryOf(t) {
+    if (catMemo.has(t)) return catMemo.get(t);
     const p = purchaseOf(t);
-    if (p?.category) return p.category;
-    return t.category && kinds.get(t.category) !== 'income' ? t.category : 'Other';
+    const c = p?.category ? p.category : (t.category && kinds.get(t.category) !== 'income' ? t.category : 'Other');
+    catMemo.set(t, c);
+    return c;
   }
 
   return { isRefund, categoryOf, purchaseOf };

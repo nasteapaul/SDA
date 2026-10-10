@@ -1792,3 +1792,6 @@ a.hero-mini-link .hero-mini-value.neg { color: var(--critical-text); }
   .rp { border: 0; box-shadow: none; padding: 0; }
   body { background: #fff; }
 }
+
+/* prototype: skip layout/paint of off-screen day groups */
+.tx-groups > .tx-group { content-visibility: auto; contain-intrinsic-size: auto 180px; }

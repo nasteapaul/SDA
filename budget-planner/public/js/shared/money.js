@@ -67,9 +67,9 @@ export function monthKey(dateISO) {
 }
 
 export function addMonths(key, n) {
-  const [y, m] = key.split('-').map(Number);
-  const d = new Date(y, m - 1 + n, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const idx = Number(key.slice(0, 4)) * 12 + (Number(key.slice(5, 7)) - 1) + n;
+  const y = Math.floor(idx / 12);
+  return `${y}-${String((idx % 12) + 1).padStart(2, '0')}`;
 }
 
 export function monthLabel(key, opts = { month: 'short', year: '2-digit' }) {

@@ -171,6 +171,17 @@ export function ruleText(t) {
   return normalize(`${t.description || ''} ${t.note || ''}`);
 }
 
+/** Normalised texts of a list of transactions, to test many rules without normalising again for each. */
+export function prepareRuleTexts(txs) {
+  return txs.map((t) => ({ a: ruleText(t), b: keyText(`${t.description || ''} ${t.note || ''}`), t }));
+}
+
+export function ruleMatchesPrepared(rule, p) {
+  if (!rule?.pattern) return false;
+  const re = toRegex(rule.pattern);
+  return re.test(p.a) || re.test(p.b);
+}
+
 export function ruleMatches(rule, t) {
   if (!rule?.pattern) return false;
   const re = toRegex(rule.pattern);

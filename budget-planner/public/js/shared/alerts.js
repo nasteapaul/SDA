@@ -34,14 +34,14 @@ const range = (lo, hi) => (Math.abs(hi - lo) < 0.5 ? formatRON(hi) : `${formatRO
  * [{ id, kind, level: 'info'|'warning'|'critical', title, text, date, link }], most
  * urgent first. Kinds turned off in settings.alerts are left out.
  */
-export function buildAlerts(state, { today = todayISO(), now = Date.now() } = {}) {
+export function buildAlerts(state, { today = todayISO(), now = Date.now(), ledger: givenLedger, periods: givenPeriods, series: givenSeries } = {}) {
   if (!state) return [];
   const on = (kind) => state.settings?.alerts?.[kind] !== false;
   const out = [];
   const add = (a) => { if (on(a.kind)) out.push(a); };
   const live = (state.bank?.connections || []).filter((c) => !c.archived);
-  const periods = makePeriods({ payday: state.settings?.payday, transactions: state.transactions || [], overrides: state.settings?.paydays || {} });
-  const ledger = makeLedger(state);
+  const periods = givenPeriods || makePeriods({ payday: state.settings?.payday, transactions: state.transactions || [], overrides: state.settings?.paydays || {} });
+  const ledger = givenLedger || makeLedger(state);
   const key = periods.current(today);
   const end = periods.end(key);
 
@@ -71,7 +71,7 @@ export function buildAlerts(state, { today = todayISO(), now = Date.now() } = {}
   }
 
   // Bills, subscriptions and renewals (from the payments that repeat).
-  const series = detectSeries(state, { today, accountOf: (t) => ledger.accountOf(t) });
+  const series = givenSeries || detectSeries(state, { today, accountOf: (t) => ledger.accountOf(t) });
   const main = ledger.mainAccount;
   // Only what leaves the current account needs money there (card subscriptions don't).
   const soon = upcoming(series, today, plus(today, BILL_DAYS)).filter((u) => !main || !u.accountId || u.accountId === main.uid);

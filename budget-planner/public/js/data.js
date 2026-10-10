@@ -94,6 +94,11 @@ export class Data extends EventTarget {
       const state = await this.fetch('/api/state');
       this.setOnline(true);
       if (this.outbox.length) return; // let flush() finish first, it refreshes after
+      // Nothing changed on the server and nothing is waiting here: no re-render, no 1 MB localStorage write.
+      if (!this.dirty && this.state && state.updatedAt === this.state.updatedAt
+        && state.bank?.lastSync === this.state.bank?.lastSync && Boolean(state.bank?.syncing) === Boolean(this.state.bank?.syncing)
+        && state.bank?.lastError === this.state.bank?.lastError) return;
+      this.dirty = false;
       this.state = state;
       save(LS_STATE, state);
       this.emit('change');
@@ -106,6 +111,7 @@ export class Data extends EventTarget {
   // Apply a change locally right away, then queue it for the server.
   mutate(op, applyLocally) {
     if (this.state && applyLocally) {
+      this.dirty = true;
       applyLocally(this.state);
       save(LS_STATE, this.state);
       this.emit('change');

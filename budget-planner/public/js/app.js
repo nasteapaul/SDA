@@ -3,7 +3,7 @@ import { esc, categoryBars, trendChart, attachTooltips } from './charts.js';
 import {
   formatRON, parseAmount, round2, todayISO, monthKey, addMonths, monthLabel, daysInMonth, monthsBetween, uid,
 } from './shared/money.js';
-import { SAVINGS_CATEGORY, merchantKey, escapeForRule, isUselessKeyword, ruleMatches } from './shared/categories.js';
+import { SAVINGS_CATEGORY, merchantKey, escapeForRule, isUselessKeyword, ruleMatches, prepareRuleTexts, ruleMatchesPrepared } from './shared/categories.js';
 import { analyzeHistory, buildPlan, goalSaved, INTENSITY, cardPeriod, cardPace } from './shared/planner.js';
 import { reconcile } from './shared/reconcile.js';
 import { csvToTransactions } from './shared/csv.js';
@@ -54,12 +54,16 @@ const S = () => data.state;
 // Budget periods: calendar months, or payday to payday (Settings → Budget month).
 let periodsCache = null;
 let periodsKey = '';
+let pSt = null; let pSet = null; let pUpd = ''; let pLen = -1;
 function P() {
-  const k = `${S().updatedAt}|${S().settings?.payday || ''}|${JSON.stringify(S().settings?.paydays || {})}|${S().transactions.length}`;
+  const s = S();
+  if (periodsCache && s === pSt && s.settings === pSet && s.updatedAt === pUpd && s.transactions.length === pLen) return periodsCache;
+  const k = `${s.updatedAt}|${s.settings?.payday || ''}|${JSON.stringify(s.settings?.paydays || {})}|${s.transactions.length}`;
   if (k !== periodsKey) {
-    periodsCache = makePeriods({ payday: S().settings?.payday, transactions: S().transactions, overrides: S().settings?.paydays || {} });
+    periodsCache = makePeriods({ payday: s.settings?.payday, transactions: s.transactions, overrides: s.settings?.paydays || {} });
     periodsKey = k;
   }
+  pSt = s; pSet = s.settings; pUpd = s.updatedAt; pLen = s.transactions.length;
   return periodsCache;
 }
 
@@ -133,10 +137,16 @@ function currentPlan(goalIds = ui.planGoals) {
   return { analysis, plan: buildPlan(analysis, goals, { today: todayISO(), intensity: S().settings?.planIntensity || 'balanced' }) };
 }
 
-function fmtDate(iso, opts = { day: 'numeric', month: 'short', year: 'numeric' }) {
+const DTF = new Map();
+const DEFAULT_DATE_OPTS = { day: 'numeric', month: 'short', year: 'numeric' };
+function fmtDate(iso, opts = DEFAULT_DATE_OPTS) {
   if (!iso) return '—';
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString('en-GB', opts);
+  const ok = opts === DEFAULT_DATE_OPTS ? 'default' : JSON.stringify(opts);
+  let f = DTF.get(ok);
+  if (!f) { f = { dtf: new Intl.DateTimeFormat('en-GB', opts), out: new Map() }; DTF.set(ok, f); }
+  let hit = f.out.get(iso);
+  if (hit === undefined) { const [y, m, d] = iso.split('-').map(Number); hit = f.dtf.format(new Date(y, m - 1, d)); f.out.set(iso, hit); }
+  return hit;
 }
 
 // ---------------------------------------------------------------- foundation: card titles + date fields
@@ -973,8 +983,9 @@ function categoriesCardHTML() {
 function rulesCardHTML() {
   const rules = S().rules;
   let unused = 0;
+  const prepared = prepareRuleTexts(S().transactions);
   const rows = rules.map((r, i) => {
-    const hits = S().transactions.filter((t) => ruleMatches(r, t));
+    const hits = prepared.filter((p) => ruleMatchesPrepared(r, p)).map((p) => p.t);
     const n = hits.length;
     if (!n) unused += 1;
     const incomeHidden = cat(r.category).role === 'transfer' ? hits.filter((t) => t.type === 'income' && !t.manualCategory).reduce((s, t) => s + t.amount, 0) : 0;
@@ -2210,7 +2221,7 @@ function dataCoverage() {
 
 // First counted transaction date: periods starting before it are only partly covered.
 function isPartialPeriod(k) {
-  const first = S().transactions.reduce((min, t) => (L().effect(t).as && (!min || t.date < min) ? t.date : min), null);
+  const first = D('firstCounted', () => S().transactions.reduce((min, t) => (L().effect(t).as && (!min || t.date < min) ? t.date : min), null));
   return Boolean(first && keyOf(first) === k && P().start(k) < first);
 }
 
@@ -2436,7 +2447,7 @@ function dismissAlert(id) {
   const ids = [...dismissedAlerts(), id].slice(-300);
   try { localStorage.setItem(LS_DISMISSED, JSON.stringify(ids)); } catch { /* storage blocked: it comes back next time */ }
 }
-const currentAlerts = () => D('alerts', () => buildAlerts(S(), { today: todayISO(), now: Date.now() }));
+const currentAlerts = () => D('alerts', () => buildAlerts(S(), { today: todayISO(), now: Date.now(), ledger: L(), periods: P(), series: allSeries() }));
 function alertsCard() {
   const hidden = dismissedAlerts();
   const list = currentAlerts().filter((a) => !hidden.has(a.id));
@@ -2764,13 +2775,15 @@ async function loadBanks() {
 async function syncBank(force = true) {
   if (!S()?.bank?.connections?.length) return;
   if (force) { S().bank.syncing = true; render(); }
+  let fetched = true;
   try {
     const r = await data.fetch('/api/bank/sync', { method: 'POST', body: { force } });
     if (force) toast(r.skipped ? `Already up to date (${r.skipped})` : `Bank synced — ${r.added} new transaction${r.added === 1 ? '' : 's'}`);
+    fetched = force || !r.skipped; // an automatic sync that was skipped fetched nothing: nothing to download
   } catch (err) {
     if (force) toast(err.message);
   } finally {
-    await data.refresh();
+    if (fetched) await data.refresh();
   }
 }
 
@@ -2958,10 +2971,12 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"][data-action]')) { e.preventDefault(); e.target.click(); }
 });
 
+let searchTimer = 0;
 view.addEventListener('input', (e) => {
   if (e.target.dataset.filter === 'q') {
     ui.tx.q = e.target.value;
-    render();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(render, 180);
   }
 });
 

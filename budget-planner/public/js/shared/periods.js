@@ -57,7 +57,13 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
   // can come early (next month's period already started) or late (this
   // month's — or, for a payday at the end of the month, even last month's —
   // period hasn't started yet), so look at k − 2 … k + 1.
+  const keyMemo = new Map();
   function keyOf(date) {
+    let hit = keyMemo.get(date);
+    if (hit === undefined) { hit = computeKeyOf(date); keyMemo.set(date, hit); }
+    return hit;
+  }
+  function computeKeyOf(date) {
     const k = monthKey(date);
     if (!day) return k;
     for (let i = 1; i >= -2; i -= 1) {
@@ -80,8 +86,12 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
     return Math.round((parse(end(key)).getTime() - parse(start(key)).getTime()) / DAY) + 1;
   }
 
+  const fmtMemo = new Map();
   function fmt(date, opts) {
-    return parse(date).toLocaleDateString('en-GB', opts);
+    const k = `${date}|${JSON.stringify(opts)}`;
+    let hit = fmtMemo.get(k);
+    if (hit === undefined) { hit = parse(date).toLocaleDateString('en-GB', opts); fmtMemo.set(k, hit); }
+    return hit;
   }
 
   return {
