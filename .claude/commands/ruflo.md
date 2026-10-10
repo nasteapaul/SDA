@@ -17,9 +17,10 @@ Run ruflo agents for this request: $ARGUMENTS
 4. `swarm`: first show the user a short list, then stop and wait for their choice:
    - **Top candidates** — the agents (from `.claude/agents/` or the routing table
      in CLAUDE.md) best suited to the task, one per genuinely separate part, each
-     with one line on why and its model.
+     with a few words on why.
    - **2 complementary** — two more agents that would add a different angle
-     (e.g. security, performance, tests, docs), each with one line on what they add.
+     (e.g. security, performance, tests, docs), each with a few words on what they add.
+   Keep the whole list compact: one short line per agent.
    The user replies with which to run (e.g. "top", "all", or names). Then start
    the chosen agents. Give each a disjoint scope (its own files or question), the same
    context pack as prompt prefix, and the model for its role (`haiku` search,
@@ -29,12 +30,13 @@ Run ruflo agents for this request: $ARGUMENTS
    duplicates and rank by priority.
 5. Agents only read and analyse unless the task explicitly asks for changes; when
    it does, one agent per file scope, then run `cd budget-planner && npm test`.
-6. Reply in the user's language with the result and which agents were used.
+6. Quiet mode (see CLAUDE.md): run agents in the background, no progress text;
+   final reply in the user's language, result only, as short as possible.
 
 ## Auto mode — `/ruflo auto <task>`
 
-Pick the agents and models from the task's complexity. Before starting, state the
-chosen tier, agents and model of each in one line, then go on without waiting.
+Pick the agents and models from the task's complexity and start without
+announcing the choice.
 
 | Tier | When | Agents (model) |
 |------|------|----------------|
