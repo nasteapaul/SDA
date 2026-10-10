@@ -14,8 +14,14 @@ Run ruflo agents for this request: $ARGUMENTS
 3. Single agent: start one subagent whose prompt is the context pack, then the
    agent file's role, rules and output format (skip examples, memory/MCP sections
    and `npx claude-flow …` hook lines), then the task and the exact paths to look at.
-4. `swarm`: pick one agent per genuinely separate part of the task (routing table
-   in CLAUDE.md). Give each a disjoint scope (its own files or question), the same
+4. `swarm`: first show the user a short list, then stop and wait for their choice:
+   - **Top candidates** — the agents (from `.claude/agents/` or the routing table
+     in CLAUDE.md) best suited to the task, one per genuinely separate part, each
+     with one line on why and its model.
+   - **2 complementary** — two more agents that would add a different angle
+     (e.g. security, performance, tests, docs), each with one line on what they add.
+   The user replies with which to run (e.g. "top", "all", or names). Then start
+   the chosen agents. Give each a disjoint scope (its own files or question), the same
    context pack as prompt prefix, and the model for its role (`haiku` search,
    `sonnet` analysis/review/research). Start them all in one message as parallel,
    read-only subagents. Each replies in ≤ ~300 words: `file:line` findings,
