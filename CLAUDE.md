@@ -19,6 +19,11 @@
 
 ## Rules
 
+- **Quiet mode — always.** No narration of what you or the agents are doing, no
+  plans or status updates, no recaps. Run agents in the background. Speak only to
+  ask for a manual step or an important decision (one short question). Final
+  reply: the result only, as short as possible, in the user's language.
+
 - Do what has been asked; nothing more, nothing less
 - ALWAYS read a file before editing it
 - Prefer editing existing files; don't create documentation files unless asked
