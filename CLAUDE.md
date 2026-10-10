@@ -74,9 +74,12 @@ cannot run (e.g. a cloud session started from the phone):
   complexity (simple / medium / complex tiers in `.claude/commands/ruflo.md`).
 - `/ruflo swarm <task>` — several ruflo agents in parallel (fan-out), each with
   its own role, then one merged, prioritised report.
-- Agents available: `core/planner`, `sparc/{specification,pseudocode,architecture,refinement}`,
-  `swarm/{hierarchical,mesh,adaptive}-coordinator`, `testing/{production-validator,tdd-london-swarm}`,
-  `consensus/*`, `browser/browser-agent`. Any role name also works as a custom agent.
+- Agents available: all 82 agent files shipped with ruflo 3.53.0 (`ls .claude/agents/*/`),
+  grouped as `core`, `sparc`, `swarm`, `testing`, `consensus`, `github`, `optimization`,
+  `v3` (security, DDD, memory), `templates`, `sublinear`, `flow-nexus`, `analysis`,
+  `architecture`, `development`, `devops`, `documentation`, `data`, `specialized`,
+  `goal`, `payments`, `sona`, `custom`, `browser`. Coder/researcher/reviewer/tester
+  are `/sparc:*` commands, not agent files. Any role name also works as a custom agent.
 - Agent files mention `npx claude-flow@v3alpha …` hooks; those are optional — skip
   them when the CLI is unavailable and do the work directly.
 
