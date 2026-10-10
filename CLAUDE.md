@@ -72,8 +72,9 @@ cannot run (e.g. a cloud session started from the phone):
   a subagent with that file as its instructions.
 - `/ruflo auto <task>` — picks the agents and their models from the task's
   complexity (simple / medium / complex tiers in `.claude/commands/ruflo.md`).
-- `/ruflo swarm <task>` — several ruflo agents in parallel (fan-out), each with
-  its own role, then one merged, prioritised report.
+- `/ruflo swarm <task>` — first lists the top candidate agents for the task plus
+  2 complementary ones and waits for the user's pick; then runs the chosen agents
+  in parallel (fan-out), each with its own role, and merges one prioritised report.
 - Agents available: all 82 agent files shipped with ruflo 3.53.0 (`ls .claude/agents/*/`),
   grouped as `core`, `sparc`, `swarm`, `testing`, `consensus`, `github`, `optimization`,
   `v3` (security, DDD, memory), `templates`, `sublinear`, `flow-nexus`, `analysis`,
