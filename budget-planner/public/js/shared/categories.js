@@ -108,13 +108,17 @@ export function matchRule({ description = '', counterparty = '', type = 'expense
   const known = new Set(categories.map((c) => c.name));
   const users = Array.isArray(userRules) ? userRules : [];
   const all = [...users, ...DEFAULT_RULES];
+  let words = null; // keyText, worked out only when a rule of yours needs it
   for (let i = 0; i < all.length; i += 1) {
     const rule = all[i];
     if (!rule?.pattern || !known.has(rule.category)) continue;
     if (rule.kind && rule.kind !== type) continue;
     const cat = categories.find((c) => c.name === rule.category);
     if (cat && cat.kind !== 'both' && cat.kind !== type) continue;
-    if (toRegex(rule.pattern).test(text)) return { category: rule.category, rule, source: i < users.length ? 'user' : 'builtin' };
+    const re = toRegex(rule.pattern);
+    // Your rules are usually a merchant key ("revolut dublin"): also try the words it was made from.
+    const hit = re.test(text) || (i < users.length && re.test(words === null ? (words = keyText(`${description} ${counterparty}`)) : words));
+    if (hit) return { category: rule.category, rule, source: i < users.length ? 'user' : 'builtin' };
   }
   return { category: type === 'income' ? FALLBACK_INCOME : FALLBACK_EXPENSE, rule: null, source: 'fallback' };
 }
@@ -169,7 +173,17 @@ export function ruleText(t) {
 
 export function ruleMatches(rule, t) {
   if (!rule?.pattern) return false;
-  return toRegex(rule.pattern).test(ruleText(t));
+  const re = toRegex(rule.pattern);
+  return re.test(ruleText(t)) || re.test(keyText(`${t.description || ''} ${t.note || ''}`));
+}
+
+/**
+ * The words a merchant key is made of (see merchantKey): letters only, bank
+ * boilerplate left out. "Revolut**1234* Dublin" → "revolut dublin", so a rule
+ * learnt from a merchant key matches the bank text it came from.
+ */
+export function keyText(text) {
+  return normalize(text).replace(/[^a-z& ]+/g, ' ').split(' ').filter((w) => w.length > 2 && !NOISE.has(w)).join(' ');
 }
 
 export function escapeForRule(text) {

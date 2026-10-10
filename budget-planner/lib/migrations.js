@@ -4,7 +4,7 @@
 
 import { recategorize, assignImportAccounts } from './sync.js';
 import { mergeDuplicatesToTrash } from './store.js';
-import { extractMerchant, isUselessKeyword } from '../public/js/shared/categories.js';
+import { extractMerchant, isUselessKeyword, ruleMatches } from '../public/js/shared/categories.js';
 
 // Clearer descriptions for bank rows: the merchant instead of the bank's boilerplate.
 function cleanDescriptions(s, re) {
@@ -69,6 +69,16 @@ const MIGRATIONS = [
       const merged = mergeDuplicatesToTrash(s);
       s.settings = { ...s.settings, duplicatesMerged: true };
       return merged && `Merged ${merged} duplicate transaction(s) (kept in the trash)`;
+    },
+  },
+  {
+    // v7: rules made from a merchant key ("revolut dublin") now also match bank text with
+    // card numbers or symbols between the words: apply your rules again once.
+    needed: (s) => s.rules.length > 0 && !s.settings?.userRulesReapplied,
+    run: (s) => {
+      const changed = recategorize(s, (t) => s.rules.some((r) => ruleMatches(r, t)));
+      s.settings = { ...s.settings, userRulesReapplied: true };
+      return changed && `Applied your category rules again: ${changed} transaction(s) updated`;
     },
   },
 ];

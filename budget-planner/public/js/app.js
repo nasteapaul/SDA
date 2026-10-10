@@ -2904,7 +2904,11 @@ const actions = {
     data.reviewTransactions(ids);
     toast(`Got it: ${plural(ids.length, 'category', 'categories')} confirmed`);
   },
-  'suggest-rule': (el) => { data.addRule(el.dataset.keyword, el.dataset.category); toast(`Rule saved: “${el.dataset.keyword}” → ${el.dataset.category}`); },
+  'suggest-rule': (el) => {
+    data.addRule(el.dataset.keyword, el.dataset.category);
+    actions['suggest-later'](el); // gone right away, not only after the server answers
+    toast(`Rule saved: “${el.dataset.keyword}” → ${el.dataset.category}`);
+  },
   'suggest-later': (el) => {
     const ids = [...notNowRules(), `${el.dataset.keyword}|${el.dataset.category}`].slice(-200);
     try { localStorage.setItem(LS_SUGGEST, JSON.stringify(ids)); } catch { /* not remembered */ }
