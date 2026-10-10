@@ -46,7 +46,7 @@ export class Data extends EventTarget {
 
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 
-  setToken(token) { this.token = token; save(LS_TOKEN, token); }
+  setToken(token) { this.token = token; save(LS_TOKEN, token); this.shareTokenWithPhone(); }
 
   async logout() {
     // Revoke the token on the server too, so a copy of it stops working.
@@ -78,6 +78,11 @@ export class Data extends EventTarget {
   async login(password) {
     const { token } = await this.fetch('/api/login', { method: 'POST', body: { password } });
     this.setToken(token);
+  }
+
+  // The Android app checks /api/alerts in the background with the same login (phone notifications).
+  shareTokenWithPhone() {
+    try { window.BudgetApp?.setNotifyToken?.(this.token || ''); } catch { /* older app without notifications */ }
   }
 
   setOnline(v) {
@@ -264,6 +269,30 @@ export class Data extends EventTarget {
     const r = await this.fetch(`/api/imports/${encodeURIComponent(batchId)}`, { method: 'DELETE' });
     await this.refresh();
     return r;
+  }
+
+  // Review queue: "this category is right" for several transactions at once.
+  reviewTransactions(ids) {
+    const set = new Set(ids);
+    return this.mutate({ method: 'POST', path: '/api/transactions/review', body: { ids: [...set] } }, (s) => {
+      for (const t of s.transactions) if (set.has(t.id)) t.reviewed = true;
+    });
+  }
+
+  // Savings, pensions, loans… entered by hand for the net worth.
+  upsertAsset(a) {
+    return this.mutate({ method: 'PUT', path: `/api/assets/${encodeURIComponent(a.id)}`, body: a }, (s) => {
+      s.assets ||= [];
+      const i = s.assets.findIndex((x) => x.id === a.id);
+      const next = { ...a, updatedAt: new Date().toISOString() };
+      if (i === -1) s.assets.push(next); else s.assets[i] = { ...s.assets[i], ...next };
+    });
+  }
+
+  deleteAsset(id) {
+    return this.mutate({ method: 'DELETE', path: `/api/assets/${encodeURIComponent(id)}` }, (s) => {
+      s.assets = (s.assets || []).filter((x) => x.id !== id);
+    });
   }
 
   deleteRule(pattern) {

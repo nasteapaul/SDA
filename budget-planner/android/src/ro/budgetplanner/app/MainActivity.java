@@ -1,13 +1,16 @@
 package ro.budgetplanner.app;
 
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -32,6 +35,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -45,12 +50,16 @@ import java.nio.charset.StandardCharsets;
  * - Away from home: loads the last cached copy; the web app then shows the
  *   data it saved locally and queues edits until you are back on your Wi-Fi.
  * - Bank logins and other external links open in the real browser.
+ * - Budget alerts arrive as notifications (AlertsJob); tapping one opens that screen.
  */
 public class MainActivity extends Activity {
     private static final String PREFS = "budget";
     private static final String KEY_SERVER = "server";
     private static final int REQ_FILE = 1;
     private static final int REQ_SAVE = 2;
+    private static final int REQ_NOTIFY = 3;
+    private static final String KEY_ASKED_NOTIFY = "askedNotify";
+    static final String EXTRA_LINK = "link";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private WebView web;
@@ -59,13 +68,34 @@ public class MainActivity extends Activity {
     private boolean triedCache;
     private ValueCallback<Uri[]> fileCallback;
     private String pendingSave;
+    private String pendingLink; // "#overview" from a tapped notification, opened once the app loads
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        pendingLink = linkOf(getIntent());
         server = prefs().getString(KEY_SERVER, null);
         if (server == null) showSetup(null);
         else startWeb();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String link = linkOf(intent);
+        if (link == null || web == null || web.getParent() == null || server == null) {
+            pendingLink = link;
+            return;
+        }
+        // Already open: just switch screens inside the web app.
+        web.evaluateJavascript("location.hash = " + JSONObject.quote(link.substring(1)), null);
+    }
+
+    // Only in-app screens ("#overview", "#transactions?month=2026-10"), never another address.
+    private static String linkOf(Intent intent) {
+        String link = intent == null ? null : intent.getStringExtra(EXTRA_LINK);
+        return link != null && link.matches("#[A-Za-z0-9?=&_.%-]{0,200}") ? link : null;
     }
 
     private SharedPreferences prefs() {
@@ -255,7 +285,9 @@ public class MainActivity extends Activity {
         offline = !reachable;
         triedCache = false;
         web.getSettings().setCacheMode(reachable ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_CACHE_ELSE_NETWORK);
-        web.loadUrl(server + "/");
+        String link = pendingLink;
+        pendingLink = null;
+        web.loadUrl(server + "/" + (link != null ? link : ""));
         if (!reachable) Toast.makeText(this, "Not on your home Wi-Fi — showing saved data", Toast.LENGTH_SHORT).show();
     }
 
@@ -423,7 +455,31 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String version() {
-            return "1.0";
+            return "1.2";
+        }
+
+        /** The web app's login, for the background alert checks ('' after logging out). */
+        @JavascriptInterface
+        public void setNotifyToken(String token) {
+            AlertsJob.setToken(getApplicationContext(), token);
+            if (token == null || token.isEmpty() || Build.VERSION.SDK_INT < 33) return;
+            if (prefs().getBoolean(KEY_ASKED_NOTIFY, false)) return;
+            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED) return;
+            prefs().edit().putBoolean(KEY_ASKED_NOTIFY, true).apply();
+            main.post(new Runnable() {
+                @Override
+                public void run() {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_NOTIFY);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean notificationsEnabled() {
+            if (Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return false;
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            return nm == null || nm.areNotificationsEnabled();
         }
 
         @JavascriptInterface

@@ -1123,9 +1123,9 @@ a.stat-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
    ========================================================================== */
 
 /* G9: the + button only where adding a transaction belongs (render() sets body[data-route]) */
-body:is([data-route="goals"], [data-route="plan"], [data-route="settings"]) :is(.fab, .topbar .add-btn) { display: none; }
+body:is([data-route="goals"], [data-route="plan"], [data-route="settings"], [data-route="report"]) :is(.fab, .topbar .add-btn) { display: none; }
 @media (max-width: 760px) {
-  body:is([data-route="goals"], [data-route="plan"], [data-route="settings"]) .toast { right: 16px; }
+  body:is([data-route="goals"], [data-route="plan"], [data-route="settings"], [data-route="report"]) .toast { right: 16px; }
 }
 
 .card-head .link svg, a.link svg { flex: none; }
@@ -1658,6 +1658,137 @@ textarea.autogrow { display: block; resize: none; min-height: var(--control-h); 
   .sum-cell.sum-net { margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border); }
   .sum-cell.sum-net .sum-val { font-size: 18px; }
   .toast { left: 16px; right: 16px; bottom: calc(var(--tabbar-h) + 84px + var(--safe-bottom)); max-width: none; }
-  body:is([data-route="goals"], [data-route="plan"], [data-route="settings"]) .toast { right: 16px; bottom: calc(var(--tabbar-h) + 16px + var(--safe-bottom)); }
+  body:is([data-route="goals"], [data-route="plan"], [data-route="settings"], [data-route="report"]) .toast { right: 16px; bottom: calc(var(--tabbar-h) + 16px + var(--safe-bottom)); }
 }
 @keyframes sheet-up { from { transform: translateY(40%); opacity: .4; } }
+
+/* ---------------------------------------------------------------- trust + money ahead */
+/* Alerts (top of the Overview) */
+.al-card { margin: 0 0 16px; padding: 6px 8px; }
+.al-list { display: flex; flex-direction: column; }
+.al-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 8px 6px; border-radius: 12px; }
+.al-row + .al-row { border-top: 1px solid var(--border); border-radius: 0; }
+.al-main { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.al-main b { font-size: 14.5px; font-weight: 600; }
+.al-main .sub { font-size: 13px; color: var(--muted); }
+.al-main:hover b { text-decoration: underline; }
+.btn.al-x { flex: none; color: var(--muted); }
+.al-card .ov-more { margin: 0 6px 4px; }
+
+/* Period bar: Report link at the end */
+.btn.ov-report { margin-left: auto; color: var(--text-2); }
+@media (max-width: 760px) { .btn.ov-report span { display: none; } }
+
+/* Hero: "safe to spend" opens the breakdown */
+a.hero-mini-link { color: inherit; text-decoration: none; transition: border-color var(--ease), background-color var(--ease); }
+a.hero-mini-link:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+a.hero-mini-link .hero-mini-value.neg { color: var(--critical-text); }
+
+/* Bank check */
+.tr-card { margin: 0 0 16px; padding: 4px 16px; }
+.tr-collapse > .collapse-head { gap: 10px; padding: 10px 0; }
+.tr-collapse .collapse-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-weight: 600; }
+.tr-ok { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 500; color: var(--good-text); }
+.tr-list { margin: 0 -8px 8px; }
+.tr-acct + .tr-acct, .tr-list > .tr-consent { border-top: 1px solid var(--border); }
+.tr-state { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.tr-state.good { color: var(--good-text); }
+.tr-state.warning { color: var(--warning-text); }
+.tr-state.neutral { color: var(--muted); font-weight: 500; }
+.tr-hints { margin: -4px 8px 10px 52px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-2); }
+.tr-hints li::before { content: "→ "; color: var(--muted); }
+.tr-hints a { color: var(--accent); }
+.tr-banner { margin: 0 0 10px; }
+.tr-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.tr-consent .badge { margin-left: 4px; }
+
+/* Until payday: how "safe to spend" is worked out, then the calendar */
+.ah-sum { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; padding: 12px 14px; border-radius: 12px; background: var(--fill); font-size: 14px; }
+.ah-line { display: flex; justify-content: space-between; gap: 12px; min-width: 0; }
+.ah-line > span:first-child { min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.ah-line .num { flex: none; text-align: right; font-variant-numeric: tabular-nums; }
+.ah-total { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.ah-total > span:first-child { color: var(--text); }
+.ah-total.neg .num { color: var(--critical-text); }
+.ah-perday { font-size: 13px; }
+.ah-list { margin: 0 -8px; }
+.ah-date {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; flex: none; width: 40px; height: 40px;
+  border-radius: 10px; background: var(--fill); line-height: 1.05;
+}
+.ah-date b { font-size: 15px; }
+.ah-date span { font-size: 10.5px; font-weight: 600; text-transform: uppercase; color: var(--muted); }
+.ah-date.good { background: var(--good-soft); color: var(--good-text); }
+.ah-date.warning { background: var(--warning-soft); color: var(--warning-text); }
+
+/* Subscriptions and bills */
+.sb-help { margin: -4px 0 8px; }
+.sb-row { align-items: center; }
+.sb-acts { display: flex; flex: none; gap: 2px; }
+.sb-acts .btn { color: var(--text-2); }
+.sb-ok { color: var(--good-text); vertical-align: -2px; }
+
+/* Meal vouchers and net worth */
+.mv-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.mv-card .cc-kpis { margin-bottom: 8px; }
+.nw-total { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
+.nw-card .list { margin: 0 -8px; }
+.nw-card .ov-row-value.neg { color: var(--critical-text); }
+[data-action="edit-asset"] { cursor: pointer; border-radius: 12px; }
+[data-action="edit-asset"]:hover { background: var(--fill); }
+
+/* To check (Transactions) */
+.rv-card { padding: 4px 16px; }
+.rv-card > .collapse > .collapse-head { padding: 10px 0; gap: 10px; }
+.rv-card .collapse-sub { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); }
+.rv-list { display: flex; flex-direction: column; }
+.rv-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 8px 0; }
+.rv-row + .rv-row, .rv-list + .rv-list, .rv-suggest + .rv-list { border-top: 1px solid var(--border); }
+.rv-main { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.rv-top { display: flex; justify-content: space-between; gap: 12px; }
+.rv-top .row-label { min-width: 0; overflow-wrap: anywhere; }
+.rv-main .sub { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.rv-main .sub b { color: var(--text-2); font-weight: 600; }
+.btn.rv-ok { flex: none; color: var(--good-text); }
+.rv-suggest { flex-wrap: wrap; }
+.rv-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.rv-foot { display: flex; justify-content: flex-end; padding: 8px 0 12px; }
+.btn.txv-export { margin-left: auto; }
+
+/* Transaction sheet: why this category, split, refund */
+.cat-reason { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; }
+.split-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: -4px; }
+.split-box { align-self: stretch; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; }
+.split-lines { display: flex; flex-direction: column; gap: 8px; }
+.split-line { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem auto; gap: 8px; align-items: center; }
+.split-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.warn-text { color: var(--warning-text) !important; }
+.refund-field .checkbox { font-weight: 500; color: var(--text); }
+.refund-field #refund-date { margin-top: 6px; }
+
+/* Settings: switches on the right, money inputs */
+.ss-option.ss-toggle { align-items: center; justify-content: space-between; padding: 6px 6px 6px 14px; }
+.ss-option.ss-toggle:has(input:checked) { border-color: var(--border-strong); background: none; }
+.ss-option.ss-toggle > span:first-child { flex: 1 1 auto; }
+.ss-day.ss-money { width: 96px; }
+
+/* Report (print or save) */
+.report { display: flex; flex-direction: column; gap: 12px; }
+.rp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rp-actions .spacer { flex: 1 1 auto; }
+.rp { padding: 22px 24px; }
+.rp-head h2 { margin: 0 0 4px; font-size: 20px; }
+.rp-head p { margin: 0; color: var(--muted); font-size: 13.5px; }
+.rp h3 { margin: 22px 0 8px; font-size: 15px; }
+.rp-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.rp-table th, .rp-table td { padding: 7px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+.rp-table th { font-size: 12px; font-weight: 600; color: var(--muted); }
+.rp-num td:not(:first-child), .rp-num th:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-foot { margin-top: 22px; font-size: 12px; color: var(--muted); }
+@media (max-width: 760px) { .rp { padding: 16px; } }
+@media print {
+  .sidebar, .topbar, .fab, .toast, .rp-actions { display: none !important; }
+  .content, .view { padding: 0 !important; margin: 0 !important; }
+  .rp { border: 0; box-shadow: none; padding: 0; }
+  body { background: #fff; }
+}

@@ -18,6 +18,15 @@ import { importSeen, isSameTransaction } from './shared/dedupe.js';
 // foundation: SVG icons (named svgIcon here — icon() below is the category emoji)
 import { icon as svgIcon, iconTile } from './icons.js';
 import { collapsible } from './collapse.js';
+// trust + money ahead: bank check, safe to spend, subscriptions, alerts, review queue, net worth
+import { detectSeries, upcoming as upcomingBills } from './shared/recurring.js';
+import { safeToSpend, periodCalendar } from './shared/safespend.js';
+import { repaidInPeriod, creditCost, cardDue, pairRepayments, FEES_CATEGORY } from './shared/cardpay.js';
+import { consentStatus, accountTrust } from './shared/trust.js';
+import { categoryReason, reviewQueue, suggestRules } from './shared/review.js';
+import { netWorth } from './shared/networth.js';
+import { expectedRefunds } from './shared/refunds.js';
+import { buildAlerts } from './shared/alerts.js';
 
 const data = new Data();
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -86,11 +95,12 @@ function spendingByCategory(key) {
   const map = new Map();
   for (const t of S().transactions) {
     if (keyOf(t.date) !== key) continue;
-    const e = L().effect(t);
-    if (e.as !== 'expense') continue;
-    const m = map.get(e.category) || { name: e.category, icon: icon(e.category), value: 0, count: 0 };
-    m.value += e.amount; m.count += 1;
-    map.set(e.category, m);
+    if (L().effect(t).as !== 'expense') continue;
+    for (const p of L().parts(t)) { // a split purchase adds to each of its categories
+      const m = map.get(p.category) || { name: p.category, icon: icon(p.category), value: 0, count: 0 };
+      m.value += p.amount; m.count += 1;
+      map.set(p.category, m);
+    }
   }
   const budgets = S().budgets || {};
   for (const [name, limit] of Object.entries(budgets)) {
@@ -275,14 +285,17 @@ function txRow(t, { showDelete = true, showDate = !showDelete } = {}) {
   const acc = L().accountOf(t);
   const counted = Boolean(counts(t));
   const income = t.type === 'income';
-  const accLabel = acc && acc !== L().mainAccount ? accountLabel(acc) : null;
+  const accLabel = t.pocket !== 'vouchers' && acc && acc !== L().mainAccount ? accountLabel(acc) : null;
   // Converted from another currency: the original amount and the rate go on line 2.
   const fx = t.originalAmount != null && t.originalCurrency && t.originalCurrency !== 'RON';
   const orig = fx && !t.needsFx ? `${amountFmt.format(Number(t.originalAmount))} ${t.originalCurrency}${t.exchangeRate ? ` @ ${Number(t.exchangeRate).toLocaleString('ro-RO', { maximumFractionDigits: 4 })}` : ''}` : '';
-  const meta = [showDate ? fmtDate(t.date, { day: 'numeric', month: 'short' }) : '', t.category, t.source === 'manual' && !t.goalId ? 'Manual' : ''].filter(Boolean).join(' · ');
+  const catText = t.splits?.length ? t.splits.map((x) => x.category).join(' + ') : t.category;
+  const meta = [showDate ? fmtDate(t.date, { day: 'numeric', month: 'short' }) : '', catText, t.source === 'manual' && !t.goalId ? 'Manual' : ''].filter(Boolean).join(' · ');
   const tags = [
     accLabel ? `<span class="tx-acct">${svgIcon(accountView(acc).kind === 'credit' ? 'card' : 'wallet', { size: 13 })}${esc(accLabel)}</span>` : '',
-    counted ? '' : '<span class="badge tx-badge">Not counted</span>',
+    t.pocket === 'vouchers' ? `<span class="tx-acct">${svgIcon('receipt', { size: 13 })}Meal vouchers</span>` : '',
+    t.refundDue ? `<span class="badge tx-badge" title="Waiting for a refund by ${esc(fmtDate(t.refundDue))}">Refund due</span>` : '',
+    counted || t.pocket === 'vouchers' ? '' : '<span class="badge tx-badge">Not counted</span>',
     t.date > todayISO() ? '<span class="badge warning tx-badge" title="Dated in the future">Future</span>' : '',
     t.needsFx ? '<span class="badge warning tx-badge" title="Not converted to RON yet">Needs conversion</span>' : '',
   ].join('');
@@ -340,6 +353,7 @@ const views = {
     const linkHead = (href, text) => `<a class="link" href="${href}">${esc(text)}${svgIcon('chevron-right', { size: 16 })}</a>`;
 
     return `
+      ${isCurrent ? alertsCard() : ''}
       <div class="ov-period">
         <div class="month-switch" role="group" aria-label="Month">
           <button class="btn ghost icon-only" type="button" data-action="month" data-delta="-1" aria-label="Previous month">${svgIcon('chevron-left')}</button>
@@ -347,6 +361,7 @@ const views = {
           <button class="btn ghost icon-only" type="button" data-action="month" data-delta="1" aria-label="Next month">${svgIcon('chevron-right')}</button>
         </div>
         ${P().payday ? `<button class="btn ov-salary" type="button" data-action="edit-payday" data-key="${esc(key)}" title="Change the salary date for this period">${svgIcon('calendar')}<span>Salary · ${esc(salaryDay)}</span>${salarySet ? '<span class="badge accent">Set</span>' : ''}${svgIcon('edit', { size: 16, cls: 'ov-salary-edit' })}</button>` : ''}
+        <a class="btn ghost ov-report" href="#report?month=${esc(key)}" title="A printable report of this period">${svgIcon('print')}<span>Report</span></a>
       </div>
       ${unassignedBanner()}
       ${s.count ? '' : `<div class="banner info ov-banner">${iconTile('info', { tone: 'accent' })}<div><b>No current-account transactions ${isCurrent ? 'yet this period' : 'in this period'}</b>
@@ -363,6 +378,7 @@ const views = {
           </div>
         </div>
       </div>
+      ${isCurrent ? trustCard() : ''}
       ${accountsStrip()}
       ${creditCardPanel(key)}
       <div class="grid two ov-grid">
@@ -381,6 +397,9 @@ const views = {
           </div>
         </div>
         <div class="stack">
+          ${isCurrent ? aheadCard() : ''}
+          ${isCurrent ? refundsCard() : ''}
+          ${vouchersCard(key)}
           <div class="card">
             <div class="card-head">${cardTitle('goals', 'Goals')}${goals.length ? linkHead('#goals', 'All goals') : ''}</div>
             ${goals.length ? `<div class="list ov-bleed">${goals.map((g) => `
@@ -408,7 +427,7 @@ const views = {
     const q = f.q.toLowerCase();
     const month = f.month === null ? P().current() : f.month;
     const accounts = S().bank.connections.flatMap((c) => c.accounts || []);
-    const account = f.account === 'none' || accounts.some((a) => a.uid === f.account) ? f.account : '';
+    const account = f.account === 'none' || f.account === 'vouchers' || accounts.some((a) => a.uid === f.account) ? f.account : '';
     const typeOk = (t) => {
       if (f.counted) {
         const e = L().effect(t); // refund-aware: a shop refund shows under spending
@@ -419,13 +438,15 @@ const views = {
     };
     const accountOk = (t) => {
       if (!account) return true;
+      if (account === 'vouchers') return t.pocket === 'vouchers';
       const acc = L().accountOf(t);
       return account === 'none' ? !acc : acc?.uid === account;
     };
     const list = sortTx(S().transactions.filter((t) => (!month || keyOf(t.date) === month)
       && typeOk(t) && accountOk(t)
-      && (!f.category || t.category === f.category)
+      && (!f.category || t.category === f.category || (t.splits || []).some((x) => x.category === f.category))
       && (!q || `${t.description} ${t.note || ''} ${t.category}`.toLowerCase().includes(q))));
+    ui.txList = list; // what "CSV" exports
     const counted = L().totals(list);
     // Nothing in the list counts (e.g. only credit-card rows): show the plain sums, labelled.
     const raw = !counted.count && list.length > 0;
@@ -470,7 +491,7 @@ const views = {
     // transparently over it (so the phone's own picker opens and long names never get cut).
     const fchip = (filter, aria, text, on, options, ico = '') => `<label class="fchip${on ? ' active' : ''}">${ico}<span class="fchip-val">${esc(text)}</span>${svgIcon('chevron-down', { size: 16 })}<select data-filter="${filter}" aria-label="${aria}">${options}</select></label>`;
     const TYPES = { expense: 'Expenses', income: 'Income', saved: 'Saved to goals' };
-    const accText = account === 'none' ? 'No account' : account ? accountLabel(accounts.find((a) => a.uid === account)) : 'Account';
+    const accText = account === 'none' ? 'No account' : account === 'vouchers' ? 'Meal vouchers' : account ? accountLabel(accounts.find((a) => a.uid === account)) : 'Account';
     const chips = [
       filtered ? `<button class="fchip fclear" type="button" data-action="tx-clear">${svgIcon('x', { size: 16 })}<span class="fchip-val">Clear ${active === 1 ? 'filter' : `${active} filters`}</span></button>` : '',
       // With a payday the period's dates say more than its name ("10 Sept – 8 Oct", not "September 2026").
@@ -482,14 +503,15 @@ const views = {
       fchip('category', 'Category', f.category ? `${icon(f.category)} ${f.category}` : 'Category', Boolean(f.category),
         `<option value="">All categories</option>${S().categories.map((c) => `<option ${c.name === f.category ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}`),
       accounts.length ? fchip('account', 'Account', accText, Boolean(account),
-        `<option value="">All accounts</option>${accounts.map((a) => `<option value="${esc(a.uid)}" ${a.uid === account ? 'selected' : ''}>${esc(accountLabel(a))}${a === L().mainAccount ? ' (main)' : ''}</option>`).join('')}<option value="none" ${account === 'none' ? 'selected' : ''}>No account (cash / other)</option>`) : '',
+        `<option value="">All accounts</option>${accounts.map((a) => `<option value="${esc(a.uid)}" ${a.uid === account ? 'selected' : ''}>${esc(accountLabel(a))}${a === L().mainAccount ? ' (main)' : ''}</option>`).join('')}<option value="none" ${account === 'none' ? 'selected' : ''}>No account (cash / other)</option>${S().settings?.mealVouchers?.enabled ? `<option value="vouchers" ${account === 'vouchers' ? 'selected' : ''}>Meal vouchers</option>` : ''}`) : '',
       `<button class="fchip toggle${f.counted ? ' active' : ''}" type="button" aria-pressed="${f.counted}" data-action="${f.counted ? 'tx-uncounted' : 'tx-counted'}" title="${f.counted ? 'Also show transactions that don’t count' : 'Hide transactions that don’t count in the budget'}">${svgIcon(f.counted ? 'check' : 'sliders', { size: 16 })}<span class="fchip-val">Only what counts</span></button>`,
     ].join('');
 
     // In / Out / Net: a strip that wraps on content (no fixed columns) so big amounts never get cut.
     const sumCell = (label, n, cls, ico) => `<div class="sum-cell sum-${label.toLowerCase()}"><span class="sum-label">${svgIcon(ico, { size: 14 })}${label}</span><b class="sum-val num ${cls}">${esc(formatRON(n, { sign: label === 'Net' }).replace(/\s*RON$/, ''))}<span class="cur"> RON</span></b></div>`;
     const summary = list.length ? `<div class="card txv-sum" aria-label="Totals">
-        <div class="txv-sum-head"><span>${list.length} transaction${list.length === 1 ? '' : 's'}</span>${raw ? '<span class="badge">Not counted in your budget</span>' : counted.count && counted.count < list.length ? `<span class="badge">${counted.count} counted</span>` : ''}</div>
+        <div class="txv-sum-head"><span>${list.length} transaction${list.length === 1 ? '' : 's'}</span>${raw ? '<span class="badge">Not counted in your budget</span>' : counted.count && counted.count < list.length ? `<span class="badge">${counted.count} counted</span>` : ''}
+          <button class="btn small ghost txv-export" type="button" data-action="export-csv" title="Download these transactions as a CSV file (Excel)">${svgIcon('download', { size: 16 })}CSV</button></div>
         <div class="txv-sum-cells">${sumCell('In', income, 'pos', 'arrow-down-left')}${sumCell('Out', spend, '', 'arrow-up-right')}${sumCell('Net', income - spend, income - spend < 0 ? 'neg' : '', 'wallet')}</div>
       </div>` : '';
 
@@ -507,6 +529,7 @@ const views = {
       <div class="txv">
         <div class="txv-search">${svgIcon('search', { size: 18 })}<input type="search" placeholder="Search transactions" value="${esc(f.q)}" data-filter="q" aria-label="Search" enterkeyhint="search"></div>
         <div class="txv-filters" role="group" aria-label="Filters">${chips}</div>
+        ${filtered ? '' : reviewCard()}
         ${summary}
         <div class="tx-groups">${groups || empty}</div>
         ${list.length > f.limit ? `<div class="txv-more"><button class="btn" type="button" data-action="more-tx">Show more</button><span class="caption">${f.limit} of ${list.length} shown</span></div>` : ''}
@@ -553,7 +576,7 @@ const views = {
     const reached = goals.filter((g) => g.done);
     const grid = (html) => `<div class="goals-grid">${html}</div>`;
     if (!goals.length) {
-      return `<div class="card">${emptyState({
+      return `${netWorthCard()}<div class="card">${emptyState({
         icon: 'goals', title: 'No goals yet', text: 'A holiday, an emergency fund, a new laptop — add as many as you like and save towards them at the same time.',
         action: `<button class="btn primary" type="button" data-action="add-goal">${svgIcon('plus')}Create your first goal</button>`,
       })}</div>`;
@@ -564,6 +587,7 @@ const views = {
         <button class="btn primary" type="button" data-action="add-goal">${svgIcon('plus')}New goal</button>
       </div>
       ${goalsVsSavings(goals)}
+      ${netWorthCard()}
       ${active.length ? moreRows({ key: 'goals.more', rows: active.map(card), shown: 4, title: 'More goals', wrap: grid, cls: 'ov-more-page' }) : ''}
       ${reached.length ? collapsible({ key: 'goals.reached', title: 'Reached goals', count: reached.length, body: grid(reached.map(card).join('')), cls: 'ov-more ov-more-page' }) : ''}`;
   },
@@ -649,17 +673,69 @@ const views = {
               ${tips.length ? moreRows({ key: 'plan.tips', rows: tips, shown: TIPS_SHOWN, title: 'More tips', wrap: (h) => `<ul class="list pl-tips">${h}</ul>` })
                 : `<ul class="list pl-tips">${tipRow({ level: 'good', text: 'Nothing to change. Nice.' })}</ul>`}
             </div>
-            ${analysis.recurring.length ? `<div class="card"><div class="card-head">${cardTitle('repeat', 'Recurring payments')}</div>
-              ${moreRows({ key: 'plan.recurring', shown: 4, title: 'More payments', wrap: (h) => `<div class="list">${h}</div>`, rows: analysis.recurring.map((r) => `<div class="row ov-row pl-row">
-                <span class="ico-tile neutral" aria-hidden="true">${esc(icon(r.category))}</span>
-                <span class="ov-row-main">
-                  <span class="ov-row-top"><span class="row-label pl-rec">${esc(r.label)}</span><span class="ov-row-value num">${short(r.avg)}</span></span>
-                  <span class="sub">${esc(r.category)} · every month</span>
-                </span>
-              </div>`) })}</div>` : ''}
+            ${subscriptionsCard()}
           </div>
         </div>
       </div>`;
+  },
+
+  // A printable report of one period (Overview → Report): print / save as PDF, or save the page.
+  report() {
+    const k = /^\d{4}-(0[1-9]|1[0-2])$/.test(ui.params.get('month') || '') ? ui.params.get('month') : P().current();
+    const s = summary(k);
+    const cats = spendingByCategory(k).filter((r) => r.value > 0 || r.limit);
+    const txs = S().transactions.filter((t) => keyOf(t.date) === k);
+    const merchants = new Map(); // where the money went: biggest merchants among what counted as spending
+    for (const t of txs) {
+      const e = L().effect(t);
+      if (e.as !== 'expense' || e.amount <= 0) continue;
+      const name = displayDesc(t.description) || t.category;
+      const mk = merchantKey(t.description) || name;
+      const m = merchants.get(mk) || { name, total: 0, count: 0 };
+      m.total += e.amount; m.count += 1;
+      merchants.set(mk, m);
+    }
+    const top = [...merchants.values()].sort((a, b) => b.total - a.total).slice(0, 10);
+    const subs = allSeries().filter((x) => x.status !== 'ignored');
+    const hasCard = linkedAccounts().some((a) => accountView(a).kind === 'credit');
+    const owed = bankTotals(linkedAccounts()).owed;
+    const nw = netWorth(S(), { now: Date.now() });
+    const money = (n) => esc(formatRON(n));
+    const table = (head, rows, cls = '') => `<table class="rp-table${cls ? ` ${cls}` : ''}"><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+    const tr = (...cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+    return `<div class="report">
+      <div class="rp-actions">
+        <a class="btn" href="#overview">${svgIcon('chevron-left')}Back</a>
+        <div class="month-switch" role="group" aria-label="Period">
+          <button class="btn ghost icon-only" type="button" data-action="report-month" data-key="${esc(addMonths(k, -1))}" aria-label="Previous period">${svgIcon('chevron-left')}</button>
+          <span class="ms-label"><span class="ms-month">${esc(P().label(k))}</span></span>
+          <button class="btn ghost icon-only" type="button" data-action="report-month" data-key="${esc(addMonths(k, 1))}" aria-label="Next period">${svgIcon('chevron-right')}</button>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn primary" type="button" data-action="print-report">${svgIcon('print')}Print / PDF</button>
+        <button class="btn" type="button" data-action="save-report" data-key="${esc(k)}">${svgIcon('download')}Save</button>
+      </div>
+      <article class="card rp" id="report-body">
+        <header class="rp-head"><h2>Budget report · ${esc(P().label(k))}</h2><p>${esc(P().payday ? `Pay period ${P().rangeLabel(k)}` : P().rangeLabel(k))} · money in and out of ${esc(accountName(L().mainAccount) || 'the current account')}</p></header>
+        <section><h3>Summary</h3>${table(['', 'RON'], [
+          tr('Income', money(s.income)), tr('Spending', money(s.spend)), tr('Saved to goals', money(s.saved)), tr('<b>Left over</b>', `<b>${money(s.left)}</b>`),
+        ], 'rp-num')}</section>
+        ${cats.length ? `<section><h3>Spending by category</h3>${table(['Category', 'Spent', 'Budget'], cats.map((r) => tr(`${esc(r.icon)} ${esc(r.name)}`, money(r.value), r.limit ? money(r.limit) : '—')), 'rp-num')}</section>` : ''}
+        ${top.length ? `<section><h3>Where it went</h3>${table(['Merchant', 'Times', 'Spent'], top.map((m) => tr(esc(m.name), String(m.count), money(m.total))), 'rp-num')}</section>` : ''}
+        ${subs.length ? `<section><h3>Subscriptions and bills</h3>${table(['Payment', 'How often', 'Amount'], subs.map((x) => tr(esc(displayDesc(x.label)), esc(CADENCE[x.cadence] || x.cadence), esc(x.variable ? rangeRON(x.min, x.max) : formatRON(x.amount)))), 'rp-num')}</section>` : ''}
+        ${hasCard ? `<section><h3>Credit card</h3>${table(['', 'RON'], [
+          tr('Spent on the card', money(cardPeriod(S().transactions.filter((t) => L().kindOf(t) === 'credit' && keyOf(t.date) === k), { isRefund: (t) => L().isRefund(t), refundCategory: (t) => L().refundCategory(t) }).spent)),
+          tr('Paid back', money(repaidInPeriod(S(), L(), keyOf, k).total)),
+          tr('Interest & fees', money(creditCost(S(), L(), keyOf, k).total)),
+          tr('Owed now', money(owed)),
+        ], 'rp-num')}</section>` : ''}
+        ${nw.items.length ? `<section><h3>Net worth today</h3>${table(['', 'RON'], [
+          ...nw.items.map((i) => tr(esc(i.name), `${i.kind === 'loan' || i.kind === 'card' ? '−' : ''}${money(Math.abs(i.amount))}`)),
+          tr('<b>Total</b>', `<b>${money(nw.total)}</b>`),
+        ], 'rp-num')}</section>` : ''}
+        <footer class="rp-foot">Made on ${esc(fmtDate(todayISO()))} by your budget app.</footer>
+      </article>
+    </div>`;
   },
 
   // screens-settings: grouped sections; long lists are minimizable (shared collapsible()).
@@ -675,6 +751,7 @@ const views = {
           ${group('budget', 'Budget', countModeCardHTML() + budgetMonthCardHTML())}
         </div>
         <div class="stack ss-col">
+          ${group('alerts', 'Alerts & extras', alertSettingsCardHTML() + vouchersSettingsCardHTML())}
           ${group('cats', 'Categories & rules', categoriesCardHTML() + rulesCardHTML())}
           ${group('app', 'App', appCardHTML() + trashCardHTML())}
           ${group('danger', 'Danger zone', dangerCardHTML(b))}
@@ -934,9 +1011,59 @@ function appCardHTML() {
         ${install}
         <div class="row stack ss-theme"><span><span class="row-label">Theme</span></span>
           <div class="segmented ss-seg three" role="radiogroup" aria-label="Theme">${['system', 'light', 'dark'].map(seg).join('')}</div></div>
+        <div class="row"><span><span class="row-label">Export transactions</span><span class="sub">CSV file for Excel or Google Sheets</span></span><button class="btn small" type="button" data-action="export-csv-all">${svgIcon('download')}CSV</button></div>
+        <div class="row"><span><span class="row-label">Report of this period</span><span class="sub">To print or save as PDF</span></span><a class="btn small" href="#report">${svgIcon('print')}Open</a></div>
         <div class="row"><span><span class="row-label">Export all data</span><span class="sub">One JSON file with everything</span></span><button class="btn small" type="button" data-action="export">${svgIcon('download')}Download</button></div>
         <div class="row"><span><span class="row-label">Version</span></span><span class="row-value muted num">${esc(S().appVersion || '?')}</span></div>
       </div>
+    </div>`;
+}
+
+// ---- Alerts: which ones, the reserve kept out of "safe to spend", phone notifications
+const ALERT_LABELS = {
+  bill: ['Bills and subscriptions', 'Due in the next 3 days'],
+  card: ['Card repayment', 'When your usual repayment is due'],
+  low: ['Money tight before payday', 'When the bills before payday are more than the balance'],
+  price: ['Price rises', 'A subscription got more expensive'],
+  renewal: ['Yearly renewals', 'A week before'],
+  refund: ['Late refunds', 'A refund you wait for hasn’t come'],
+  consent: ['Bank access', '14 and 3 days before it ends'],
+  sync: ['Bank sync problems', 'Failing, or no update for 2 days'],
+  summary: ['End of the period', 'A short summary on payday'],
+  assets: ['Net worth values', 'Update pensions and savings every 3 months'],
+};
+function alertSettingsCardHTML() {
+  const prefs = S().settings?.alerts || {};
+  const phone = window.BudgetApp
+    ? (window.BudgetApp.notificationsEnabled?.()
+      ? '<span class="sub">This phone gets a notification for each new alert.</span>'
+      : window.BudgetApp.setNotifyToken
+        ? '<span class="sub warn-text">Notifications are blocked for the app: allow them in Android settings → Apps → Budget.</span>'
+        : '<span class="sub">Update the Android app to get alerts as notifications.</span>')
+    : '<span class="sub">Shown on the Overview. In the Android app they also come as notifications.</span>';
+  const rows = Object.entries(ALERT_LABELS).map(([k, [title, sub]]) => `<label class="ss-option ss-toggle">
+      <span><span class="row-label">${esc(title)}</span><span class="sub">${esc(sub)}</span></span>
+      <span class="ss-switch"><input type="checkbox" role="switch" data-action="alert-kind" value="${k}" ${prefs[k] === false ? '' : 'checked'} aria-label="${esc(title)}"><span class="ss-switch-track" aria-hidden="true"></span></span></label>`).join('');
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('bell', 'Alerts')}</div>
+      <p class="ss-help">${phone}</p>
+      ${collapsible({ key: 'settings.alerts', title: 'Which alerts', count: Object.keys(ALERT_LABELS).length, body: `<div class="ss-options">${rows}</div>` })}
+      <div class="list ss-list ss-top-line">
+        <div class="row"><span><span class="row-label">Reserve</span><span class="sub">Kept out of “safe to spend” for the unexpected</span></span>
+          <input class="ss-day ss-money" type="number" min="0" step="50" inputmode="decimal" data-action="spend-buffer" value="${esc(String(S().settings?.spendBuffer || 0))}" aria-label="Reserve in RON"></div>
+      </div>
+    </div>`;
+}
+
+// ---- Meal vouchers: a pocket kept apart from the current account
+function vouchersSettingsCardHTML() {
+  const mv = S().settings?.mealVouchers || { enabled: false, perDay: 45 };
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('receipt', 'Meal vouchers')}
+        <label class="ss-switch"><input type="checkbox" role="switch" data-action="vouchers-on" ${mv.enabled ? 'checked' : ''} aria-label="Track meal vouchers"><span class="ss-switch-track" aria-hidden="true"></span></label></div>
+      <p class="ss-help">Edenred, Pluxee or Up card: what’s loaded and spent, kept apart from your current account so the cash flow stays exact.</p>
+      ${mv.enabled ? `<div class="list ss-list"><div class="row"><span><span class="row-label">Value per working day</span><span class="sub">At most 45 RON in 2026</span></span>
+        <input class="ss-day ss-money" type="number" min="0" max="1000" step="0.5" inputmode="decimal" data-action="vouchers-day" value="${esc(String(mv.perDay ?? 45))}" aria-label="Value per working day in RON"></div></div>` : ''}
     </div>`;
 }
 
@@ -1025,7 +1152,7 @@ function pctChange(now, before, samePoint = false, upIsGood = null) {
   return `<span class="delta ${up ? 'up' : 'down'}${tone}">${svgIcon('arrow-up-right', { size: 14 })}${Math.abs(p)}%</span> ${up ? 'more' : 'less'} than ${prev}`;
 }
 
-const TITLES = { overview: 'Overview', transactions: 'Transactions', goals: 'Goals', plan: 'Plan', settings: 'Settings' };
+const TITLES = { overview: 'Overview', transactions: 'Transactions', goals: 'Goals', plan: 'Plan', settings: 'Settings', report: 'Report' };
 
 function render() {
   if (!S()) return;
@@ -1363,9 +1490,10 @@ function categoryChips(type, selected) {
   return topCategories(type).map((name) => `<button type="button" class="qc-chip" data-pick-category="${esc(name)}" aria-pressed="${name === selected}">${esc(icon(name))} ${esc(name)}</button>`).join('');
 }
 
-function openTxModal(tx) {
+// preset (new transactions only): e.g. { type: 'income', pocket: 'vouchers', amount: 900, description: 'Meal vouchers' }.
+function openTxModal(tx, preset = {}) {
   const isNew = !tx;
-  const t = tx || { id: uid(), type: 'expense', amount: '', category: defaultExpenseCategory(), description: '', date: todayISO(), note: '' };
+  const t = tx || { id: uid(), type: 'expense', amount: '', category: defaultExpenseCategory(), description: '', date: todayISO(), note: '', ...preset };
   let type = t.type;
   const originalCategory = t.category;
   const fromBank = t.source === 'bank' || t.source === 'import';
@@ -1382,8 +1510,12 @@ function openTxModal(tx) {
         <div class="row"><span class="row-label">Amount</span><span class="row-value locked-amt num${t.type === 'income' ? ' pos' : ''}">${t.type === 'income' ? '+' : '−'}${esc(formatRON(t.amount))}</span></div>
         <div class="row"><span class="row-label">Date</span><span class="row-value">${esc(fmtDate(t.date, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))}</span></div>
         <div class="row"><span class="row-label">Account</span><span class="row-value">${esc(accText)}</span></div>
+        ${fxRows(t)}
       </div>
     </div>` : '';
+  const vouchersOn = Boolean(S().settings?.mealVouchers?.enabled || t.pocket === 'vouchers');
+  const reason = isNew ? null : categoryReason(t, S());
+  const splitLines = (t.splits?.length ? t.splits : []).map((x) => splitLineHTML(x.category, x.amount)).join('');
   const goalField = `<label class="field" id="goal-field" ${cat(t.category).role === 'savings' ? '' : 'hidden'}>Goal<select name="goalId"><option value="">No goal</option>${S().goals.map((g) => `<option value="${esc(g.id)}" ${g.id === t.goalId ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>`;
   openModal(`
     <h2 id="modal-title">${isNew ? 'New transaction' : 'Edit transaction'} ${fromBank ? `<span class="badge">${t.source === 'bank' ? 'From bank' : 'Imported'}</span>` : ''}</h2>
@@ -1396,6 +1528,14 @@ function openTxModal(tx) {
       <span id="cat-label">Category</span>
       <div class="qc-chips" id="qc-chips" role="group" aria-label="Frequent categories" ${chips ? '' : 'hidden'}>${chips}</div>
       <select name="category" aria-labelledby="cat-label">${categoryOptions(type, t.category)}</select>
+      ${reason && reasonText(reason) ? `<span class="caption cat-reason">${svgIcon(reason.kind === 'fallback' ? 'alert' : 'info', { size: 14 })}${esc(reasonText(reason))}</span>` : ''}
+    </div>
+    <div class="split-wrap" id="split-wrap" ${type === 'expense' ? '' : 'hidden'}>
+      <button class="btn small ghost" type="button" id="split-toggle" aria-expanded="${t.splits?.length ? 'true' : 'false'}">${svgIcon('split', { size: 16 })}${t.splits?.length ? 'Split across categories' : 'Split across categories…'}</button>
+      <div class="split-box" id="split-box" ${t.splits?.length ? '' : 'hidden'}>
+        <div class="split-lines" id="split-lines">${splitLines}</div>
+        <div class="split-foot"><button class="btn small" type="button" id="split-add">${svgIcon('plus', { size: 16 })}Add a line</button><span class="caption" id="split-left"></span></div>
+      </div>
     </div>
     <label class="field">Description<input name="description" maxlength="140" placeholder="e.g. Kaufland, Salary" value="${esc(t.description)}" autocomplete="off"></label>
     ${locked ? goalField : `<div class="field-row">
@@ -1403,7 +1543,11 @@ function openTxModal(tx) {
       ${goalField}
     </div>`}
     <label class="field">Note<textarea name="note" maxlength="280" rows="1" placeholder="Optional" class="autogrow">${esc(t.note || '')}</textarea></label>
-    ${t.source !== 'bank' && S().bank.connections.length ? `<label class="field">Account<select name="accountId">${S().bank.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${a.uid === (L().accountOf(t)?.uid) ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))}</option>`).join('')}<option value="" ${!L().accountOf(t) ? 'selected' : ''}>Not linked (cash / other)</option></select></label>` : ''}
+    <div class="field refund-field" id="refund-field" ${type === 'expense' && t.pocket !== 'vouchers' ? '' : 'hidden'}>
+      <label class="checkbox"><input type="checkbox" name="refundOn" ${t.refundDue ? 'checked' : ''}> I’m waiting for a refund (returned it, order cancelled…)</label>
+      <div id="refund-date" ${t.refundDue ? '' : 'hidden'}>${dateField({ name: 'refundDue', value: t.refundDue || plusDays(todayISO(), 14), label: 'Refund expected by' })}</div>
+    </div>
+    ${t.source !== 'bank' && (S().bank.connections.length || vouchersOn) ? `<label class="field">Account<select name="accountId">${S().bank.connections.flatMap((c) => c.accounts).map((a) => `<option value="${esc(a.uid)}" ${t.pocket !== 'vouchers' && a.uid === (L().accountOf(t)?.uid) ? 'selected' : ''}>${esc(ACCOUNT_KINDS[accountView(a).kind])} · ${esc((a.iban || '').slice(-4))}</option>`).join('')}${vouchersOn ? `<option value="pocket:vouchers" ${t.pocket === 'vouchers' ? 'selected' : ''}>Meal vouchers card</option>` : ''}<option value="" ${t.pocket !== 'vouchers' && !L().accountOf(t) ? 'selected' : ''}>Not linked (cash / other)</option></select></label>` : ''}
     ${!isNew && t.category !== 'Transfers' && isOwnTransfer(t, ownContext(S())) ? `<div class="banner info"><span class="banner-ico" aria-hidden="true">${svgIcon('repeat')}</span><div class="small"><b>This looks like money moving between your own accounts.</b> As “${esc(t.category)}” it is counted as ${t.type === 'income' ? 'income' : 'spending'} — and again on the other account. Choose <b>Transfers</b> so it isn’t counted twice.</div></div>` : ''}
     ${fromBank ? `<div id="learn-row" class="learn-box" hidden>
       <label class="checkbox"><input type="checkbox" name="learn"> Also use this category for other transactions containing:</label>
@@ -1421,17 +1565,29 @@ function openTxModal(tx) {
     const amount = locked ? t.amount : round2(Math.abs(parseAmount(fd.get('amount'))));
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter an amount greater than 0.');
     const category = fd.get('category');
+    const finalType = locked ? t.type : type;
+    const splits = finalType === 'expense' ? readSplits(modalForm, amount) : null;
+    const accVal = fd.has('accountId') ? (fd.get('accountId') || '') : null;
+    const pocket = accVal === 'pocket:vouchers' ? 'vouchers' : null;
+    const accId = pocket ? null : (accVal || null);
+    const refundDue = finalType === 'expense' && !pocket && fd.get('refundOn') ? fd.get('refundDue') || null : null;
+    if (refundDue && !/^\d{4}-\d{2}-\d{2}$/.test(refundDue)) throw new Error('Pick the date you expect the refund by.');
     const next = {
       ...t,
-      type: locked ? t.type : type,
+      type: finalType,
       amount,
       category,
       description: (fd.get('description') || '').trim() || category,
       date: locked ? t.date : (fd.get('date') || todayISO()),
       note: (fd.get('note') || '').trim(),
       goalId: cat(category).role === 'savings' ? (fd.get('goalId') || null) : null,
+      splits,
+      refundDue,
       ...(category !== originalCategory ? { manualCategory: true } : {}),
-      ...(fd.has('accountId') && (fd.get('accountId') || null) !== (t.accountId || null) ? { accountId: fd.get('accountId') || null, accountManual: true } : {}),
+      ...(accVal !== null && (pocket || null) !== (t.pocket || null) ? { pocket } : {}),
+      ...(accVal !== null && accId !== (t.accountId || null) ? { accountId: accId, accountManual: true } : {}),
+      // Opened and saved: you've seen its category, so it leaves the "To check" list.
+      ...(fromBank ? { reviewed: true } : {}),
     };
     const keyword = (fd.get('keyword') || '').trim().toLowerCase();
     const learn = fromBank && category !== originalCategory && fd.get('learn');
@@ -1471,6 +1627,15 @@ function openTxModal(tx) {
     chipsEl.hidden = !html;
     form.category.dispatchEvent(new Event('change'));
   }));
+  const showForType = () => {
+    $('#split-wrap', form).hidden = type !== 'expense';
+    const pocketNow = form.accountId?.value === 'pocket:vouchers';
+    $('#refund-field', form).hidden = type !== 'expense' || pocketNow;
+  };
+  form.querySelectorAll('[data-type]').forEach((btn) => btn.addEventListener('click', showForType));
+  form.accountId?.addEventListener('change', showForType);
+  wireSplitEditor(form, () => (locked ? t.amount : round2(Math.abs(parseAmount(form.amount.value)))) || 0);
+  form.refundOn?.addEventListener('change', () => { $('#refund-date', form).hidden = !form.refundOn.checked; });
   form.category.addEventListener('change', () => {
     syncChips();
     $('#goal-field', form).hidden = cat(form.category.value).role !== 'savings';
@@ -1484,6 +1649,81 @@ function openTxModal(tx) {
   };
   if (form.keyword) form.keyword.addEventListener('input', updateLearnPreview);
   autoGrow(form.note);
+}
+
+// Bank rows in another currency: the original amount, the rate used and — when the bank
+// converted it — what that cost compared with BNR's rate of the day.
+function fxRows(t) {
+  if (!t.originalCurrency || t.originalCurrency === 'RON' || t.needsFx || t.originalAmount == null) return '';
+  const rate = Number(t.exchangeRate);
+  const fmt4 = (r) => Number(r).toLocaleString('ro-RO', { maximumFractionDigits: 4 });
+  const rows = [`<div class="row"><span class="row-label">Original</span><span class="row-value num">${esc(`${amountFmt.format(Number(t.originalAmount))} ${t.originalCurrency}`)}</span></div>`];
+  if (rate > 0) {
+    rows.push(`<div class="row"><span class="row-label">Rate</span><span class="row-value num">${esc(fmt4(rate))} <span class="muted">(${t.rateSource === 'bank' ? 'the bank’s' : 'BNR'}${t.rateDate ? `, ${esc(fmtDate(t.rateDate, { day: 'numeric', month: 'short' }))}` : ''})</span></span></div>`);
+  }
+  if (t.rateSource === 'bank' && Number(t.bnrRate) > 0) {
+    const atBnr = round2(Number(t.originalAmount) * Number(t.bnrRate));
+    const cost = round2(t.type === 'income' ? atBnr - Number(t.amount) : Number(t.amount) - atBnr);
+    rows.push(`<div class="row"><span class="row-label">BNR that day</span><span class="row-value num">${esc(fmt4(t.bnrRate))}</span></div>`);
+    rows.push(`<div class="row"><span class="row-label">Conversion cost</span><span class="row-value num${cost > 0 ? ' neg' : ''}">${cost > 0.004
+      ? `${esc(formatRON(cost))} <span class="muted">(${esc(String(Math.round((cost / atBnr) * 1000) / 10))}% over BNR)</span>` : 'None: at or better than BNR'}</span></div>`);
+  }
+  return rows.join('');
+}
+
+// Split editor (expenses): category + amount per line; the lines must add up to the amount.
+function splitLineHTML(category = '', amount = '') {
+  return `<div class="split-line"><select class="split-cat" aria-label="Category">${categoryOptions('expense', category)}</select>`
+    + `<input class="split-amt" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${esc(formatAmountInput(amount))}" aria-label="Amount">`
+    + `<button type="button" class="btn ghost icon-only small split-del" aria-label="Remove line" title="Remove line">${svgIcon('x', { size: 16 })}</button></div>`;
+}
+function wireSplitEditor(form, getAmount) {
+  const box = $('#split-box', form);
+  if (!box) return;
+  const lines = $('#split-lines', form);
+  const left = $('#split-left', form);
+  const toggle = $('#split-toggle', form);
+  const sum = () => [...lines.querySelectorAll('.split-amt')].reduce((n, i) => n + (Math.abs(parseAmount(i.value)) || 0), 0);
+  const update = () => {
+    const rest = round2(getAmount() - sum());
+    left.textContent = Math.abs(rest) < 0.005 ? 'Adds up' : rest > 0 ? `${formatRON(rest)} left to assign` : `${formatRON(-rest)} too much`;
+    left.classList.toggle('warn-text', Math.abs(rest) >= 0.005);
+  };
+  toggle.addEventListener('click', () => {
+    const open = box.hidden;
+    box.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open && !lines.children.length) lines.innerHTML = splitLineHTML(form.category.value, getAmount()) + splitLineHTML('', '');
+    update();
+  });
+  $('#split-add', form).addEventListener('click', () => {
+    if (lines.children.length >= 10) return;
+    lines.insertAdjacentHTML('beforeend', splitLineHTML('', ''));
+    update();
+  });
+  lines.addEventListener('click', (e) => { const b = e.target.closest('.split-del'); if (b) { b.closest('.split-line').remove(); update(); } });
+  lines.addEventListener('input', update);
+  lines.addEventListener('focusout', (e) => {
+    if (!e.target.matches('.split-amt')) return;
+    const v = parseAmount(e.target.value);
+    if (Number.isFinite(v) && v) e.target.value = formatAmountInput(round2(Math.abs(v)));
+    update();
+  });
+  form.amount?.addEventListener('input', update);
+  update();
+}
+// null = not split (box closed or empty); throws when the lines don't add up.
+function readSplits(form, amount) {
+  const box = $('#split-box', form);
+  if (!box || box.hidden) return null;
+  const parts = [...box.querySelectorAll('.split-line')]
+    .map((l) => ({ category: l.querySelector('.split-cat').value, amount: round2(Math.abs(parseAmount(l.querySelector('.split-amt').value))) }))
+    .filter((p) => p.category && p.amount > 0);
+  if (!parts.length) return null;
+  if (parts.length < 2) throw new Error('A split needs at least two lines (or close the split).');
+  const sum = round2(parts.reduce((n, p) => n + p.amount, 0));
+  if (Math.abs(sum - amount) > 0.01) throw new Error(`The split lines add up to ${formatRON(sum)}, not ${formatRON(amount)}.`);
+  return parts;
 }
 
 // A one-line note box that grows with its text (long bank notes wrap instead of being cut).
@@ -1803,13 +2043,17 @@ function heroCard({ s, isCurrent, used, daysLeft }) {
   if (isCurrent && v?.known) {
     const balance = v.cash;
     const perDay = balance > 0 && daysLeft ? balance / daysLeft : 0;
+    // Safe to spend: the balance minus the bills, card repayment and saving still due before payday.
+    const safe = safeMini(daysLeft, until);
     return `<div class="card hero-card">
       <span class="hero-label">${svgIcon('wallet', { size: 18 })}<span>${esc(accountName(main))}</span></span>
       ${bigAmount(balance)}
       ${updatedHTML(main)}
       ${meter}
       <div class="hero-minis">
-        ${mini(`Per day until ${until}`, perDay ? `≈ ${formatRON(perDay, { short: true })}` : formatRON(0, { short: true }), days)}
+        ${safe ? `<a class="hero-mini hero-mini-link" href="#overview" data-action="scroll-ahead" title="How this is worked out">
+            <span class="hero-mini-label">${esc(safe.label)}</span><span class="hero-mini-value num ${safe.cls}">${esc(safe.value)}</span><span class="hero-mini-sub">${esc(safe.sub)}</span></a>`
+          : mini(`Per day until ${until}`, perDay ? `≈ ${formatRON(perDay, { short: true })}` : formatRON(0, { short: true }), days)}
         ${mini('This period', formatRON(net, { sign: true, short: true }), 'Money in − out', net < 0 ? 'neg' : '')}
       </div>
       ${reconcileHTML(main)}
@@ -1836,8 +2080,18 @@ function creditCardPanel(key) {
   const owed = cards.reduce((sum, a) => sum + accountView(a).owed, 0);
   const onCard = S().transactions.filter((t) => L().kindOf(t) === 'credit');
   const opts = { isRefund: (t) => L().isRefund(t), refundCategory: (t) => L().refundCategory(t) };
-  const periodOf = (k) => ({ key: k, ...cardPeriod(onCard.filter((t) => keyOf(t.date) === k), opts) });
+  // Interest and fees are the cost of the credit, not shopping: shown apart. Repayments are
+  // counted once, from the current account's side when the card's side isn't in the app.
+  const periodOf = (k) => {
+    const p = cardPeriod(onCard.filter((t) => keyOf(t.date) === k), opts);
+    const fees = creditCost(S(), L(), keyOf, k).total;
+    const cats = { ...p.cats };
+    delete cats[FEES_CATEGORY];
+    return { key: k, ...p, cats, fees, spent: round2(p.spent - fees), repaid: repaidInPeriod(S(), L(), keyOf, k).total };
+  };
   const now = periodOf(key);
+  const cost = creditCost(S(), L(), keyOf, key);
+  const lastPair = pairRepayments(S(), L()).pairs.at(-1);
   const firstDate = onCard.reduce((min, t) => (!min || t.date < min ? t.date : min), null);
   const firstKey = firstDate ? keyOf(firstDate) : null;
   const past = [1, 2, 3].map((i) => periodOf(addMonths(P().current(), -i)));
@@ -1862,12 +2116,18 @@ function creditCardPanel(key) {
       ${row('Debt-free in 12 months', `<span class="num">${short(in12)}</span> a month`, `Repay this and keep card spending at ${short(avgSpent)} or less`)}
     </div>`;
   }
+  if (lastPair && plusDays(lastPair.out.date, 45) >= todayISO()) {
+    const p = lastPair;
+    const arrived = p.in ? `Arrived on the card ${fmtDate(p.in.date, { day: 'numeric', month: 'short' })}` : 'Not on the card yet (or the card’s statement isn’t in the app)';
+    pace += `<div class="list cc-pace">${row('Last repayment', `<span class="num">${short(p.out.amount)}</span> · ${esc(fmtDate(p.out.date, { day: 'numeric', month: 'short' }))}`, esc(arrived), p.in ? '' : 'warn')}</div>`;
+  }
   return `<div class="card card-panel cc-panel">
     <div class="card-head">${cardTitle('card', 'Credit card', { after: digits.length ? ` <span class="cc-digits num">··${esc(digits.join(', ··'))}</span>` : '' })}<a class="link" href="${accountTxLink(cards[0].uid, key)}">Transactions${svgIcon('chevron-right', { size: 16 })}</a></div>
     <div class="cc-kpis">
       ${kpi('Owed', formatRON(owed), asOf ? `Updated ${esc(asOf.text)}${asOf.stale ? ' <span class="badge warning">Stale</span>' : ''}` : 'Now')}
       ${kpi('Spent this period', formatRON(now.spent), now.refunded ? `After ${short(now.refunded)} refunded` : '')}
       ${kpi('Paid back this period', formatRON(now.repaid), '', now.repaid > 0 ? 'pos' : '')}
+      ${now.fees || cost.avg3 ? kpi('Interest & fees', formatRON(now.fees), cost.avg3 ? `About ${short(cost.avg3)} a period lately` : 'The cost of the credit', now.fees ? 'neg' : '') : ''}
     </div>
     ${pace}
     ${top.length ? `<span class="section-label cc-top-label">Top on the card this period (RON)</span>
@@ -1987,6 +2247,412 @@ function tipRow(t) {
   if (colon > 0 && colon <= 40) { lead = text.slice(0, colon); rest = text.slice(colon + 2); } else if (stop > 0) { lead = text.slice(0, stop + 1); rest = text.slice(stop + 2); }
   rest = rest.charAt(0).toUpperCase() + rest.slice(1);
   return `<li class="row pl-tip">${iconTile(ico, { tone })}<span class="pl-tip-text"><b>${esc(lead)}</b>${rest ? ` <span class="muted">${esc(rest)}</span>` : ''}</span></li>`;
+}
+
+// ---------------------------------------------------------------- trust + money ahead
+// Bank check, safe to spend, the period calendar, alerts, subscriptions, refunds you
+// wait for, meal vouchers, net worth and the review queue (shared/trust, recurring,
+// safespend, cardpay, review, networth, alerts). The models are computed once per
+// data change, like P() and L().
+const derived = { key: '', values: new Map() };
+function D(name, fn) {
+  const s = S();
+  const k = `${s.updatedAt}|${s.transactions.length}|${JSON.stringify(s.settings || {})}|${JSON.stringify(s.assets || [])}|${todayISO()}`;
+  if (k !== derived.key) { derived.key = k; derived.values.clear(); }
+  if (!derived.values.has(name)) derived.values.set(name, fn());
+  return derived.values.get(name);
+}
+const accountOfFn = (t) => L().accountOf(t);
+const allSeries = () => D('series', () => detectSeries(S(), { today: todayISO(), accountOf: accountOfFn }));
+const short = (n) => formatRON(n, { short: true });
+// "45 RON" or "45–60 RON" (a range when bills vary); "−124 to −54 RON" when it goes below zero.
+function rangeRON(lo, hi) {
+  const a = Math.round(Math.min(lo, hi)); const b = Math.round(Math.max(lo, hi));
+  if (a === b) return short(a);
+  return a < 0 ? `${a < 0 ? '−' : ''}${amountInt(Math.abs(a))} to ${short(b)}` : `${amountInt(a)}–${short(b)}`;
+}
+const amountInt = (n) => Math.round(n).toLocaleString('ro-RO');
+const plusDays = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); return todayISO(new Date(y, m - 1, d + n)); };
+
+// Still to come out of the main current account until payday (current period only):
+// bills and subscriptions, the card repayment, money planned for goals and your reserve.
+function moneyAhead() {
+  return D('ahead', () => {
+    const key = P().current();
+    const today = todayISO();
+    const end = P().end(key);
+    const main = L().mainAccount;
+    const bills = upcomingBills(allSeries(), today, end).filter((u) => !main || !u.accountId || u.accountId === main.uid);
+    const due = cardDue(S(), L(), P(), today);
+    const refunds = expectedRefunds(S(), { today }).filter((r) => r.status !== 'received' && r.due <= end)
+      .map((r) => ({ date: r.due < today ? today : r.due, label: `Refund: ${displayDesc(r.tx.description)}`, amount: r.tx.amount }));
+    const nextPayday = P().payday ? P().start(addMonths(key, 1)) : null;
+    const calendar = periodCalendar({ today, periodEnd: end, nextPayday, upcoming: bills, cardDue: due, refunds });
+    const v = main?.balance ? accountView(main) : null;
+    // Only what goals with a deadline need each month is set aside; the plan's suggestion
+    // for open-ended goals ("save the rest") would leave nothing to spend.
+    let plannedSaving = 0;
+    if (S().goals.some((g) => !g.archived && g.deadline)) {
+      const { plan } = currentPlan(null);
+      const required = plan.goals.filter((g) => g.deadline && g.status !== 'done').reduce((n, g) => n + (Number(g.required) || 0), 0);
+      plannedSaving = Math.max(0, round2(required - summary(key).saved));
+    }
+    const buffer = Number(S().settings?.spendBuffer) || 0;
+    const safe = v?.known ? safeToSpend({ balance: v.cash, today, periodEnd: end, upcoming: bills, cardDue: due, plannedSaving, buffer }) : null;
+    return { key, end, bills, due, calendar, safe, nextPayday, main };
+  });
+}
+
+// Overview: what is still to come this period and how "safe to spend" is worked out.
+const AHEAD_KIND = { salary: ['Salary', 'good'], bill: ['Bill', 'neutral'], card: ['Card repayment', 'warning'], refund: ['Refund expected', 'good'] };
+function aheadCard() {
+  const a = moneyAhead();
+  const { safe } = a;
+  if (!a.calendar.length && !safe) return '';
+  const until = P().payday ? 'payday' : 'month end';
+  const amount = (e) => {
+    if (e.min == null && e.max == null) return '';
+    const sign = e.kind === 'salary' || e.kind === 'refund' ? '+' : '−';
+    return `${sign}${rangeRON(e.min ?? e.max, e.max ?? e.min)}`;
+  };
+  const rows = a.calendar.map((e) => {
+    const [kindLabel, tone] = AHEAD_KIND[e.kind] || ['', 'neutral'];
+    const d = fmtDate(e.date, { day: 'numeric' });
+    const mon = fmtDate(e.date, { month: 'short' });
+    return `<div class="row ov-row ah-row">
+      <span class="ah-date ${tone}"><b>${esc(d)}</b><span>${esc(mon)}</span></span>
+      <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${esc(e.label)}</span><span class="ov-row-value num${e.kind === 'salary' || e.kind === 'refund' ? ' pos' : ''}">${esc(amount(e))}</span></span>
+        <span class="sub">${esc(kindLabel)}${e.late ? ' · due, not paid yet' : ''}${e.variable ? ' · amount varies' : ''}</span></span>
+    </div>`;
+  });
+  let breakdown = '';
+  if (safe) {
+    const line = (label, value, cls = '') => `<div class="ah-line${cls ? ` ${cls}` : ''}"><span>${label}</span><span class="num">${value}</span></div>`;
+    const sum = (kind) => safe.items.filter((i) => i.kind === kind);
+    const minus = (items) => `−${rangeRON(items.reduce((n, i) => n + i.min, 0), items.reduce((n, i) => n + i.max, 0))}`;
+    const parts = [
+      line(esc(accountName(a.main)), formatRON(safe.balance)),
+      sum('bill').length ? line(`Bills and subscriptions (${sum('bill').length})`, minus(sum('bill'))) : '',
+      sum('card').length ? line('Card repayment', minus(sum('card'))) : '',
+      sum('saving').length ? line('Still needed for goals with a deadline', minus(sum('saving'))) : '',
+      sum('buffer').length ? line('Your reserve', minus(sum('buffer'))) : '',
+      line(`<b>Safe to spend until ${until}</b>`, `<b>${rangeRON(safe.low, safe.high)}</b>`, `ah-total${safe.high < 0 ? ' neg' : ''}`),
+      line(`${plural(safe.daysLeft, 'day')} left`, `≈ ${rangeRON(safe.perDayLow, safe.perDayHigh)} a day`, 'ah-perday'),
+    ];
+    breakdown = `<div class="ah-sum">${parts.join('')}</div>`;
+  }
+  return `<div class="card" id="ov-ahead">
+    <div class="card-head">${cardTitle('calendar', P().payday ? 'Until payday' : 'Until month end')}<a class="link" href="#plan">Subscriptions${svgIcon('chevron-right', { size: 16 })}</a></div>
+    ${breakdown}
+    ${rows.length ? moreRows({ key: 'overview.ahead', rows, shown: 5, title: 'Later this period', wrap: (h) => `<div class="list ah-list">${h}</div>` })
+      : '<p class="caption">No bills or repayments expected before payday.</p>'}
+  </div>`;
+}
+
+// Hero mini: safe to spend per day (a range when bills vary), instead of "balance ÷ days".
+function safeMini(daysLeft, until) {
+  const { safe } = moneyAhead();
+  if (!safe) return null;
+  const days = `${plural(daysLeft, 'day')} left`;
+  if (safe.high <= 0) {
+    return { label: `Safe to spend until ${until}`, value: formatRON(0, { short: true }), sub: `Bills before ${until} are ${short(-safe.low)} more than the balance`, cls: 'neg' };
+  }
+  const owed = safe.balance - safe.high;
+  return {
+    label: `Safe to spend until ${until}`,
+    value: `≈ ${rangeRON(safe.perDayLow, safe.perDayHigh)} / day`,
+    sub: owed > 0.5 ? `${days} · after ${short(owed)} still to pay` : days,
+    cls: '',
+  };
+}
+
+// ---- Bank check: is every account synced, does it match the bank, how long does access last?
+function trustCard() {
+  const accs = linkedAccounts();
+  if (!accs.length) return '';
+  const now = Date.now();
+  const rows = accs.map((a) => ({ a, t: accountTrust(S(), a.uid, { accountOf: accountOfFn, now }) }));
+  const consent = [...consentStatus(S(), { now })].sort((x, y) => x.daysLeft - y.daysLeft)[0] || null;
+  const err = S().bank.lastError;
+  const offRows = rows.filter(({ t }) => t.reconcile && !t.reconcile.ok && !t.reconcile.uncertain);
+  const staleRows = rows.filter(({ t }) => t.stale);
+  const consentIssue = consent && consent.level !== 'ok';
+  const problems = offRows.length + staleRows.length + (consentIssue ? 1 : 0) + (err ? 1 : 0);
+  const state = (a, t) => {
+    const r = t.reconcile;
+    const currency = String(a.balance?.currency || a.currency || 'RON').toUpperCase();
+    if (!r) return ['clock', 'neutral', 'Checked after two syncs'];
+    if (r.ok) return ['check', 'good', 'Matches the bank'];
+    if (r.uncertain) return ['clock', 'neutral', 'Checking'];
+    return ['alert', 'warning', `Off by ${fmtIn(r.diff, currency, { sign: true })}`];
+  };
+  const syncText = (t) => (t.lastSyncAt
+    ? `Synced ${bankTime(t.lastSyncAt)}${t.added != null ? ` · ${t.added ? plural(t.added, 'new transaction') : 'nothing new'}` : ''}`
+    : 'Not synced yet');
+  const accRow = ({ a, t }) => {
+    const [ico, tone, label] = state(a, t);
+    const hints = t.reconcile && !t.reconcile.ok ? t.hints || [] : [];
+    return `<div class="tr-acct">
+      <div class="row ov-row">${iconTile(ACCOUNT_ICON[accountKind(a)] || 'wallet', { tone: 'neutral' })}
+        <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${esc(accountName(a))}</span><span class="ov-row-value tr-state ${tone}">${svgIcon(ico, { size: 16 })}<span>${esc(label)}</span></span></span>
+        <span class="sub">${esc(syncText(t))}${t.stale ? ' <span class="badge warning">Stale</span>' : ''}</span></span>
+      </div>
+      ${hints.length ? `<ul class="tr-hints">${hints.map((h) => `<li>${h.txId
+        ? `<a href="#transactions" data-action="edit-tx" data-id="${esc(h.txId)}">${esc(h.text)}</a>` : esc(h.text)}</li>`).join('')}</ul>` : ''}
+    </div>`;
+  };
+  let consentHTML = '';
+  if (consent) {
+    const until = fmtDate(String(consent.validUntil).slice(0, 10));
+    if (consent.level === 'expired') {
+      consentHTML = `<div class="banner critical tr-banner">${iconTile('lock', { tone: 'critical' })}<div><b>Bank access to ${esc(consent.bank)} ended on ${esc(until)}</b>
+        <div class="small">New transactions stopped coming in. Renew it in Settings (about two minutes), or import a CSV statement meanwhile.</div>
+        <div class="tr-actions"><a class="btn small primary" href="#settings">Renew access</a><a class="btn small" href="#settings">Import a CSV</a></div></div></div>`;
+    } else {
+      const badge = consent.level === 'urgent' ? '<span class="badge critical">Renew now</span>' : consent.level === 'soon' ? '<span class="badge warning">Renew soon</span>' : '';
+      consentHTML = `<div class="row ov-row tr-consent">${iconTile('lock', { tone: consent.level === 'urgent' ? 'critical' : consent.level === 'soon' ? 'warning' : 'neutral' })}
+        <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">Bank access until ${esc(until)}</span><span class="ov-row-value">${esc(plural(consent.daysLeft, 'day'))} left ${badge}</span></span>
+        <span class="sub">${consent.level === 'ok' ? 'The bank asks you to confirm access again every 90–180 days.' : 'Renewing takes about two minutes: Settings → Add or reconnect a bank.'}</span></span>
+        ${consent.level === 'ok' ? '' : `<a class="btn small" href="#settings">Renew</a>`}</div>`;
+    }
+  }
+  const errHTML = err ? `<div class="banner warn tr-banner">${iconTile('alert', { tone: 'warning' })}<div><b>Last bank sync failed</b>
+    ${friendlyBankError(err).lines.map((l) => `<div class="small">${esc(l)}</div>`).join('')}</div></div>` : '';
+  const head = problems
+    ? `Bank check <span class="badge warning">${plural(problems, 'thing', 'things')} to look at</span>`
+    : `Bank check <span class="tr-ok">${svgIcon('check', { size: 14 })}${offRows.length || rows.some(({ t }) => t.reconcile?.ok) ? 'Matches the bank' : 'Synced'} · ${esc(bankTime(S().bank.lastSync))}</span>`;
+  const body = `${errHTML}${consent?.level === 'expired' ? consentHTML : ''}<div class="list tr-list">${rows.map(accRow).join('')}${consent?.level !== 'expired' ? consentHTML : ''}</div>`;
+  return `<div class="card tr-card">${collapsible({ key: `overview.trust.${problems ? 'issues' : 'ok'}`, title: head, icon: iconTile('shield', { tone: problems ? 'warning' : 'good' }), body, open: Boolean(problems), cls: 'tr-collapse' })}</div>`;
+}
+
+// ---- Alerts (shared/alerts.js), dismissible per alert on this device.
+const ALERT_ICON = { consent: 'lock', sync: 'refresh', bill: 'calendar', price: 'arrow-up-right', renewal: 'repeat', refund: 'undo', card: 'card', low: 'wallet', summary: 'bars', assets: 'savings' };
+const ALERT_TONE = { info: 'accent', warning: 'warning', critical: 'critical' };
+const LS_DISMISSED = 'bp.alerts.dismissed';
+function dismissedAlerts() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_DISMISSED)) || []); } catch { return new Set(); }
+}
+function dismissAlert(id) {
+  const ids = [...dismissedAlerts(), id].slice(-300);
+  try { localStorage.setItem(LS_DISMISSED, JSON.stringify(ids)); } catch { /* storage blocked: it comes back next time */ }
+}
+const currentAlerts = () => D('alerts', () => buildAlerts(S(), { today: todayISO(), now: Date.now() }));
+function alertsCard() {
+  const hidden = dismissedAlerts();
+  const list = currentAlerts().filter((a) => !hidden.has(a.id));
+  if (!list.length) return '';
+  const row = (a) => `<div class="al-row">
+      ${iconTile(ALERT_ICON[a.kind] || 'bell', { tone: ALERT_TONE[a.level] || 'accent' })}
+      <a class="al-main" href="${esc(a.link && a.link.startsWith('#') ? a.link : '#overview')}"><b>${esc(a.title)}</b><span class="sub">${esc(a.text)}</span></a>
+      <button class="btn ghost icon-only small al-x" type="button" data-action="dismiss-alert" data-id="${esc(a.id)}" aria-label="Dismiss" title="Dismiss">${svgIcon('x', { size: 16 })}</button>
+    </div>`;
+  return `<div class="card al-card" role="region" aria-label="Alerts">
+    ${moreRows({ key: 'overview.alerts', rows: list.map(row), shown: 2, title: 'More alerts', wrap: (h) => `<div class="al-list">${h}</div>` })}
+  </div>`;
+}
+
+// ---- Subscriptions and bills (Plan tab): found from repeating payments; confirm or ignore each.
+const CADENCE = { weekly: 'every week', monthly: 'every month', yearly: 'every year' };
+const perMonth = (x) => (x.cadence === 'yearly' ? x.avg / 12 : x.cadence === 'weekly' ? (x.avg * 52) / 12 : x.avg);
+function subscriptionsCard() {
+  const all = allSeries();
+  const active = all.filter((x) => x.status !== 'ignored');
+  const ignored = all.filter((x) => x.status === 'ignored');
+  if (!all.length) return '';
+  const total = round2(active.reduce((n, x) => n + perMonth(x), 0));
+  const row = (x) => {
+    const price = x.priceChange ? ` <span class="badge warning">+${esc(String(x.priceChange.pct))}% since ${esc(fmtDate(x.priceChange.date, { day: 'numeric', month: 'short' }))}</span>` : '';
+    const amount = x.variable ? rangeRON(x.min, x.max) : short(x.amount);
+    const acts = x.status === 'ignored'
+      ? `<button class="btn small" type="button" data-action="series-status" data-key="${esc(x.key)}" data-value="">Restore</button>`
+      : `${x.status === 'suggested' ? `<button class="btn small icon-only ghost" type="button" data-action="series-status" data-key="${esc(x.key)}" data-value="confirmed" aria-label="Yes, it repeats" title="Yes, it repeats">${svgIcon('check', { size: 16 })}</button>` : ''}
+        <button class="btn small icon-only ghost" type="button" data-action="series-status" data-key="${esc(x.key)}" data-value="ignored" aria-label="Not a subscription" title="Not a subscription — hide it">${svgIcon('x', { size: 16 })}</button>`;
+    return `<div class="row ov-row sb-row">
+      <span class="ico-tile neutral" aria-hidden="true">${esc(icon(x.category))}</span>
+      <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${esc(displayDesc(x.label))}${x.status === 'confirmed' ? ` ${svgIcon('check', { size: 14, cls: 'sb-ok' })}` : ''}</span><span class="ov-row-value num">${esc(amount)}</span></span>
+        <span class="sub">${esc(x.category)} · ${esc(CADENCE[x.cadence] || x.cadence)} · next ${esc(fmtDate(x.nextDate, { day: 'numeric', month: 'short' }))}${price}</span></span>
+      <span class="sb-acts">${acts}</span>
+    </div>`;
+  };
+  return `<div class="card">
+    <div class="card-head">${cardTitle('repeat', 'Subscriptions and bills')}<span class="muted small num">≈ ${short(total)} / month</span></div>
+    <p class="caption sb-help">Found from payments that repeat. Tick the right ones, hide the rest: confirmed ones go into “safe to spend” and the alerts.</p>
+    ${active.length ? moreRows({ key: 'plan.subscriptions', rows: active.map(row), shown: 6, title: 'More payments', wrap: (h) => `<div class="list">${h}</div>` }) : '<p class="caption">All hidden.</p>'}
+    ${ignored.length ? collapsible({ key: 'plan.subscriptions.ignored', title: 'Hidden', count: ignored.length, body: `<div class="list">${ignored.map(row).join('')}</div>`, cls: 'ov-more' }) : ''}
+  </div>`;
+}
+
+// ---- Refunds you are waiting for (marked on a purchase).
+function refundsCard() {
+  const today = todayISO();
+  const list = expectedRefunds(S(), { today }).filter((r) => r.status !== 'received' || (r.refund && plusDays(r.refund.date, 14) >= today));
+  if (!list.length) return '';
+  const rows = list.map((r) => {
+    const status = r.status === 'received' ? ['good', `Received ${fmtDate(r.refund.date, { day: 'numeric', month: 'short' })}`]
+      : r.status === 'overdue' ? ['critical', `Late since ${fmtDate(r.due, { day: 'numeric', month: 'short' })}`]
+        : ['warning', `Expected by ${fmtDate(r.due, { day: 'numeric', month: 'short' })}`];
+    return `<div class="row ov-row" role="button" tabindex="0" data-action="edit-tx" data-id="${esc(r.tx.id)}">
+      ${iconTile('undo', { tone: status[0] === 'good' ? 'good' : status[0] === 'critical' ? 'critical' : 'neutral' })}
+      <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${esc(displayDesc(r.tx.description))}</span><span class="ov-row-value num">${esc(short(r.tx.amount))}</span></span>
+        <span class="sub"><span class="status ${status[0]}">${esc(status[1])}</span> · bought ${esc(fmtDate(r.tx.date, { day: 'numeric', month: 'short' }))}</span></span>
+    </div>`;
+  });
+  return `<div class="card"><div class="card-head">${cardTitle('undo', 'Refunds you’re waiting for')}</div>
+    ${moreRows({ key: 'overview.refunds', rows, shown: 3, title: 'More refunds', wrap: (h) => `<div class="list">${h}</div>` })}</div>`;
+}
+
+// ---- Meal vouchers: a separate pocket (Edenred, Pluxee, Up), never part of the current account.
+function weekdaysBetween(from, to) {
+  let n = 0;
+  for (let d = from; d <= to; d = plusDays(d, 1)) { const wd = new Date(`${d}T12:00:00`).getDay(); if (wd !== 0 && wd !== 6) n += 1; }
+  return n;
+}
+function vouchersModel(key) {
+  const rows = S().transactions.filter((t) => t.pocket === 'vouchers');
+  const sum = (list, type) => round2(list.filter((t) => t.type === type).reduce((n, t) => n + t.amount, 0));
+  const inPeriod = rows.filter((t) => keyOf(t.date) === key);
+  return {
+    loaded: sum(inPeriod, 'income'), spent: sum(inPeriod, 'expense'),
+    balance: round2(sum(rows, 'income') - sum(rows, 'expense')), count: rows.length,
+  };
+}
+function vouchersCard(key) {
+  const mv = S().settings?.mealVouchers;
+  if (!mv?.enabled) return '';
+  const m = vouchersModel(key);
+  const perDay = Number(mv.perDay) || 0;
+  const days = weekdaysBetween(P().start(key), P().end(key));
+  const expected = round2(days * perDay);
+  const kpi = (label, value, cls = '') => `<div class="cc-kpi"><span class="cc-kpi-top"><span class="cc-kpi-label">${label}</span><span class="cc-kpi-value num ${cls}">${value}</span></span></div>`;
+  return `<div class="card mv-card">
+    <div class="card-head">${cardTitle('receipt', 'Meal vouchers')}<a class="link" href="${txLink({ month: key, account: 'vouchers' })}">Transactions${svgIcon('chevron-right', { size: 16 })}</a></div>
+    <div class="cc-kpis">${kpi('On the card', formatRON(m.balance), m.balance < 0 ? 'neg' : '')}${kpi('Loaded this period', formatRON(m.loaded), 'pos')}${kpi('Spent this period', formatRON(m.spent))}</div>
+    <p class="caption">Kept apart from your current account. ${perDay ? `A full month is about ${days} working days × ${short(perDay)} = ${short(expected)}.` : ''}</p>
+    <div class="mv-actions">
+      <button class="btn small" type="button" data-action="vouchers-add" data-type="income" data-amount="${expected || ''}">${svgIcon('plus')}Top-up</button>
+      <button class="btn small" type="button" data-action="vouchers-add" data-type="expense">${svgIcon('plus')}Spent</button>
+    </div>
+  </div>`;
+}
+
+// ---- Net worth (Goals tab): bank balances − card debt + what you add by hand (pensions, cash, loans).
+const ASSET_KINDS = { pension: 'Pension (Pillar II / III)', investment: 'Investments', cash: 'Cash at home', property: 'Property', loan: 'Loan (debt)', other: 'Other' };
+const ASSET_ICON = { pension: 'savings', investment: 'plan', cash: 'wallet', property: 'bank', loan: 'card', other: 'tag' };
+function netWorthCard() {
+  const nw = netWorth(S(), { now: Date.now() });
+  const stale = new Set((nw.stale || []).map((a) => a.id));
+  const rows = nw.items.map((it) => {
+    const neg = it.kind === 'loan' || it.kind === 'card';
+    const sub = it.source === 'manual'
+      ? `${ASSET_KINDS[it.kind] || 'Other'}${stale.has(it.id) ? ' · <span class="badge warning">Update</span>' : ''}`
+      : 'From your bank';
+    const attrs = it.source === 'manual' ? ` role="button" tabindex="0" data-action="edit-asset" data-id="${esc(it.id)}"` : '';
+    return `<div class="row ov-row"${attrs}>${iconTile(ASSET_ICON[it.kind] || (it.kind === 'card' ? 'card' : 'bank'), { tone: 'neutral' })}
+      <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${esc(it.name)}</span><span class="ov-row-value num${neg ? ' neg' : ''}">${neg ? '−' : ''}${esc(formatRON(Math.abs(it.amount)))}</span></span>
+      <span class="sub">${sub}</span></span></div>`;
+  });
+  return `<div class="card nw-card">
+    <div class="card-head">${cardTitle('savings', 'Net worth')}<button class="btn small" type="button" data-action="add-asset">${svgIcon('plus')}Add</button></div>
+    <div class="nw-total">${bigAmount(nw.total, { sign: nw.total < 0 })}<span class="caption">Bank money − card debt + what you add here (pensions, cash, loans). Update them every few months.</span></div>
+    ${rows.length ? moreRows({ key: 'goals.networth', rows, shown: 5, title: 'More', wrap: (h) => `<div class="list">${h}</div>` }) : ''}
+  </div>`;
+}
+
+function openAssetModal(asset) {
+  const isNew = !asset;
+  const a = asset || { id: uid(), name: '', kind: 'pension', amount: '' };
+  openModal(`
+    <h2 id="modal-title">${isNew ? 'Add to net worth' : 'Edit'}</h2>
+    <label class="field">Name<input name="name" maxlength="60" value="${esc(a.name)}" placeholder="e.g. Pillar II — NN" autocomplete="off" ${isNew ? 'autofocus' : ''} required></label>
+    <label class="field">Kind<select name="kind">${Object.entries(ASSET_KINDS).map(([k, label]) => `<option value="${k}" ${k === a.kind ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
+    <label class="field">Amount today (RON)<input class="amount-input" name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${esc(formatAmountInput(a.amount))}" required></label>
+    <p class="caption" style="margin:0">Pension balances are on the statement from your pension fund (or on its website). A loan is what you still owe.</p>
+    <p class="form-error" role="alert"></p>
+    <div class="modal-actions">
+      ${isNew ? '' : `<button class="btn danger" type="button" data-modal="delete">${svgIcon('trash')}Delete</button>`}
+      <span class="spacer"></span>
+      <button class="btn" type="button" data-modal="cancel">Cancel</button>
+      <button class="btn primary" type="submit">Save</button>
+    </div>`, async (action, fd) => {
+    if (action === 'delete') { data.deleteAsset(a.id); toast('Removed'); return false; }
+    const name = String(fd.get('name') || '').trim();
+    const amount = round2(Math.abs(parseAmount(fd.get('amount'))));
+    if (!name) throw new Error('Give it a name.');
+    if (!Number.isFinite(amount)) throw new Error('Enter the amount.');
+    data.upsertAsset({ id: a.id, name, kind: fd.get('kind'), amount });
+    toast('Saved');
+    return false;
+  });
+  formatMoneyOnBlur(modalForm);
+}
+
+// ---- Review queue (Transactions): categories guessed by the built-in rules, confirmed in one tap.
+const LS_SUGGEST = 'bp.rules.notnow';
+function notNowRules() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_SUGGEST)) || []); } catch { return new Set(); }
+}
+const REASON_TEXT = {
+  manual: 'You picked this category',
+  goal: 'Money for a goal',
+  'own-transfer': 'Money between your own accounts',
+  builtin: 'Guessed from the bank text',
+  fallback: 'No rule matched: please check it',
+  'manual-entry': 'Added by hand',
+};
+function reasonText(r) {
+  if (!r) return '';
+  if (r.kind === 'rule') return `Set by your rule “${r.keyword || String(r.pattern || '').replace(/\\(.)/g, '$1')}”`;
+  return REASON_TEXT[r.kind] || '';
+}
+function reviewCard() {
+  const queue = D('review', () => reviewQueue(S(), { today: todayISO() }));
+  const skip = notNowRules();
+  const suggestions = D('suggest', () => suggestRules(S())).filter((x) => !skip.has(`${x.keyword}|${x.category}`));
+  if (!queue.length && !suggestions.length) return '';
+  const txRowReview = (t) => `<div class="rv-row">
+      <span class="ico-tile neutral" aria-hidden="true">${esc(icon(t.category))}</span>
+      <span class="rv-main" role="button" tabindex="0" data-action="edit-tx" data-id="${esc(t.id)}">
+        <span class="rv-top"><span class="row-label">${esc(displayDesc(t.description) || t.category)}</span><span class="num">${esc(rowAmount(t))}</span></span>
+        <span class="sub"><b>${esc(t.category)}</b> · ${esc(fmtDate(t.date, { day: 'numeric', month: 'short' }))} · ${esc(reasonText(categoryReason(t, S())))}</span>
+      </span>
+      <button class="btn small icon-only rv-ok" type="button" data-action="review-ok" data-id="${esc(t.id)}" aria-label="Category is right" title="Category is right">${svgIcon('check', { size: 18 })}</button>
+    </div>`;
+  const suggestRow = (x) => `<div class="rv-row rv-suggest">
+      ${iconTile('rules', { tone: 'accent' })}
+      <span class="rv-main"><span class="row-label">Always put “${esc(x.keyword)}” in ${esc(x.category)}?</span>
+        <span class="sub">You changed ${esc(String(x.count))} of its last 3 transactions to ${esc(x.category)}.</span></span>
+      <span class="rv-acts"><button class="btn small primary" type="button" data-action="suggest-rule" data-keyword="${esc(x.keyword)}" data-category="${esc(x.category)}">Create rule</button>
+        <button class="btn small ghost" type="button" data-action="suggest-later" data-keyword="${esc(x.keyword)}" data-category="${esc(x.category)}">Not now</button></span>
+    </div>`;
+  const body = `${suggestions.map(suggestRow).join('')}
+    ${queue.length ? moreRows({ key: 'transactions.review.more', rows: queue.map(txRowReview), shown: 4, title: 'More to check', wrap: (h) => `<div class="rv-list">${h}</div>` }) : ''}
+    ${queue.length > 1 ? `<div class="rv-foot"><button class="btn small" type="button" data-action="review-all">${svgIcon('check')}All ${queue.length} are right</button></div>` : ''}`;
+  const count = queue.length + suggestions.length;
+  return `<div class="card rv-card">${collapsible({ key: 'transactions.review', title: `To check<span class="collapse-sub">Categories the app guessed. Tap one to change it.</span>`, count: String(count), icon: iconTile('tag', { tone: 'accent' }), body, open: true })}</div>`;
+}
+
+// ---- CSV export and file saving (browser download, or the Android app's save dialog).
+function saveFile(name, mime, content) {
+  if (window.BudgetApp?.saveFile) { window.BudgetApp.saveFile(name, mime, content); return; }
+  const blob = new Blob([content], { type: mime });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+const csvCell = (v) => { const s = String(v ?? ''); return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+// Semicolons and decimal commas: opens straight in Excel with Romanian settings.
+function exportCSV(list, name) {
+  const num = (n) => (n === undefined || n === null || n === '' || !Number.isFinite(Number(n)) ? '' : String(round2(Number(n))).replace('.', ','));
+  const head = ['Date', 'Type', 'Amount (RON)', 'Category', 'Description', 'Note', 'Account', 'Counted', 'Original amount', 'Currency', 'Rate', 'Source'];
+  const rows = [...list].sort((a, b) => a.date.localeCompare(b.date)).map((t) => [
+    t.date, t.type, num(t.amount),
+    t.splits?.length ? t.splits.map((x) => `${x.category} ${num(x.amount)}`).join(' | ') : t.category,
+    t.description, t.note || '',
+    t.pocket === 'vouchers' ? 'Meal vouchers' : accountName(L().accountOf(t)) || '',
+    counts(t) ? 'yes' : 'no',
+    num(t.originalAmount), t.originalCurrency || '', t.exchangeRate ? String(t.exchangeRate).replace('.', ',') : '', t.source || '',
+  ]);
+  saveFile(name, 'text/csv', `﻿${[head, ...rows].map((r) => r.map(csvCell).join(';')).join('\r\n')}`);
 }
 
 function openAccountModal(accUid) {
@@ -2220,19 +2886,55 @@ const actions = {
     toast('Goal added — the plan now includes paying off the card');
   },
   install: async () => { ui.installPrompt?.prompt(); ui.installPrompt = null; render(); },
-  export: () => {
-    if (window.BudgetApp?.saveFile) {
-      window.BudgetApp.saveFile(`budget-${todayISO()}.json`, 'application/json', JSON.stringify(S(), null, 2));
-      return;
-    }
-    const blob = new Blob([JSON.stringify(S(), null, 2)], { type: 'application/json' });
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `budget-${todayISO()}.json` });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  },
+  export: () => saveFile(`budget-${todayISO()}.json`, 'application/json', JSON.stringify(S(), null, 2)),
   logout: () => data.logout(),
   'change-server': () => window.BudgetApp?.changeServer(),
+  'dismiss-alert': (el) => { dismissAlert(el.dataset.id); render(); },
+  'scroll-ahead': () => $('#ov-ahead')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+  'series-status': (el) => {
+    const map = { ...(S().settings?.recurring || {}) };
+    if (el.dataset.value) map[el.dataset.key] = el.dataset.value; else delete map[el.dataset.key];
+    data.setSettings({ recurring: map });
+    toast(el.dataset.value === 'ignored' ? 'Hidden — it won’t count as a bill' : el.dataset.value === 'confirmed' ? 'Got it: it repeats' : 'Restored');
+  },
+  'review-ok': (el, e) => { e.stopPropagation(); data.reviewTransactions([el.dataset.id]); },
+  'review-all': () => {
+    const ids = reviewQueue(S(), { today: todayISO() }).map((t) => t.id);
+    if (!ids.length) return;
+    data.reviewTransactions(ids);
+    toast(`Got it: ${plural(ids.length, 'category', 'categories')} confirmed`);
+  },
+  'suggest-rule': (el) => { data.addRule(el.dataset.keyword, el.dataset.category); toast(`Rule saved: “${el.dataset.keyword}” → ${el.dataset.category}`); },
+  'suggest-later': (el) => {
+    const ids = [...notNowRules(), `${el.dataset.keyword}|${el.dataset.category}`].slice(-200);
+    try { localStorage.setItem(LS_SUGGEST, JSON.stringify(ids)); } catch { /* not remembered */ }
+    render();
+  },
+  'add-asset': () => openAssetModal(),
+  'edit-asset': (el) => openAssetModal((S().assets || []).find((a) => a.id === el.dataset.id)),
+  'vouchers-add': (el) => openTxModal(null, el.dataset.type === 'income'
+    ? { type: 'income', category: 'Other income', description: 'Meal vouchers top-up', amount: Number(el.dataset.amount) || '', pocket: 'vouchers' }
+    : { type: 'expense', category: 'Groceries', description: '', pocket: 'vouchers' }),
+  'export-csv': () => exportCSV(ui.txList || [], `transactions-${todayISO()}.csv`),
+  'export-csv-all': () => exportCSV(S().transactions, `transactions-all-${todayISO()}.csv`),
+  'report-month': (el) => { location.hash = `report?month=${el.dataset.key}`; },
+  'print-report': () => {
+    if (window.BudgetApp) { actions['save-report']($('[data-action="save-report"]')); toast('Saved: open the file to print it or share it as PDF'); return; }
+    window.print();
+  },
+  'save-report': (el) => {
+    const body = $('#report-body');
+    if (!body) return;
+    saveFile(`budget-report-${el?.dataset.key || todayISO()}.html`, 'text/html', `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc($('.rp-head h2')?.textContent || 'Budget report')}</title><style>${REPORT_CSS}</style></head><body>${body.outerHTML}</body></html>`);
+  },
 };
+
+// The saved report is a standalone page: its own small stylesheet.
+const REPORT_CSS = 'body{font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:#161616;margin:24px auto;max-width:760px;padding:0 16px}'
+  + 'h2{font-size:22px;margin:0 0 4px}h3{font-size:15px;margin:22px 0 8px}.rp-head p{color:#555;margin:0}'
+  + 'table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e3e3e3}'
+  + 'th{font-size:12px;color:#555;font-weight:600}.rp-num td:not(:first-child),.rp-num th:not(:first-child){text-align:right;font-variant-numeric:tabular-nums}'
+  + '.rp-foot{margin-top:24px;color:#777;font-size:12px}';
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
@@ -2283,6 +2985,19 @@ view.addEventListener('change', async (e) => {
       break;
     }
     case 'count-mode': data.setSettings({ countMode: el.value }); toast('Totals updated'); break;
+    case 'alert-kind': data.setSettings({ alerts: { ...(S().settings?.alerts || {}), [el.value]: el.checked } }); break;
+    case 'spend-buffer': {
+      const v = Math.max(0, round2(Number(el.value) || 0));
+      data.setSettings({ spendBuffer: v });
+      toast(v ? `Reserve: ${formatRON(v)} kept out of “safe to spend”` : 'No reserve');
+      break;
+    }
+    case 'vouchers-on': {
+      const mv = S().settings?.mealVouchers || {};
+      data.setSettings({ mealVouchers: { enabled: el.checked, perDay: mv.perDay ?? 45 } });
+      break;
+    }
+    case 'vouchers-day': data.setSettings({ mealVouchers: { enabled: true, perDay: Math.min(Math.max(Number(el.value) || 0, 0), 1000) } }); break;
     case 'main-account': data.setSettings({ mainAccountId: el.value || null }); toast('Main current account updated'); break;
     case 'period-mode':
     case 'payday-day': {
@@ -2345,6 +3060,7 @@ function watchFabScroll() {
 function showApp() {
   $('#login').hidden = true;
   $('#app').hidden = false;
+  data.shareTokenWithPhone(); // phone notifications (Android app) use the same login
   route();
   renderStatus();
 }

@@ -8,6 +8,11 @@ A self-hosted budget app for your phone and laptop:
 - **Multiple savings goals**: each has a target, a deadline (optional) and a priority. You record money added to or taken out of a goal.
 - **Savings plan**: learns your spending habits from your history and builds a monthly plan to reach your goals. It covers how much to save, which flexible categories to trim, realistic dates, recurring payments and categories that are rising.
 - **One app on phone and laptop**: it installs on the phone's home screen and runs in any browser on the laptop. Both devices update live.
+- **Numbers you can check**: a *Bank check* card shows when each account last synced, whether the app's transactions explain the bank balance (and the likely reason when they don't), and how many days the bank access has left.
+- **Safe to spend until payday**: the balance minus the bills, subscriptions and card repayment still due before the next salary, shown as a range and per day, with a calendar of what's coming.
+- **Subscriptions and bills**: found from payments that repeat, with price rises and next due dates (Plan tab). Confirm or hide each one.
+- **Alerts**: bills due soon, price rises, yearly renewals, late refunds, the card repayment, bank access running out, a summary on payday. On the Overview, and as notifications in the Android app.
+- **More**: a *To check* list for guessed categories (and rule suggestions after you correct a merchant twice), split purchases across categories, refunds you're waiting for, meal vouchers kept apart from the current account, interest and fees shown as the cost of the credit card, the bank's exchange-rate markup vs BNR, net worth with pensions and loans you add, CSV export and a printable period report.
 
 ```
  ┌──────────── your home Wi-Fi ────────────┐
@@ -59,6 +64,8 @@ How the app behaves:
 - **Bank login** opens in your normal browser, because many banks block logins inside apps. When the browser says the bank is linked, switch back to the app.
 - **CSV import** uses the phone's file picker. **Export** opens Android's "Save to…" dialog.
 - To point the app at a different server, go to **Settings → Server address → Change**.
+- **Notifications:** every few hours the app asks your server for new alerts (`/api/alerts`) and shows each one once. Android 13+ asks for permission the first time; which alerts you get is set in **Settings → Alerts**. Away from home it can only check once you're back on your Wi-Fi (or with Tailscale on).
+- **From 2027** Android only installs apps from verified developers. A free *limited distribution* account in the Android Developer Console (up to 20 devices, no ID needed) keeps this app installable; set it up before then.
 
 To rebuild it you need Linux or macOS with a JDK 11+, python3, git and curl. No Android Studio is required:
 
