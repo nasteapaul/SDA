@@ -70,6 +70,8 @@ cannot run (e.g. a cloud session started from the phone):
 - `/ruflo <agent> <task>` — e.g. `/ruflo planner what should be added for a
   fully accurate financial picture`. Claude reads the agent file and runs it as
   a subagent with that file as its instructions.
+- `/ruflo auto <task>` — picks the agents and their models from the task's
+  complexity (simple / medium / complex tiers in `.claude/commands/ruflo.md`).
 - `/ruflo swarm <task>` — several ruflo agents in parallel (fan-out), each with
   its own role, then one merged, prioritised report.
 - Agents available: `core/planner`, `sparc/{specification,pseudocode,architecture,refinement}`,
