@@ -14,15 +14,16 @@ import { Store, removeTransactions, restoreFromTrash, addTombstones, mergeDuplic
 import { dailyBackup } from './lib/backup.js';
 import { EnableBanking } from './lib/enablebanking.js';
 import { syncBank, recategorize, accountFromSession, relinkAccounts } from './lib/sync.js';
-import { convertPendingFx } from './lib/fxconvert.js';
+import { convertPendingFx, backfillBnrRates } from './lib/fxconvert.js';
 import { runMigrations } from './lib/migrations.js';
 import { Sessions, LoginLimiter } from './lib/auth.js';
-import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories, cleanBudgets, requireObject, findConflicts } from './lib/validate.js';
+import { HttpError, cleanTransaction, cleanGoal, cleanSettings, cleanCategories, cleanBudgets, cleanAsset, requireObject, findConflicts } from './lib/validate.js';
 import { importSeen, rememberDeletedImport } from './public/js/shared/dedupe.js';
 import { ownContext, ownTransferCategory } from './public/js/shared/own.js';
 import { categorize, escapeForRule, merchantKey, isUselessKeyword, ruleMatches } from './public/js/shared/categories.js';
 import { round2, uid } from './public/js/shared/money.js';
 import { lastSnapshots } from './public/js/shared/reconcile.js';
+import { buildAlerts } from './public/js/shared/alerts.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* no .env file */ }
@@ -91,10 +92,14 @@ setInterval(backupDaily, 3600 * 1000).unref();
 
 // Imported rows in another currency: convert to RON at the BNR rate of their date
 // (retried every hour while the rate can't be fetched, e.g. offline).
+// Bank rows converted at the bank's own rate also get BNR's rate of the day (to show the bank's markup).
 function convertFx() {
   return convertPendingFx(store)
     .then((n) => { if (n) console.log(`[fx] converted ${n} imported transaction(s) to RON`); })
-    .catch((err) => console.error('[fx] conversion failed:', err.message));
+    .catch((err) => console.error('[fx] conversion failed:', err.message))
+    .then(() => backfillBnrRates(store))
+    .then((n) => { if (n) console.log(`[fx] added the BNR rate to ${n} bank transaction(s)`); })
+    .catch((err) => console.error('[fx] BNR rates failed:', err.message));
 }
 setInterval(convertFx, 3600 * 1000).unref();
 setTimeout(convertFx, 5000).unref();
@@ -192,7 +197,7 @@ function publicState(s) {
         validUntil: c.validUntil,
         ...(c.archived ? { archived: true } : {}), // an old link kept for its history; never synced
         accounts: c.accounts.map((a) => ({
-          uid: a.uid, name: a.name, nickname: a.nickname, iban: a.iban, currency: a.currency, balance: a.balance, lastSyncDate: a.lastSyncDate,
+          uid: a.uid, name: a.name, nickname: a.nickname, iban: a.iban, currency: a.currency, balance: a.balance, lastSyncDate: a.lastSyncDate, lastSyncAt: a.lastSyncAt, lastAdded: a.lastAdded,
           kind: a.kind, cashAccountType: a.cashAccountType, creditLimit: a.creditLimit, balanceMeaning: a.balanceMeaning, product: a.product, cardDigits: a.cardDigits,
         })),
       })),
@@ -355,6 +360,24 @@ async function api(req, res, url) {
       convertFx(); // the app updates live when it's done
       return send(res, 200, result);
     }
+    // Review queue: "these categories are right" for several transactions at once.
+    if (id === 'review' && method === 'POST') {
+      const { ids } = await readBody(req);
+      if (!Array.isArray(ids) || ids.length > 500 || !ids.every((x) => typeof x === 'string' && x.length <= 200)) throw new HttpError(400, 'ids must be a list of up to 500 transaction ids');
+      const want = new Set(ids);
+      const updated = await store.mutate((s) => {
+        const now = new Date().toISOString();
+        let n = 0;
+        for (const t of s.transactions) {
+          if (!want.has(t.id) || t.reviewed) continue;
+          t.reviewed = true;
+          t.updatedAt = now;
+          n += 1;
+        }
+        return n;
+      });
+      return send(res, 200, { updated });
+    }
     // "Start over": remove every transaction that came from a CSV import.
     // A backup is taken first, and the rows stay in the trash.
     if (id === 'imported' && method === 'DELETE') {
@@ -426,6 +449,33 @@ async function api(req, res, url) {
     await store.backup('pre-undo-import');
     const removed = await store.mutate((s) => removeTransactions(s, (t) => t.source === 'import' && t.batchId === batchId, 'undo-import').length);
     return send(res, 200, { removed });
+  }
+
+  // Net worth: pensions, investments, cash, loans… entered by hand.
+  if (parts[0] === 'assets' && parts[1]) {
+    const id = parts[1]; // plain [A-Za-z0-9_-]: nothing to decode
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new HttpError(400, 'Invalid asset id');
+    if (method === 'PUT') {
+      const body = await readBody(req);
+      const asset = await store.mutate((s) => {
+        s.assets = Array.isArray(s.assets) ? s.assets : [];
+        const idx = s.assets.findIndex((a) => a.id === id);
+        if (idx === -1 && s.assets.length >= 200) throw new HttpError(400, 'Too many entries');
+        const a = { ...cleanAsset(body, idx === -1 ? {} : s.assets[idx]), id, updatedAt: new Date().toISOString() };
+        if (idx === -1) s.assets.push(a); else s.assets[idx] = a;
+        return a;
+      });
+      return send(res, 200, asset);
+    }
+    if (method === 'DELETE') {
+      await store.mutate((s) => { s.assets = (s.assets || []).filter((a) => a.id !== id); });
+      return send(res, 200, { ok: true });
+    }
+  }
+
+  // Alerts for the phone's notifications (the app shows the same list on the Overview).
+  if (pathname === '/api/alerts' && method === 'GET') {
+    return send(res, 200, { alerts: buildAlerts(store.get()) });
   }
 
   if (parts[0] === 'goals' && parts[1]) {

@@ -68,10 +68,45 @@ export function cleanTransaction(input, existing = {}) {
   if (input.manualCategory !== undefined) t.manualCategory = Boolean(input.manualCategory);
   if (input.accountId !== undefined && existing.source !== 'bank') t.accountId = optionalId(input.accountId, 'accountId');
   if (input.accountManual !== undefined) t.accountManual = Boolean(input.accountManual);
+  if (input.reviewed !== undefined) t.reviewed = Boolean(input.reviewed);
+  if (input.refundDue !== undefined) {
+    const due = input.refundDue === '' ? null : input.refundDue;
+    if (due !== null && !isDate(due)) throw new HttpError(400, 'refundDue must be a valid YYYY-MM-DD date');
+    t.refundDue = due;
+  }
+  if (input.pocket !== undefined) {
+    const pocket = input.pocket === '' ? null : input.pocket;
+    if (pocket !== null && pocket !== 'vouchers') throw new HttpError(400, 'pocket must be "vouchers" or null');
+    // Meal-voucher spending is entered by hand; a bank row is always real account money.
+    if (pocket && existing.source === 'bank') throw new HttpError(400, 'Bank transactions can\'t be moved to the meal-voucher pocket');
+    t.pocket = pocket;
+  }
+  if (input.splits !== undefined) t.splits = input.splits === null ? null : cleanSplits(input.splits);
   if (!t.type || !t.amount || !t.date) throw new HttpError(400, 'type, amount and date are required');
+  if (t.splits) {
+    const sum = round2(t.splits.reduce((x, p) => x + p.amount, 0));
+    const fits = t.type === 'expense' && Math.abs(sum - t.amount) <= 0.01 + 1e-9;
+    if (!fits && input.splits !== undefined) {
+      throw new HttpError(400, t.type !== 'expense' ? 'Only expenses can be split' : `The split parts add up to ${sum}, not ${t.amount}`);
+    }
+    if (!fits) t.splits = null; // amount or type changed since: the old split no longer adds up
+  }
   t.category ||= t.type === 'income' ? 'Other income' : 'Other';
   t.description ||= t.category;
   return t;
+}
+
+// An expense split across categories: 2..10 parts, each a category and a positive amount.
+function cleanSplits(value) {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 10) throw new HttpError(400, 'splits must be a list of 2 to 10 parts');
+  return value.map((p, i) => {
+    if (!p || typeof p !== 'object' || Array.isArray(p)) throw new HttpError(400, `split part ${i + 1} must be an object`);
+    const category = typeof p.category === 'string' ? p.category.trim() : '';
+    if (!category || category.length > 40) throw new HttpError(400, `split part ${i + 1} needs a category (up to 40 characters)`);
+    const amount = money(p.amount, `split part ${i + 1} amount`);
+    if (!(amount > 0)) throw new HttpError(400, `split part ${i + 1} amount must be positive`);
+    return { category, amount };
+  });
 }
 
 export function cleanGoal(input, existing = {}) {
@@ -133,7 +168,61 @@ export function cleanSettings(input) {
     if (id && (id.length > 64 || /[\u0000-\u001f]/.test(id))) throw new HttpError(400, 'mainAccountId is too long or invalid');
     out.mainAccountId = id || null;
   }
+  if (input.recurring !== undefined) {
+    // { seriesKey: 'confirmed' | 'ignored' } — the client always sends the whole map.
+    const map = requireObject(input.recurring, 'recurring');
+    const entries = Object.entries(map);
+    if (entries.length > 500) throw new HttpError(400, 'Too many recurring payments');
+    for (const [key, value] of entries) {
+      if (!key || key.length > 80 || CONTROL_RE.test(key)) throw new HttpError(400, 'Invalid recurring payment key');
+      if (!RECURRING_STATUS.includes(value)) throw new HttpError(400, 'A recurring payment is confirmed or ignored');
+    }
+    out.recurring = Object.fromEntries(entries);
+  }
+  if (input.mealVouchers !== undefined) {
+    const mv = requireObject(input.mealVouchers, 'mealVouchers');
+    if (typeof mv.enabled !== 'boolean') throw new HttpError(400, 'mealVouchers.enabled must be true or false');
+    const perDay = mv.perDay === undefined || mv.perDay === null || mv.perDay === '' ? 0 : round2(toNumber(mv.perDay));
+    if (!Number.isFinite(perDay) || perDay < 0 || perDay > 1000) throw new HttpError(400, 'mealVouchers.perDay must be between 0 and 1000');
+    out.mealVouchers = { enabled: mv.enabled, perDay };
+  }
+  if (input.spendBuffer !== undefined) {
+    const buffer = input.spendBuffer === null || input.spendBuffer === '' ? 0 : money(input.spendBuffer, 'spendBuffer');
+    if (buffer < 0) throw new HttpError(400, 'spendBuffer can\'t be negative');
+    out.spendBuffer = buffer;
+  }
+  if (input.alerts !== undefined) {
+    // Unknown kinds (e.g. from a newer or older client) are dropped; a missing kind means on.
+    const alerts = requireObject(input.alerts, 'alerts');
+    out.alerts = {};
+    for (const kind of ALERT_KINDS) {
+      if (alerts[kind] === undefined) continue;
+      if (typeof alerts[kind] !== 'boolean') throw new HttpError(400, `alerts.${kind} must be true or false`);
+      out.alerts[kind] = alerts[kind];
+    }
+  }
   return out;
+}
+
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+const RECURRING_STATUS = ['confirmed', 'ignored'];
+export const ALERT_KINDS = ['consent', 'sync', 'bill', 'price', 'renewal', 'refund', 'card', 'low', 'summary', 'assets'];
+export const ASSET_KINDS = ['pension', 'investment', 'cash', 'property', 'loan', 'other'];
+
+/**
+ * A manual asset or debt for the net worth: { name, kind, amount }. For a
+ * 'loan' the amount is what you still owe. The server sets id and updatedAt.
+ */
+export function cleanAsset(input, existing = {}) {
+  requireObject(input, 'asset');
+  const name = String(input.name ?? existing.name ?? '').trim().slice(0, 60);
+  if (!name) throw new HttpError(400, 'An asset needs a name');
+  const kind = input.kind !== undefined ? input.kind : existing.kind;
+  const rawAmount = input.amount !== undefined ? input.amount : existing.amount;
+  if (rawAmount === undefined || rawAmount === null || rawAmount === '') throw new HttpError(400, 'An asset needs an amount');
+  const amount = money(rawAmount, 'amount');
+  if (amount < 0) throw new HttpError(400, 'amount can\'t be negative (enter a debt as kind "loan")');
+  return { name, kind: ASSET_KINDS.includes(kind) ? kind : 'other', amount };
 }
 
 export function cleanCategories(categories) {

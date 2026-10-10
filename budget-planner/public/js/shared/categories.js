@@ -21,6 +21,7 @@ export const DEFAULT_CATEGORIES = [
   { name: 'Cash', kind: 'expense', icon: '💵', essential: false },
   { name: 'Sent to people', kind: 'expense', icon: '👥', essential: false },
   { name: 'Credit card repayment', kind: 'expense', icon: '💳', essential: true, role: 'repayment' },
+  { name: 'Interest & fees', kind: 'expense', icon: '🏦', essential: true },
   { name: 'Other', kind: 'expense', icon: '📦', essential: false },
   { name: 'Savings', kind: 'both', icon: '🐷', essential: false, role: 'savings' },
   { name: 'Salary', kind: 'income', icon: '💼' },
@@ -45,6 +46,8 @@ export const DEFAULT_RULES = [
   { pattern: 'salariu|salary|payroll|drepturi salariale|avans salariu|lichidare|chenzina', category: 'Salary', kind: 'income' },
   { pattern: 'refund|rambursare|retur|storno|cashback', category: 'Refunds', kind: 'income' },
   { pattern: 'dividend|dobanda|interest|bonus|\\bprima\\b|factura emisa', category: 'Extra income', kind: 'income' },
+  // What the bank charges: card/overdraft interest, fees and commissions (money in "dobanda" stays income above)
+  { pattern: 'dobanda debitoare|dobanda (la )?card|dobanzi|interest charge|comision|taxa (anuala|administrare|lunara)|annual fee|bank fee', category: 'Interest & fees', kind: 'expense' },
   // Groceries
   { pattern: 'kaufland|lidl|mega image|carrefour|\\bprofi\\b|auchan|\\bpenny\\b|\\bcora\\b|selgros|\\bmetro\\b|la doi pasi|annabella|freshful|sezamo|bringo', category: 'Groceries' },
   // Eating out & delivery
@@ -95,20 +98,30 @@ function toRegex(pattern) {
 }
 
 /**
- * Pick a category for a transaction.
- * userRules come first (they are learnt from your own edits), then defaults.
+ * The rule that categorises a transaction: { category, rule, source }.
+ * source: 'user' (one of your rules), 'builtin' (DEFAULT_RULES) or 'fallback'
+ * (nothing matched; rule is null). userRules come first (they are learnt
+ * from your own edits), then defaults.
  */
-export function categorize({ description = '', counterparty = '', type = 'expense' }, userRules = [], categories = DEFAULT_CATEGORIES) {
+export function matchRule({ description = '', counterparty = '', type = 'expense' } = {}, userRules = [], categories = DEFAULT_CATEGORIES) {
   const text = normalize(`${description} ${counterparty}`);
   const known = new Set(categories.map((c) => c.name));
-  for (const rule of [...userRules, ...DEFAULT_RULES]) {
+  const users = Array.isArray(userRules) ? userRules : [];
+  const all = [...users, ...DEFAULT_RULES];
+  for (let i = 0; i < all.length; i += 1) {
+    const rule = all[i];
     if (!rule?.pattern || !known.has(rule.category)) continue;
     if (rule.kind && rule.kind !== type) continue;
     const cat = categories.find((c) => c.name === rule.category);
     if (cat && cat.kind !== 'both' && cat.kind !== type) continue;
-    if (toRegex(rule.pattern).test(text)) return rule.category;
+    if (toRegex(rule.pattern).test(text)) return { category: rule.category, rule, source: i < users.length ? 'user' : 'builtin' };
   }
-  return type === 'income' ? FALLBACK_INCOME : FALLBACK_EXPENSE;
+  return { category: type === 'income' ? FALLBACK_INCOME : FALLBACK_EXPENSE, rule: null, source: 'fallback' };
+}
+
+/** Pick a category for a transaction (see matchRule). */
+export function categorize(tx, userRules = [], categories = DEFAULT_CATEGORIES) {
+  return matchRule(tx, userRules, categories).category;
 }
 
 // Bank boilerplate that is never part of a merchant's name.

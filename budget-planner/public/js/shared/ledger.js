@@ -58,6 +58,22 @@ export function mainAccountOf(state) {
   return currents.reduce((best, a) => (n.get(a.uid) > n.get(best.uid) ? a : best), currents[0]);
 }
 
+/**
+ * A usable split: 2+ parts, each with a category and an amount > 0, adding up
+ * to the transaction's amount (±0.01). Anything else counts as not split.
+ */
+export function hasSplits(t) {
+  const list = t?.splits;
+  if (!Array.isArray(list) || list.length < 2) return false;
+  let sum = 0;
+  for (const p of list) {
+    const n = Number(p?.amount);
+    if (!p?.category || !Number.isFinite(n) || n <= 0) return false;
+    sum += n;
+  }
+  return Math.abs(sum - (Number(t.amount) || 0)) <= 0.01 + 1e-9;
+}
+
 export function makeLedger(state) {
   const list = (state.bank?.connections || []).flatMap((c) => c.accounts);
   const accounts = new Map(list.map((a) => [a.uid, a]));
@@ -153,6 +169,8 @@ export function makeLedger(state) {
     // In another currency and not converted to RON yet: its amount isn't RON, so it
     // can't be added up until the conversion (lib/fxconvert.js) has run.
     if (t.needsFx) return null;
+    // Meal-voucher card: its own pocket of money, never part of the cash flow.
+    if (t.pocket === 'vouchers') return null;
     if (mode === 'cashflow') {
       if (!isMain(t)) return null;
       if (t.goalId) return 'saved';
@@ -173,12 +191,34 @@ export function makeLedger(state) {
    * goal is negative 'saved').
    */
   function effect(t) {
-    const c = counts(t);
+    return effectFor(t, counts(t));
+  }
+
+  function effectFor(t, c) {
     const amount = Number(t.amount) || 0;
     if (!c) return { as: null, amount: 0, category: t.category };
     if (c === 'refund') return { as: 'expense', amount: -amount, category: refunds.categoryOf(t) };
     if (c === 'saved') return { as: 'saved', amount: t.type === 'expense' ? amount : -amount, category: t.category };
     return { as: c, amount, category: t.category };
+  }
+
+  // Parts of an effect already worked out (c = counts(t), e = effectFor(t, c)).
+  function partsOf(t, c, e) {
+    if (!e.as) return [];
+    if (c === 'expense' && hasSplits(t)) {
+      return t.splits.map((p) => ({ category: p.category, amount: round2(Number(p.amount)) }));
+    }
+    return [{ category: e.category, amount: e.amount }];
+  }
+
+  /**
+   * effect(t) split by category: [{ category, amount }] (signed like effect;
+   * [] when not counted). A purchase split across categories (t.splits) gives
+   * one part per split; anything else a single part.
+   */
+  function parts(t) {
+    const c = counts(t);
+    return partsOf(t, c, effectFor(t, c));
   }
 
   /** Headline numbers for a list of transactions (e.g. one period). */
@@ -187,14 +227,15 @@ export function makeLedger(state) {
     const byCategory = {};
     let count = 0;
     for (const t of transactions) {
-      const e = effect(t);
+      const c = counts(t);
+      const e = effectFor(t, c);
       if (!e.as) continue;
       count += 1;
       if (e.as === 'income') sum.income += e.amount;
       else if (e.as === 'saved') sum.saved += e.amount;
       else {
         sum.spend += e.amount;
-        byCategory[e.category] = round2((byCategory[e.category] || 0) + e.amount);
+        for (const p of partsOf(t, c, e)) byCategory[p.category] = round2((byCategory[p.category] || 0) + p.amount);
       }
     }
     const income = round2(sum.income); const spend = round2(sum.spend); const saved = round2(sum.saved);
@@ -202,7 +243,7 @@ export function makeLedger(state) {
   }
 
   return {
-    mode, counts, effect, totals, accountOf, kindOf, isMain, byDigits,
+    mode, counts, effect, parts, totals, accountOf, kindOf, isMain, byDigits,
     mainAccount: current,
     isRefund: (t) => refunds.isRefund(t),
     refundCategory: (t) => refunds.categoryOf(t),

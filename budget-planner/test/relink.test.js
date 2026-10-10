@@ -295,7 +295,11 @@ test('syncBank: foreign transactions use the bank rate, else BNR of the booking 
   assert.equal(rows['eur:b2'].rateDate, '2026-09-14');
   assert.equal(rows['eur:b2'].rateSource, 'bank');
   assert.ok(asked.includes('EUR@2026-09-13'));
-  assert.ok(!asked.includes('EUR@2026-09-14'), 'no BNR lookup when the bank gave a rate');
+  // The bank's rate converts the row; BNR's rate of the day is kept beside it to show the bank's markup.
+  assert.equal(rows['eur:b2'].exchangeRate, 5.1);
+  assert.equal(rows['eur:b2'].bnrRate, 5.05);
+  assert.equal(rows['eur:b1'].bnrRate, undefined, 'a row converted at BNR doesn’t need it twice');
+  assert.equal(asked.filter((x) => x === 'EUR@2026-09-14').length, 1, 'one BNR lookup per currency and day');
 
   const acc = store.get().bank.connections[0].accounts[0];
   assert.equal(acc.balance.amount, 100);

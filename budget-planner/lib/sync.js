@@ -55,7 +55,7 @@ export function accountFromSession(raw) {
 }
 
 // Your own settings and sync progress, kept from the old account on a re-link.
-const CARRIED = ['name', 'nickname', 'kind', 'creditLimit', 'balanceMeaning', 'cardDigits', 'balance', 'lastSyncDate', 'detailsFetched'];
+const CARRIED = ['name', 'nickname', 'kind', 'creditLimit', 'balanceMeaning', 'cardDigits', 'balance', 'lastSyncDate', 'lastSyncAt', 'detailsFetched'];
 
 // The uid a bankRef was made with, and the bank's own id for the entry.
 function splitRef(ref, accountId) {
@@ -340,9 +340,10 @@ function directionOf(t) {
 
 /**
  * `rate` converts the transaction's currency to RON (RON per unit); the
- * original amount and currency are kept alongside.
+ * original amount and currency are kept alongside. `bnrRate` (BNR's rate of
+ * the day) is stored next to a bank rate, to show the bank's markup.
  */
-export function mapBankTransaction(accountUid, t, { rules, categories }, own = null, { nth = 1, rate = 1, rateDate, rateSource } = {}) {
+export function mapBankTransaction(accountUid, t, { rules, categories }, own = null, { nth = 1, rate = 1, rateDate, rateSource, bnrRate } = {}) {
   if (t.status && t.status !== 'BOOK') return null; // skip pending
   const original = Math.abs(Number(t.transaction_amount?.amount));
   const currency = t.transaction_amount?.currency || 'RON';
@@ -377,6 +378,7 @@ export function mapBankTransaction(accountUid, t, { rules, categories }, own = n
       originalCurrency: currency,
       exchangeRate: rate,
       ...defined({ rateDate, rateSource }), // day of the rate used; 'bank' or 'bnr'
+      ...(rateSource === 'bank' && bnrRate > 0 ? { bnrRate } : {}),
     } : {}),
     createdAt: now,
     updatedAt: now,
@@ -391,21 +393,29 @@ async function lookupRate(rate, currency, date) {
 
 /**
  * Exchange rate for each foreign-currency transaction (same order as `txs`,
- * null for RON): the bank's own rate when it gave one, else BNR's rate of the
- * booking date. Each (currency, day) is looked up once.
+ * null for RON): the bank's own rate when it gave one (with BNR's rate of the
+ * day as `bnrRate` when it can be had), else BNR's rate of the booking date.
+ * Each (currency, day) is looked up once.
  */
 async function ratesFor(txs, rate) {
   const memo = new Map();
+  const optional = new Map(); // BNR rates next to a bank rate: a failure is just null
+  const bnrBeside = async (currency, date) => {
+    const key = `${currency}|${date}`;
+    if (memo.has(key)) return memo.get(key).rate;
+    if (!optional.has(key)) optional.set(key, await lookupRate(rate, currency, date).then((r) => (r.rate > 0 ? r : null), () => null));
+    return optional.get(key)?.rate ?? null;
+  };
   const out = [];
   for (const raw of txs) {
     const currency = raw.transaction_amount?.currency || 'RON';
     const date = raw.booking_date || raw.value_date || raw.transaction_date || todayISO();
     if (currency === 'RON' || (raw.status && raw.status !== 'BOOK')) { out.push(null); continue; }
     const fromBank = bankRateRON(raw, currency);
-    if (fromBank) { out.push({ rate: fromBank, date, source: 'bank' }); continue; }
+    if (fromBank) { out.push({ rate: fromBank, date, source: 'bank', bnrRate: await bnrBeside(currency, date) }); continue; }
     const key = `${currency}|${date}`;
     if (!memo.has(key)) {
-      const found = await lookupRate(rate, currency, date);
+      const found = optional.get(key) || await lookupRate(rate, currency, date);
       if (!(found.rate > 0)) throw new Error(`No exchange rate for ${currency}`);
       memo.set(key, { ...found, source: 'bnr' });
     }
@@ -480,18 +490,23 @@ export async function syncBank(store, client, { lookbackDays = 90, rate = bnrRat
       if (details) Object.assign(target, accountInfo(details), { detailsFetched: true });
       const own = ownContext(s); // after details: names/IBANs of every linked account
       const occurrences = new Map();
+      let accountAdded = 0;
       txs.forEach((raw, i) => {
         const hasId = Boolean(raw.entry_reference || raw.transaction_id);
         const fp = hasId ? null : fingerprintOf(raw);
         const nth = hasId ? 1 : (occurrences.get(fp) || 0) + 1;
         if (fp) occurrences.set(fp, nth);
         const r = rates[i];
-        const t = mapBankTransaction(acc.uid, raw, s, own, { nth, rate: r?.rate || 1, rateDate: r?.date, rateSource: r?.source });
+        const t = mapBankTransaction(acc.uid, raw, s, own, { nth, rate: r?.rate || 1, rateDate: r?.date, rateSource: r?.source, bnrRate: r?.bnrRate });
         if (!t || known.has(t.bankRef)) return;
         known.add(t.bankRef);
         s.transactions.push(t);
         added += 1;
+        accountAdded += 1;
       });
+      // How fresh each account is (shown next to it): this fetch succeeded, with this many new rows.
+      target.lastSyncAt = new Date().toISOString();
+      target.lastAdded = accountAdded;
       target.balance = balance;
       recordBalance(s, acc.uid, balance, new Date(), pendingTotal(txs, balance));
       // An incomplete fetch keeps the old date, so the next sync asks for the rest again.

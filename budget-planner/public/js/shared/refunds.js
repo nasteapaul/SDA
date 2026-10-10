@@ -9,6 +9,7 @@
 //     60 days before.
 
 import { merchantKey } from './categories.js';
+import { todayISO } from './money.js';
 
 export const REFUND_RE = /retur|refund|rambursare comerciant|stornare|storno|chargeback|reversal/i;
 const NOT_REFUND_RE = /rambursare (rata )?card/i; // paying off the credit card
@@ -81,4 +82,27 @@ function cached(state) {
 /** True when `t` is money back from a shop (see above), not earned income. */
 export function isRefund(t, state) {
   return cached(state).isRefund(t);
+}
+
+/**
+ * Purchases you marked "refund expected by" (t.refundDue) and whether the money
+ * came back: [{ tx, due, status: 'waiting'|'overdue'|'received', refund }] by due date.
+ * Received = a refund the app links to that purchase, or money back from the same
+ * merchant after it (at most the purchase's amount).
+ */
+export function expectedRefunds(state, { today = todayISO() } = {}) {
+  const r = cached(state);
+  const marked = (state.transactions || []).filter((t) => t.type === 'expense' && typeof t.refundDue === 'string' && t.refundDue);
+  if (!marked.length) return [];
+  const backs = (state.transactions || []).filter((t) => t.type === 'income' && r.isRefund(t));
+  const used = new Set();
+  return marked.sort((a, b) => a.refundDue.localeCompare(b.refundDue)).map((tx) => {
+    const k = keyOf(tx);
+    const refund = backs.find((b) => !used.has(b.id) && r.purchaseOf(b) === tx)
+      || backs.find((b) => !used.has(b.id) && k && keyOf(b) === k && b.date >= tx.date && Number(b.amount) <= Number(tx.amount) + 0.005)
+      || null;
+    if (refund) used.add(refund.id);
+    const status = refund ? 'received' : today > tx.refundDue ? 'overdue' : 'waiting';
+    return { tx, due: tx.refundDue, status, refund };
+  });
 }

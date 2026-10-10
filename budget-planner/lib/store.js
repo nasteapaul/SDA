@@ -24,6 +24,7 @@ export function emptyState() {
     deletedBankRefs: [],
     deletedIds: [], // ids of deleted transactions: a replayed offline edit must not bring them back
     trash: [], // [{ tx, reason, removedAt }] — removed transactions, restorable
+    assets: [], // [{ id, name, kind, amount, updatedAt }] — entered by hand, for the net worth
     bank: { connections: [], lastSync: null, lastError: null, pendingAuth: null },
     settings: { planIntensity: 'balanced' },
     updatedAt: new Date().toISOString(),
@@ -53,7 +54,7 @@ export class Store {
     }
     this.state = { ...emptyState(), ...saved };
     this.state.bank = { ...emptyState().bank, ...this.state.bank };
-    for (const key of ['deletedIds', 'trash', 'deletedBankRefs']) if (!Array.isArray(this.state[key])) this.state[key] = [];
+    for (const key of ['deletedIds', 'trash', 'deletedBankRefs', 'assets']) if (!Array.isArray(this.state[key])) this.state[key] = [];
     // Pick up categories added in newer versions without touching user edits.
     for (const c of DEFAULT_CATEGORIES) {
       if (!this.state.categories.some((x) => x.name === c.name)) this.state.categories.push({ ...c });
