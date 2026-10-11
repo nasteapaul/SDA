@@ -23,6 +23,10 @@
   plans or status updates, no recaps. Run agents in the background. Speak only to
   ask for a manual step or an important decision (one short question). Final
   reply: the result only, as short as possible, in the user's language.
+- **Limits never end the task.** If a usage/session limit stops you or your agents,
+  resume automatically after the reset — never wait for the user to say "continue".
+  Before long runs arm a `send_later` check-in that resumes the work; delete it once
+  the work is pushed.
 
 - Do what has been asked; nothing more, nothing less
 - ALWAYS read a file before editing it
