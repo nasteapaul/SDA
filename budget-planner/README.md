@@ -173,6 +173,43 @@ Logs: `journalctl -u budget-planner -f`. Update log: `journalctl -u budget-plann
 
 ---
 
+## Ask Claude about your budget (read-only)
+
+`mcp.js` is a small [MCP](https://modelcontextprotocol.io) server, so your own Claude can read the budget and give advice ("can I afford 1,500 RON for a phone?", "where can I save?"). It uses your Claude plan: no API key, nothing to pay. It is **read-only**: it can't change anything, and it never shares IBANs, tokens, bank session ids or the trash (accounts appear as their last 4 digits). Tools: overview, transactions, spending by category, pay-period history, bills and subscriptions, goals and budgets, net worth (and payday odds). Prompts: *monthly_review*, *can_i_afford*, *find_savings*.
+
+It reads `data/budget.json` on the computer it runs on, so use it where the server runs (e.g. the laptop).
+
+**Claude Desktop:** *Settings → Developer → Edit Config* opens `claude_desktop_config.json` (on Windows `%APPDATA%\Claude\claude_desktop_config.json`). Add:
+
+```json
+{
+  "mcpServers": {
+    "budget": {
+      "command": "node",
+      "args": ["C:\\Users\\<you>\\SDA\\budget-planner\\mcp.js"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop, then ask about your budget, or pick a prompt from the **+** menu → *budget*.
+
+**Claude Code:**
+
+```bash
+claude mcp add -s user budget -- node C:\Users\<you>\SDA\budget-planner\mcp.js   # or ~/SDA/budget-planner/mcp.js
+```
+
+**Phone / claude.ai (optional, off by default):** claude.ai and the Claude phone app reach MCP servers from Anthropic's cloud, so they need a public HTTPS address. The server answers on `/mcp` only with a separate read-only key (never your password):
+
+1. `node mcp.js --new-key` prints the key (shown once; a new one replaces the old one).
+2. Publish only that path with Tailscale Funnel, on its own port so the app itself stays private: `tailscale funnel --bg --https=8443 --set-path=/mcp http://127.0.0.1:8080/mcp`
+3. In claude.ai: *Settings → Connectors → Add custom connector*, URL `https://<machine>.<tailnet>.ts.net:8443/mcp/<key>`. It then works on the phone app too.
+
+Trade-off: this puts a read-only door to your budget on the internet. Anyone who has that URL can read your figures, and what Claude reads goes through Anthropic like any chat. Keep the URL private. To turn it off: `node mcp.js --revoke-key` and `tailscale funnel --https=8443 off`.
+
+---
+
 ## Security
 
 - Set `APP_PASSWORD`. Without it, the server only listens on `localhost`, so your phone can't reach it.
@@ -201,6 +238,8 @@ lib/migrations.js         one-time fixes for data from earlier versions
 lib/fx.js                 BNR exchange rates for non-RON transactions
 lib/enablebanking.js      Enable Banking client (RS256 JWT, accounts, balances, transactions)
 lib/sync.js               bank → transaction mapping, categorisation, de-duplication
+lib/mcp.js, lib/mcpkey.js read-only MCP server for Claude (tools, prompts, HTTP transport) and its key
+mcp.js                    the MCP server over stdio (Claude Desktop / Claude Code)
 public/                   the app (no build step)
   js/app.js               views, forms, routing
   js/data.js              offline cache, change queue, live sync

@@ -7,8 +7,10 @@ import https from 'node:https';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
+import zlib from 'node:zlib';
+import { promisify } from 'node:util';
 
 import { Store, removeTransactions, restoreFromTrash, addTombstones, mergeDuplicatesToTrash, TRASH_DAYS } from './lib/store.js';
 import { dailyBackup } from './lib/backup.js';
@@ -24,6 +26,8 @@ import { categorize, escapeForRule, merchantKey, isUselessKeyword, ruleMatches }
 import { round2, uid } from './public/js/shared/money.js';
 import { lastSnapshots } from './public/js/shared/reconcile.js';
 import { buildAlerts } from './public/js/shared/alerts.js';
+import { createMcp, httpMcp } from './lib/mcp.js';
+import { McpKeys, MCP_KEY_FILE } from './lib/mcpkey.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* no .env file */ }
@@ -80,6 +84,9 @@ function publicUrl(raw) {
 const REDIRECT_URL = env.EB_REDIRECT_URL || `${PUBLIC_URL}/bank/callback`;
 
 const store = await new Store(path.join(DATA_DIR, 'budget.json')).load();
+// Read-only access for the user's own Claude (MCP): its own key, never the login token.
+const mcpKeys = await new McpKeys(path.join(DATA_DIR, MCP_KEY_FILE)).load();
+const mcp = createMcp({ getState: () => store.get() });
 await runMigrations(store); // backs up first when a migration is needed
 
 // One backup a day (data/backups), checked hourly so a server left running for
@@ -112,7 +119,21 @@ const bank = new EnableBanking({
 
 // ---------- auth ----------
 const sessions = new Sessions(path.join(DATA_DIR, '.sessions.json'), { days: SESSION_DAYS });
+// A new APP_PASSWORD signs every device out, so a leaked old one stops working.
+if (PASSWORD && await sessions.usePassword(PASSWORD)) console.log('  APP_PASSWORD changed: every device was signed out.');
 const logins = new LoginLimiter();
+
+// Behind `tailscale serve` every request arrives from 127.0.0.1, so failed logins
+// are counted per client address the proxy forwards (it sets X-Forwarded-For
+// itself); otherwise one bad actor would lock the owner out too. The last entry
+// is the one the nearest proxy added — earlier ones could be made up by the client.
+const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+function clientAddress(req) {
+  const ip = req.socket.remoteAddress || '';
+  if (!LOOPBACK_ADDRS.has(ip)) return ip;
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return forwarded.length ? forwarded[forwarded.length - 1].slice(0, 64) : ip;
+}
 
 function safeEqual(a, b) {
   const x = Buffer.from(String(a)); const y = Buffer.from(String(b));
@@ -152,10 +173,55 @@ function checkOrigin(req) {
 }
 
 // ---------- helpers ----------
-function send(res, status, data, headers = {}) {
-  const body = data === undefined ? '' : JSON.stringify(data);
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
-  res.end(body);
+// Bodies over 1 KB go out gzipped when the client accepts it (the state is
+// ~1 MB of JSON), and an ETag lets an unchanged one be answered with a bare 304.
+const gzip = promisify(zlib.gzip);
+const COMPRESS_MIN = 1024;
+const gzipCache = new Map(); // ETag → gzipped static file (files only change on an update)
+
+function acceptsGzip(req) {
+  const m = /(?:^|,)\s*gzip\s*(?:;\s*q=([\d.]+))?\s*(?:,|$)/i.exec(req?.headers['accept-encoding'] || '');
+  return Boolean(m) && (m[1] === undefined || Number(m[1]) > 0);
+}
+const etagOf = (buf) => `W/"${createHash('sha1').update(buf).digest('base64url')}"`;
+function notModified(req, etag) {
+  const header = req?.headers['if-none-match'];
+  if (!header) return false;
+  const bare = (t) => t.trim().replace(/^W\//, '');
+  return header.split(',').some((t) => t.trim() === '*' || bare(t) === bare(etag));
+}
+
+async function reply(res, status, headers, body, { etag = false, compress = true, cache = false } = {}) {
+  const head = { ...headers };
+  if (etag) {
+    head.ETag = etagOf(body);
+    if (status === 200 && notModified(res.req, head.ETag)) {
+      delete head['Content-Type'];
+      res.writeHead(304, head);
+      return res.end();
+    }
+  }
+  let out = body;
+  if (compress && body.length > COMPRESS_MIN) {
+    head.Vary = 'Accept-Encoding';
+    if (acceptsGzip(res.req)) {
+      const key = cache && etag ? head.ETag : '';
+      out = gzipCache.get(key) || await gzip(body);
+      if (key) {
+        if (gzipCache.size >= 100) gzipCache.clear();
+        gzipCache.set(key, out);
+      }
+      head['Content-Encoding'] = 'gzip';
+    }
+  }
+  head['Content-Length'] = out.length;
+  res.writeHead(status, head);
+  return res.end(out);
+}
+
+function send(res, status, data, headers = {}, options = {}) {
+  const body = Buffer.from(data === undefined ? '' : JSON.stringify(data));
+  return reply(res, status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }, body, options);
 }
 
 async function readBody(req, limit = 5 * 1024 * 1024) {
@@ -199,9 +265,11 @@ function publicState(s) {
         accounts: c.accounts.map((a) => ({
           uid: a.uid, name: a.name, nickname: a.nickname, iban: a.iban, currency: a.currency, balance: a.balance, lastSyncDate: a.lastSyncDate, lastSyncAt: a.lastSyncAt, lastAdded: a.lastAdded,
           kind: a.kind, cashAccountType: a.cashAccountType, creditLimit: a.creditLimit, balanceMeaning: a.balanceMeaning, product: a.product, cardDigits: a.cardDigits,
+          pendingItems: a.pendingItems, // card payments the bank already took off the balance
         })),
       })),
     },
+    ai: { keySet: mcpKeys.exists },
   };
 }
 
@@ -275,9 +343,9 @@ async function api(req, res, url) {
   const parts = pathname.split('/').filter(Boolean).slice(1); // drop "api"
 
   if (pathname === '/api/login' && method === 'POST') {
-    const ip = req.socket.remoteAddress;
+    const ip = clientAddress(req);
     if (logins.blocked(ip)) throw new HttpError(429, 'Too many attempts. Try again in 15 minutes.');
-    const { password } = await readBody(req);
+    const { password } = await readBody(req, 4 * 1024);
     if (PASSWORD && !safeEqual(password || '', PASSWORD)) {
       logins.fail(ip);
       throw new HttpError(401, 'Wrong password');
@@ -288,6 +356,10 @@ async function api(req, res, url) {
   if (pathname === '/api/health') return send(res, 200, { ok: true, auth: Boolean(PASSWORD) });
 
   if (!authorized(req, url)) throw new HttpError(401, 'Login required');
+
+  // The read-only MCP key (Settings → Ask Claude): shown once, only its hash is stored.
+  if (pathname === '/api/mcp/key' && method === 'POST') return send(res, 200, { key: await mcpKeys.create() });
+  if (pathname === '/api/mcp/key' && method === 'DELETE') { await mcpKeys.revoke(); return send(res, 200, { ok: true }); }
 
   if (pathname === '/api/logout' && method === 'POST') {
     await sessions.revoke(bearer(req));
@@ -306,7 +378,7 @@ async function api(req, res, url) {
     return undefined;
   }
 
-  if (pathname === '/api/state' && method === 'GET') return send(res, 200, publicState(store.get()));
+  if (pathname === '/api/state' && method === 'GET') return send(res, 200, publicState(store.get()), {}, { etag: true });
 
   // Transactions — PUT is an idempotent upsert so offline edits can be replayed safely.
   if (parts[0] === 'transactions') {
@@ -314,6 +386,9 @@ async function api(req, res, url) {
     if (id === 'import' && method === 'POST') {
       const { items = [], accountId } = await readBody(req);
       if (!Array.isArray(items)) throw new HttpError(400, 'items must be an array');
+      const MAX_IMPORT = 5000;
+      const list = items.slice(0, MAX_IMPORT);
+      const truncated = items.length - list.length; // reported on their own, not as "skipped"
       const result = await store.mutate((s) => {
         const own = ownContext(s);
         const batchId = uid();
@@ -322,7 +397,7 @@ async function api(req, res, url) {
         if (accountId && !account) throw new HttpError(400, 'Unknown account');
         const now = new Date().toISOString();
         const rows = [];
-        for (const raw of items.slice(0, 5000)) {
+        for (const raw of list) {
           let t;
           try { t = cleanTransaction(raw); } catch { continue; }
           if (account) { t.accountId = account.uid; t.accountChosen = true; }
@@ -355,7 +430,7 @@ async function api(req, res, url) {
           added += 1;
         }
         const merged = mergeDuplicatesToTrash(s); // already came in from the bank
-        return { added: Math.max(0, added - merged), skipped: items.length - added + merged, batchId };
+        return { added: Math.max(0, added - merged), skipped: list.length - added + merged, batchId, ...(truncated ? { truncated } : {}) };
       });
       convertFx(); // the app updates live when it's done
       return send(res, 200, result);
@@ -637,8 +712,11 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 
+const COMPRESSIBLE = new Set(['.js', '.css', '.html', '.svg', '.json', '.webmanifest']);
+
 async function serveStatic(req, res, url) {
-  let rel = decodeURIComponent(url.pathname);
+  let rel;
+  try { rel = decodeURIComponent(url.pathname); } catch { throw new HttpError(400, 'Bad request'); }
   if (rel === '/') rel = '/index.html';
   const file = path.normalize(path.join(PUBLIC_DIR, rel));
   if (!file.startsWith(PUBLIC_DIR + path.sep)) throw new HttpError(403, 'Forbidden');
@@ -651,17 +729,21 @@ async function serveStatic(req, res, url) {
     target = path.join(PUBLIC_DIR, 'index.html');
     data = await fs.readFile(target);
   }
-  res.writeHead(200, {
-    'Content-Type': MIME[path.extname(target)] || 'application/octet-stream',
+  const ext = path.extname(target);
+  // no-cache: the browser always asks, and gets a 304 while the file is unchanged.
+  return reply(res, 200, {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
     'Cache-Control': 'no-cache',
     ...SECURITY_HEADERS,
-  });
-  res.end(data);
+  }, data, { etag: true, compress: COMPRESSIBLE.has(ext), cache: true });
 }
 
 async function handler(req, res) {
-  const url = new URL(req.url, 'http://local');
   try {
+    let url;
+    try { url = new URL(req.url, 'http://local'); } catch { throw new URIError('malformed URL'); }
+    // MCP clients (Claude) send no Origin and may come through Tailscale Funnel's host: own checks.
+    if (url.pathname === '/mcp' || url.pathname.startsWith('/mcp/')) return await httpMcp(req, res, { mcp, keys: mcpKeys, allowedHosts: [PUBLIC_HOST] });
     checkOrigin(req);
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname === '/bank/callback') {
@@ -671,17 +753,27 @@ async function handler(req, res) {
         res.writeHead(302, { Location: `/#settings?bank=error&reason=${encodeURIComponent(url.searchParams.get('error_description') || err || 'cancelled')}` });
         return res.end();
       }
-      await completeBankLink(code, url.searchParams.get('state'));
+      try {
+        await completeBankLink(code, url.searchParams.get('state'));
+      } catch (linkErr) {
+        // Back to the app with a readable reason, not a page of raw JSON.
+        console.error('[bank] linking failed:', linkErr.message);
+        const reason = (linkErr.status ? linkErr.message : 'Something went wrong. Try again from Settings.').slice(0, 150);
+        res.writeHead(302, { Location: `/#settings?bank=error&reason=${encodeURIComponent(reason)}` });
+        return res.end();
+      }
       res.writeHead(302, { Location: '/#settings?bank=linked' });
       return res.end();
     }
     return await serveStatic(req, res, url);
   } catch (err) {
-    const status = err.status && err.status < 600 ? err.status : 500;
+    // A malformed URL or percent-escape is the client's mistake, not a server error.
+    const bad = err instanceof URIError;
+    const status = bad ? 400 : err.status && err.status < 600 ? err.status : 500;
     if (status >= 500 && status !== 502) console.error(err);
     // Unexpected errors stay in the server log; the client gets a generic message.
-    const message = status === 500 ? 'Server error' : err.message;
-    if (!res.headersSent) send(res, status, { error: message });
+    const message = bad ? 'Bad request' : status === 500 ? 'Server error' : err.message;
+    if (!res.headersSent) await send(res, status, { error: message }).catch(() => res.end());
     else res.end();
   }
   return undefined;
@@ -712,6 +804,18 @@ if (SYNC_INTERVAL_HOURS > 0) {
   setTimeout(() => runSync().catch(() => {}), 10_000).unref();
 }
 
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => server.close(() => fs.rm(PID_FILE, { force: true }).finally(() => process.exit(0))));
+// Stop promptly (systemd / Windows restarts): open live-update streams would
+// keep server.close() waiting forever. A write in progress finishes first.
+let stopping = false;
+async function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  for (const res of clients) res.end();
+  clients.clear();
+  server.close();
+  server.closeAllConnections();
+  await store.queue;
+  await fs.rm(PID_FILE, { force: true }).catch(() => {});
+  process.exit(0);
 }
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, shutdown);

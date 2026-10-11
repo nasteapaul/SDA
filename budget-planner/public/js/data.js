@@ -11,6 +11,9 @@
 const LS_STATE = 'bp.state';
 const LS_OUTBOX = 'bp.outbox';
 const LS_TOKEN = 'bp.token';
+const REVIEW_BATCH = 500; // the server takes up to 500 ids per review request
+const RETRY_FIRST_MS = 15_000;
+const RETRY_MAX_MS = 120_000;
 
 // Transaction fields the server keeps itself; never sent as "changes".
 const TX_META = new Set(['id', 'createdAt', 'updatedAt', 'source', 'bankRef', 'importHash', 'batchId']);
@@ -38,6 +41,8 @@ export class Data extends EventTarget {
     this.token = load(LS_TOKEN, '');
     this.online = false;
     this.flushing = null;
+    this.retryTimer = null;
+    this.retryDelay = 0;
     this.events = null;
     this.deletedHere = new Set(); // deleted from this device: "undo" restores them from the trash
   }
@@ -58,12 +63,22 @@ export class Data extends EventTarget {
   }
 
   async fetch(path, { method = 'GET', body } = {}) {
-    const res = await fetch(path, {
-      method,
-      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      cache: 'no-store',
-    });
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    let res;
+    try {
+      res = await fetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+        body: payload,
+        cache: 'no-store',
+      });
+    } catch (cause) {
+      if (!(cause instanceof TypeError)) throw cause;
+      // "Failed to fetch" means nothing to the user: say what to check instead.
+      const err = new Error('Can’t reach your budget server. Check Wi-Fi or Tailscale.', { cause });
+      err.offline = true;
+      throw err;
+    }
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) throw new AuthError(data.error || 'Login required');
     if (!res.ok) {
@@ -78,6 +93,8 @@ export class Data extends EventTarget {
   async login(password) {
     const { token } = await this.fetch('/api/login', { method: 'POST', body: { password } });
     this.setToken(token);
+    // Edits queued before the session expired (the 401 stopped the queue) go out now.
+    if (this.outbox.length) await this.flush();
   }
 
   // The Android app checks /api/alerts in the background with the same login (phone notifications).
@@ -86,25 +103,47 @@ export class Data extends EventTarget {
   }
 
   setOnline(v) {
-    if (this.online !== v) { this.online = v; this.emit('status'); }
+    if (v) this.retryDelay = 0;
+    else this.scheduleRetry();
+    if (this.online === v) return;
+    this.online = v;
+    this.emit('status');
+    // Back online (server restarted, Wi-Fi back): send what was queued meanwhile.
+    if (v && this.outbox.length) this.flush();
   }
 
+  // Offline with edits waiting: try again in 15 s, then less and less often (up to every 2 min).
+  scheduleRetry() {
+    if (this.retryTimer || !this.outbox.length) return;
+    this.retryDelay = Math.min(this.retryDelay ? this.retryDelay * 2 : RETRY_FIRST_MS, RETRY_MAX_MS);
+    this.retryTimer = setTimeout(() => { this.retryTimer = null; this.flush(); }, this.retryDelay);
+    this.retryTimer.unref?.(); // Node (tests): a pending retry must not keep the process alive
+  }
+
+  stopRetry() {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  // Resolves true when the server answered, false when offline or logged out.
   async refresh() {
     try {
       const state = await this.fetch('/api/state');
       this.setOnline(true);
-      if (this.outbox.length) return; // let flush() finish first, it refreshes after
+      if (this.outbox.length) return true; // let flush() finish first, it refreshes after
       // Nothing changed on the server and nothing is waiting here: no re-render, no 1 MB localStorage write.
       if (!this.dirty && this.state && state.updatedAt === this.state.updatedAt
         && state.bank?.lastSync === this.state.bank?.lastSync && Boolean(state.bank?.syncing) === Boolean(this.state.bank?.syncing)
-        && state.bank?.lastError === this.state.bank?.lastError) return;
+        && state.bank?.lastError === this.state.bank?.lastError) return true;
       this.dirty = false;
       this.state = state;
       save(LS_STATE, state);
       this.emit('change');
+      return true;
     } catch (err) {
       if (err instanceof AuthError) this.emit('auth');
       else this.setOnline(false);
+      return false;
     }
   }
 
@@ -125,29 +164,32 @@ export class Data extends EventTarget {
   flush() {
     if (this.flushing) return this.flushing;
     this.flushing = (async () => {
-      while (this.outbox.length) {
-        const op = this.outbox[0];
-        try {
-          await this.fetch(op.path, { method: op.method, body: op.body });
-          this.setOnline(true);
-        } catch (err) {
-          if (err instanceof AuthError) { this.emit('auth'); return; }
-          if (err.status === 409) {
-            // Changed or deleted on another device: drop it; the refresh below shows the server's copy.
-            this.emit('error', CONFLICT_MESSAGES[err.data?.error] || CONFLICT_MESSAGES.conflict);
-          } else if (err.status && err.status < 500) {
-            // The server rejected it (invalid data) — drop it so the queue can't jam.
-            this.emit('error', `Couldn't save a change: ${err.message}`);
-          } else {
-            this.setOnline(false);
-            return;
+      this.stopRetry();
+      // An edit made while the final refresh is in flight joins this run, not a later one.
+      do {
+        while (this.outbox.length) {
+          const op = this.outbox[0];
+          try {
+            await this.fetch(op.path, { method: op.method, body: op.body });
+            this.setOnline(true);
+          } catch (err) {
+            if (err instanceof AuthError) { this.emit('auth'); return; }
+            if (err.status === 409) {
+              // Changed or deleted on another device: drop it; the refresh below shows the server's copy.
+              this.emit('error', CONFLICT_MESSAGES[err.data?.error] || CONFLICT_MESSAGES.conflict);
+            } else if (err.status && err.status < 500) {
+              // The server rejected it (invalid data) — drop it so the queue can't jam.
+              this.emit('error', `Couldn't save a change: ${err.message}`);
+            } else {
+              this.setOnline(false); // also schedules a retry
+              return;
+            }
           }
+          this.outbox.shift();
+          save(LS_OUTBOX, this.outbox);
+          this.emit('status');
         }
-        this.outbox.shift();
-        save(LS_OUTBOX, this.outbox);
-        this.emit('status');
-      }
-      await this.refresh();
+      } while (await this.refresh() && this.outbox.length);
     })().finally(() => { this.flushing = null; });
     return this.flushing;
   }
@@ -171,12 +213,13 @@ export class Data extends EventTarget {
     if (this.events) return;
     const es = new EventSource(`/api/events${ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''}`);
     this.events = es;
+    es.addEventListener('open', () => this.setOnline(true));
     es.addEventListener('change', (e) => {
       this.setOnline(true);
+      // Edits still waiting go out even when the server's version hasn't changed (e.g. after a restart).
+      if (this.outbox.length) { this.flush(); return; }
       const { updatedAt } = JSON.parse(e.data);
-      if (!this.state || updatedAt !== this.state.updatedAt) {
-        if (this.outbox.length) this.flush(); else this.refresh();
-      }
+      if (!this.state || updatedAt !== this.state.updatedAt) this.refresh();
     });
     es.onerror = () => {
       this.setOnline(false);
@@ -277,12 +320,21 @@ export class Data extends EventTarget {
     return r;
   }
 
-  // Review queue: "this category is right" for several transactions at once.
+  // Review queue: "this category is right" for several transactions at once,
+  // sent in batches the server accepts (applied locally in one go).
   reviewTransactions(ids) {
-    const set = new Set(ids);
-    return this.mutate({ method: 'POST', path: '/api/transactions/review', body: { ids: [...set] } }, (s) => {
-      for (const t of s.transactions) if (set.has(t.id)) t.reviewed = true;
-    });
+    const all = [...new Set(ids)];
+    let done;
+    let i = 0;
+    do {
+      const batch = all.slice(i, i + REVIEW_BATCH);
+      done = this.mutate({ method: 'POST', path: '/api/transactions/review', body: { ids: batch } }, i === 0 ? (s) => {
+        const set = new Set(all);
+        for (const t of s.transactions) if (set.has(t.id)) t.reviewed = true;
+      } : null);
+      i += REVIEW_BATCH;
+    } while (i < all.length);
+    return done;
   }
 
   // Savings, pensions, loans… entered by hand for the net worth.

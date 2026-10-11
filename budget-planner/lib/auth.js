@@ -2,15 +2,32 @@
 // revoked (sign out). Only a hash of each token is kept on disk, so reading
 // the sessions file doesn't hand out working tokens. Live updates
 // (EventSource can't send headers) use short-lived single-use tickets instead
-// of putting the real token in a URL.
+// of putting the real token in a URL. A salted hash of APP_PASSWORD is kept
+// with them, so changing the password signs every device out.
 
 import { promises as fs, readFileSync } from 'node:fs';
-import { createHash, randomBytes } from 'node:crypto';
+import path from 'node:path';
+import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 
 const DAY = 86400 * 1000;
 const TICKET_MS = 60 * 1000;
 
 const hash = (token) => createHash('sha256').update(String(token)).digest('hex');
+const scryptAsync = promisify(scrypt);
+
+// "scrypt$<salt>$<key>": slow and salted, so the file doesn't give the password away.
+async function hashPassword(password, salt = randomBytes(16).toString('base64url')) {
+  const key = await scryptAsync(String(password), salt, 32);
+  return `scrypt$${salt}$${key.toString('base64url')}`;
+}
+async function samePassword(password, stored) {
+  const [kind, salt, key] = String(stored || '').split('$');
+  if (kind !== 'scrypt' || !salt || !key) return false;
+  const a = Buffer.from((await hashPassword(password, salt)).split('$')[2]);
+  const b = Buffer.from(key);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export class Sessions {
   constructor(file, { days = 30, now = () => Date.now() } = {}) {
@@ -19,14 +36,32 @@ export class Sessions {
     this.now = now;
     this.sessions = new Map(); // hash → { createdAt, expiresAt }
     this.tickets = new Map(); // ticket → expiresAt
+    this.passwordHash = '';
     try {
-      for (const [h, s] of Object.entries(JSON.parse(readFileSync(file, 'utf8')))) this.sessions.set(h, s);
+      const saved = JSON.parse(readFileSync(file, 'utf8'));
+      // Older files are just { hash: session }.
+      const list = saved.sessions && typeof saved.sessions === 'object' ? saved.sessions : saved;
+      if (typeof saved.password === 'string') this.passwordHash = saved.password;
+      for (const [h, s] of Object.entries(list)) if (s && typeof s === 'object') this.sessions.set(h, s);
     } catch { /* no sessions yet */ }
   }
 
   async save() {
     this.prune();
-    await fs.writeFile(this.file, JSON.stringify(Object.fromEntries(this.sessions)), { mode: 0o600 });
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
+    const data = { password: this.passwordHash || undefined, sessions: Object.fromEntries(this.sessions) };
+    await fs.writeFile(this.file, JSON.stringify(data), { mode: 0o600 });
+  }
+
+  // Call once at startup with APP_PASSWORD. A different password than last time
+  // signs every device out (resolves true then). A file from before this check
+  // only records the hash, so an update doesn't log everyone out.
+  async usePassword(password) {
+    if (this.passwordHash && await samePassword(password, this.passwordHash)) return false;
+    const changed = Boolean(this.passwordHash);
+    this.passwordHash = await hashPassword(password);
+    if (changed) await this.revokeAll(); else await this.save();
+    return changed;
   }
 
   prune() {

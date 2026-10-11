@@ -247,8 +247,9 @@ public class MainActivity extends Activity {
                 HttpURLConnection c = null;
                 try {
                     c = (HttpURLConnection) new URL(url + "/api/health").openConnection();
-                    c.setConnectTimeout(2500);
-                    c.setReadTimeout(3000);
+                    // Generous: a phone waking Tailscale (relay, sleeping laptop) can take several seconds.
+                    c.setConnectTimeout(10000);
+                    c.setReadTimeout(10000);
                     c.setUseCaches(false);
                     ok = c.getResponseCode() == 200;
                 } catch (Exception ignored) {

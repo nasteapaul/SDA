@@ -19,7 +19,7 @@ import { importSeen, isSameTransaction } from './shared/dedupe.js';
 import { icon as svgIcon, iconTile } from './icons.js';
 import { collapsible } from './collapse.js';
 // trust + money ahead: bank check, safe to spend, subscriptions, alerts, review queue, net worth
-import { detectSeries, upcoming as upcomingBills } from './shared/recurring.js';
+import { detectSeries, upcoming as upcomingBills, dropPending } from './shared/recurring.js';
 import { safeToSpend, periodCalendar } from './shared/safespend.js';
 import { repaidInPeriod, creditCost, cardDue, pairRepayments, FEES_CATEGORY } from './shared/cardpay.js';
 import { consentStatus, accountTrust } from './shared/trust.js';
@@ -27,8 +27,12 @@ import { categoryReason, reviewQueue, suggestRules } from './shared/review.js';
 import { netWorth } from './shared/networth.js';
 import { expectedRefunds } from './shared/refunds.js';
 import { buildAlerts } from './shared/alerts.js';
+import { paydayOdds } from './shared/odds.js';
 
 const data = new Data();
+// Bumped on every data change, also local ones made offline that don't change updatedAt (derived values, D()).
+let dataRev = 0;
+data.addEventListener('change', () => { dataRev += 1; });
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $('#view');
 const modal = $('#modal');
@@ -124,12 +128,19 @@ function goalsWithProgress() {
 function currentPlan(goalIds = ui.planGoals) {
   // With a payday, habits are measured per pay period instead of per calendar month.
   const p = P();
-  // Money into the current account is income even if it carries a savings/transfer category.
+  // Counted exactly like the Overview: a split purchase in each of its categories, a refund
+  // against its purchase's category. In cash-flow mode money into the current account is
+  // income and money moved out of it is spending, whatever savings/transfer category it has.
   const counted = S().transactions.flatMap((t) => {
     const e = L().effect(t);
     if (!e.as) return [];
-    if (counts(t) === 'refund') return [{ ...t, type: 'expense', amount: e.amount, category: e.category }];
-    return [L().mode === 'cashflow' && e.as === 'income' && cat(t.category).role ? { ...t, category: 'Other income' } : t];
+    if (e.as === 'saved') return [t];
+    return L().parts(t).map((part) => {
+      const role = cat(part.category).role;
+      let category = part.category;
+      if (L().mode === 'cashflow' && role && !(e.as === 'expense' && role === 'repayment')) category = e.as === 'income' ? 'Other income' : 'Transfers out';
+      return { ...t, type: e.as, amount: part.amount, category };
+    });
   });
   const txs = p.payday ? counted.map((t) => ({ ...t, date: p.pseudoDate(t.date) })) : counted;
   const analysis = analyzeHistory(txs, S().categories, { today: p.payday ? p.pseudoDate(todayISO()) : todayISO() });
@@ -761,7 +772,7 @@ const views = {
           ${group('budget', 'Budget', countModeCardHTML() + budgetMonthCardHTML())}
         </div>
         <div class="stack ss-col">
-          ${group('alerts', 'Alerts & extras', alertSettingsCardHTML() + vouchersSettingsCardHTML())}
+          ${group('alerts', 'Alerts & extras', alertSettingsCardHTML() + aiCardHTML() + vouchersSettingsCardHTML())}
           ${group('cats', 'Categories & rules', categoriesCardHTML() + rulesCardHTML())}
           ${group('app', 'App', appCardHTML() + trashCardHTML())}
           ${group('danger', 'Danger zone', dangerCardHTML(b))}
@@ -1043,6 +1054,33 @@ const ALERT_LABELS = {
   summary: ['End of the period', 'A short summary on payday'],
   assets: ['Net worth values', 'Update pensions and savings every 3 months'],
 };
+// Ask Claude (read-only): the user's own Claude reads the budget through MCP (mcp.js on this
+// computer, or /mcp with a read-only key) and gives advice. Nothing leaves until it's connected.
+function aiCardHTML() {
+  const ai = S().ai || {};
+  const code = (text) => `<div class="ai-code"><code>${esc(text)}</code><button class="btn small ghost" type="button" data-action="copy-text" data-text="${esc(text)}">Copy</button></div>`;
+  const link = ui.aiKey ? `https://${location.hostname}:8443/mcp/${ui.aiKey}` : '';
+  const how = `<ol class="ai-steps">
+      <li><b>Claude Desktop on the laptop</b>: Settings → Developer → Edit config, add
+        ${code('"budget": { "command": "node", "args": ["C:\\\\Users\\\\<you>\\\\SDA\\\\budget-planner\\\\mcp.js"] }')}
+        inside <code class="inline">"mcpServers"</code>, then restart Claude.</li>
+      <li><b>Claude Code</b>: ${code('claude mcp add -s user budget -- node ~/SDA/budget-planner/mcp.js')}</li>
+      <li><b>Phone or claude.ai</b> (optional): create a key, publish only <code class="inline">/mcp</code> on the laptop with
+        ${code('tailscale funnel --bg --https=8443 --set-path=/mcp http://127.0.0.1:8080/mcp')}
+        then add a custom connector in claude.ai with the address below. Anyone with that address can read your figures: keep it private.
+        <div class="ai-key">${link ? `<p class="ss-help"><b>Connector address</b> (shown once — copy it now):</p>${code(link)}` : ''}
+          <div class="ss-inline-form">
+            <button class="btn small" type="button" data-action="ai-key-create">${ai.keySet ? 'New key' : 'Create a key'}</button>
+            ${ai.keySet ? '<button class="btn small ghost" type="button" data-action="ai-key-revoke">Turn off</button>' : ''}
+          </div></div></li>
+    </ol>`;
+  return `<div class="card ss-card">
+      <div class="card-head">${cardTitle('bulb', 'Ask Claude about your budget')}</div>
+      <p class="ss-help">Your own Claude can read this budget — <b>read-only</b> — and answer things like “Can I afford a 1,500 RON phone this month?” or “Where can I save 300 RON?”. It uses your Claude plan; nothing is shared until you connect it.</p>
+      ${collapsible({ key: 'settings.ai', title: 'How to connect', body: how, open: Boolean(ui.aiKey) })}
+    </div>`;
+}
+
 function alertSettingsCardHTML() {
   const prefs = S().settings?.alerts || {};
   const phone = window.BudgetApp
@@ -1266,6 +1304,13 @@ function route() {
   view.focus({ preventScroll: true });
   window.scrollTo(0, 0);
   if (ui.params.has('add')) { history.replaceState(null, '', '#transactions'); openTxModal(); }
+  if (ui.route === 'settings' && (ui.params.has('connect') || ui.params.get('bank') === 'error')) {
+    if (ui.params.get('bank') === 'error') toast(`The bank connection didn’t finish${ui.params.get('reason') ? `: ${ui.params.get('reason').slice(0, 120)}` : ''}. Try again below.`);
+    history.replaceState(null, '', '#settings');
+    const box = $('details[data-collapse="settings.bank-link"]');
+    if (box) box.open = true;
+    (box || $('#bank-select'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 // ---------------------------------------------------------------- CSV import preview (ux-3)
@@ -1596,7 +1641,7 @@ function openTxModal(tx, preset = {}) {
       refundDue,
       ...(category !== originalCategory ? { manualCategory: true } : {}),
       ...(accVal !== null && (pocket || null) !== (t.pocket || null) ? { pocket } : {}),
-      ...(accVal !== null && accId !== (t.accountId || null) ? { accountId: accId, accountManual: true } : {}),
+      ...(accVal !== null && accId !== (pocket ? (t.accountId || null) : (t.pocket === 'vouchers' ? null : L().accountOf(t)?.uid || null)) ? { accountId: accId, accountManual: true } : {}),
       // Opened and saved: you've seen its category, so it leaves the "To check" list.
       ...(fromBank ? { reviewed: true } : {}),
     };
@@ -2118,10 +2163,12 @@ function creditCardPanel(key) {
   const kpi = (label, value, sub = '', cls = '') => `<div class="cc-kpi"><span class="cc-kpi-top"><span class="cc-kpi-label">${label}</span><span class="cc-kpi-value num ${cls}">${value}</span></span>${sub ? `<span class="cc-kpi-sub">${sub}</span>` : ''}</div>`;
   const row = (label, value, sub = '', cls = '') => `<div class="row cc-row"><span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${label}</span><span class="ov-row-value ${cls}">${value}</span></span>${sub ? `<span class="sub">${sub}</span>` : ''}</span></div>`;
   let pace;
+  let detailsTitle = 'Details';
   if (!owed) pace = `<p class="cc-note good">${svgIcon('check', { size: 16 })}Nothing owed on the card.</p>`;
   else if (!covered.length) pace = '<p class="cc-note">Not enough card history yet to work out your repayment pace.</p>';
   else {
     const clears = net > 1 && owed / net <= 120;
+    detailsTitle = clears ? `Repayment plan · debt-free in ~${Math.ceil(owed / net)} months` : 'Repayment plan · <span class="warn-text">not going down</span>';
     pace = `<div class="list cc-pace">
       ${row('At your pace', clears ? `Debt-free in ~${Math.ceil(owed / net)} months` : 'Not going down', `Repaid ${short(avgRepaid)}, spent ${short(avgSpent)} a period (${span})`, clears ? '' : 'warn')}
       ${row('Debt-free in 12 months', `<span class="num">${short(in12)}</span> a month`, `Repay this and keep card spending at ${short(avgSpent)} or less`)}
@@ -2140,9 +2187,9 @@ function creditCardPanel(key) {
       ${kpi('Paid back this period', formatRON(now.repaid), '', now.repaid > 0 ? 'pos' : '')}
       ${now.fees || cost.avg3 ? kpi('Interest & fees', formatRON(now.fees), cost.avg3 ? `About ${short(cost.avg3)} a period lately` : 'The cost of the credit', now.fees ? 'neg' : '') : ''}
     </div>
-    ${pace}
+    ${collapsible({ key: 'overview.card.details', title: detailsTitle, cls: 'ov-more cc-details', body: `${pace}
     ${top.length ? `<span class="section-label cc-top-label">Top on the card this period (RON)</span>
-      <div class="chips cc-chips">${top.map(([c, v]) => `<span class="chip"><span class="chip-emoji" aria-hidden="true">${esc(icon(c))}</span>${esc(c)} <b class="num">${short(v).replace(/\s*RON$/u, '')}</b></span>`).join('')}</div>` : ''}
+      <div class="chips cc-chips">${top.map(([c, v]) => `<span class="chip"><span class="chip-emoji" aria-hidden="true">${esc(icon(c))}</span>${esc(c)} <b class="num">${short(v).replace(/\s*RON$/u, '')}</b></span>`).join('')}</div>` : ''}` })}
   </div>`;
 }
 
@@ -2268,7 +2315,7 @@ function tipRow(t) {
 const derived = { key: '', values: new Map() };
 function D(name, fn) {
   const s = S();
-  const k = `${s.updatedAt}|${s.transactions.length}|${JSON.stringify(s.settings || {})}|${JSON.stringify(s.assets || [])}|${todayISO()}`;
+  const k = `${dataRev}|${s.updatedAt}|${s.transactions.length}|${JSON.stringify(s.settings || {})}|${JSON.stringify(s.assets || [])}|${todayISO()}`;
   if (k !== derived.key) { derived.key = k; derived.values.clear(); }
   if (!derived.values.has(name)) derived.values.set(name, fn());
   return derived.values.get(name);
@@ -2293,7 +2340,8 @@ function moneyAhead() {
     const today = todayISO();
     const end = P().end(key);
     const main = L().mainAccount;
-    const bills = upcomingBills(allSeries(), today, end).filter((u) => !main || !u.accountId || u.accountId === main.uid);
+    // A bill already paid by card but not booked yet is out of the bank's balance: don't take it off twice.
+    const bills = dropPending(upcomingBills(allSeries(), today, end).filter((u) => !main || !u.accountId || u.accountId === main.uid), main?.pendingItems || [], today);
     const due = cardDue(S(), L(), P(), today);
     const refunds = expectedRefunds(S(), { today }).filter((r) => r.status !== 'received' && r.due <= end)
       .map((r) => ({ date: r.due < today ? today : r.due, label: `Refund: ${displayDesc(r.tx.description)}`, amount: r.tx.amount }));
@@ -2333,7 +2381,7 @@ function aheadCard() {
     return `<div class="row ov-row ah-row">
       <span class="ah-date ${tone}"><b>${esc(d)}</b><span>${esc(mon)}</span></span>
       <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">${esc(e.label)}</span><span class="ov-row-value num${e.kind === 'salary' || e.kind === 'refund' ? ' pos' : ''}">${esc(amount(e))}</span></span>
-        <span class="sub">${esc(kindLabel)}${e.late ? ' · due, not paid yet' : ''}${e.variable ? ' · amount varies' : ''}</span></span>
+        <span class="sub">${esc(kindLabel)}${e.late ? ` · was due ${e.due ? esc(fmtDate(e.due, { day: 'numeric', month: 'short' })) : 'earlier'}, not paid yet` : ''}${e.variable ? ' · amount varies' : ''}</span></span>
     </div>`;
   });
   let breakdown = '';
@@ -2354,9 +2402,40 @@ function aheadCard() {
   }
   return `<div class="card" id="ov-ahead">
     <div class="card-head">${cardTitle('calendar', P().payday ? 'Until payday' : 'Until month end')}<a class="link" href="#plan">Subscriptions${svgIcon('chevron-right', { size: 16 })}</a></div>
+    ${oddsHTML()}
     ${breakdown}
     ${rows.length ? moreRows({ key: 'overview.ahead', rows, shown: 5, title: 'Later this period', wrap: (h) => `<div class="list ah-list">${h}</div>` })
       : '<p class="caption">No bills or repayments expected before payday.</p>'}
+  </div>`;
+}
+
+// Payday odds (shared/odds.js): the chance to reach payday with at least the reserve left,
+// from how you really spend (past periods), the bills still due and the card repayment.
+// Shown once there are 3 pay periods to learn from; one line, the details on tap.
+function oddsFor(extraSpend = 0) {
+  const a = moneyAhead();
+  if (!a.safe) return null;
+  const run = () => paydayOdds(S(), {
+    ledger: L(), periods: P(), today: todayISO(), balance: a.safe.balance, upcoming: a.bills, cardDue: a.due,
+    threshold: Number(S().settings?.spendBuffer) || 0, extraSpend, series: allSeries(),
+  });
+  return extraSpend ? run() : D('odds', run);
+}
+const oddsLine = (r) => `${Math.round(r.probability * 100)}% chance to reach ${P().payday ? 'payday' : 'month end'} ${r.threshold > 0 ? `with at least ${short(r.threshold)}` : 'without running out'}`;
+function oddsHTML() {
+  const r = oddsFor();
+  if (!r || r.status === 'learning') return '';
+  const pct = Math.round(r.probability * 100);
+  const tone = r.status === 'unsure' ? 'neutral' : pct >= 80 ? 'good' : pct >= 50 ? 'warning' : 'critical';
+  const record = r.history?.periods ? ` · the range was right in ${r.history.hits} of the last ${plural(r.history.periods, 'period')}` : '';
+  return `<div class="od-box ${tone}">
+    <div class="od-head"><span class="od-pct num">${pct}%</span><span class="od-text">${esc(oddsLine(r).replace(/^\d+% /, ''))}</span></div>
+    <span class="od-sub">Likely left on ${P().payday ? 'payday' : 'month end'}: <span class="num">${esc(rangeRON(r.p10, r.p90))}</span>${esc(record)}</span>
+    ${r.status === 'unsure' ? `<span class="od-sub warn-text">Less certain: ${esc(r.reason || 'the app doesn’t match the bank right now')}</span>` : ''}
+    <details class="od-ask"><summary>Can I afford something?</summary>
+      <div class="ss-inline-form"><input id="od-amount" inputmode="decimal" autocomplete="off" placeholder="Price in RON" aria-label="Price in RON"><button class="btn small" type="button" data-action="odds-ask">Check</button></div>
+      <p class="od-answer" aria-live="polite"></p>
+    </details>
   </div>`;
 }
 
@@ -2389,6 +2468,7 @@ function trustCard() {
   const staleRows = rows.filter(({ t }) => t.stale);
   const consentIssue = consent && consent.level !== 'ok';
   const problems = offRows.length + staleRows.length + (consentIssue ? 1 : 0) + (err ? 1 : 0);
+  if (!problems) return ''; // all fine: the main card already says "Matches the bank"; Settings has the details
   const state = (a, t) => {
     const r = t.reconcile;
     const currency = String(a.balance?.currency || a.currency || 'RON').toUpperCase();
@@ -2418,13 +2498,13 @@ function trustCard() {
     if (consent.level === 'expired') {
       consentHTML = `<div class="banner critical tr-banner">${iconTile('lock', { tone: 'critical' })}<div><b>Bank access to ${esc(consent.bank)} ended on ${esc(until)}</b>
         <div class="small">New transactions stopped coming in. Renew it in Settings (about two minutes), or import a CSV statement meanwhile.</div>
-        <div class="tr-actions"><a class="btn small primary" href="#settings">Renew access</a><a class="btn small" href="#settings">Import a CSV</a></div></div></div>`;
+        <div class="tr-actions"><a class="btn small primary" href="#settings?connect=1">Renew access</a><a class="btn small" href="#settings">Import a CSV</a></div></div></div>`;
     } else {
       const badge = consent.level === 'urgent' ? '<span class="badge critical">Renew now</span>' : consent.level === 'soon' ? '<span class="badge warning">Renew soon</span>' : '';
       consentHTML = `<div class="row ov-row tr-consent">${iconTile('lock', { tone: consent.level === 'urgent' ? 'critical' : consent.level === 'soon' ? 'warning' : 'neutral' })}
         <span class="ov-row-main"><span class="ov-row-top"><span class="row-label">Bank access until ${esc(until)}</span><span class="ov-row-value">${esc(plural(consent.daysLeft, 'day'))} left ${badge}</span></span>
         <span class="sub">${consent.level === 'ok' ? 'The bank asks you to confirm access again every 90–180 days.' : 'Renewing takes about two minutes: Settings → Add or reconnect a bank.'}</span></span>
-        ${consent.level === 'ok' ? '' : `<a class="btn small" href="#settings">Renew</a>`}</div>`;
+        ${consent.level === 'ok' ? '' : `<a class="btn small" href="#settings?connect=1">Renew</a>`}</div>`;
     }
   }
   const errHTML = err ? `<div class="banner warn tr-banner">${iconTile('alert', { tone: 'warning' })}<div><b>Last bank sync failed</b>
@@ -2585,7 +2665,10 @@ function openAssetModal(asset) {
       <button class="btn" type="button" data-modal="cancel">Cancel</button>
       <button class="btn primary" type="submit">Save</button>
     </div>`, async (action, fd) => {
-    if (action === 'delete') { data.deleteAsset(a.id); toast('Removed'); return false; }
+    if (action === 'delete') {
+      if (!await confirmSheet({ title: `Delete ${a.name}?`, message: 'It leaves your net worth.' })) return true;
+      data.deleteAsset(a.id); toast('Removed'); return false;
+    }
     const name = String(fd.get('name') || '').trim();
     const amount = round2(Math.abs(parseAmount(fd.get('amount'))));
     if (!name) throw new Error('Give it a name.');
@@ -2639,7 +2722,7 @@ function reviewCard() {
     ${queue.length ? moreRows({ key: 'transactions.review.more', rows: queue.map(txRowReview), shown: 4, title: 'More to check', wrap: (h) => `<div class="rv-list">${h}</div>` }) : ''}
     ${queue.length > 1 ? `<div class="rv-foot"><button class="btn small" type="button" data-action="review-all">${svgIcon('check')}All ${queue.length} are right</button></div>` : ''}`;
   const count = queue.length + suggestions.length;
-  return `<div class="card rv-card">${collapsible({ key: 'transactions.review', title: `To check<span class="collapse-sub">Categories the app guessed. Tap one to change it.</span>`, count: String(count), icon: iconTile('tag', { tone: 'accent' }), body, open: true })}</div>`;
+  return `<div class="card rv-card">${collapsible({ key: 'transactions.review', title: `To check<span class="collapse-sub">Categories the app guessed. Tap one to change it.</span>`, count: String(count), icon: iconTile('tag', { tone: 'accent' }), body, open: false })}</div>`;
 }
 
 // ---- CSV export and file saving (browser download, or the Android app's save dialog).
@@ -2650,7 +2733,12 @@ function saveFile(name, mime, content) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-const csvCell = (v) => { const s = String(v ?? ''); return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+const csvCell = (v) => {
+  let s = String(v ?? '');
+  // A shop name starting with = + - @ would run as a formula in Excel: keep it text.
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(,\d+)?$/.test(s)) s = `'${s}`;
+  return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
 // Semicolons and decimal commas: opens straight in Excel with Romanian settings.
 function exportCSV(list, name) {
   const num = (n) => (n === undefined || n === null || n === '' || !Number.isFinite(Number(n)) ? '' : String(round2(Number(n))).replace('.', ','));
@@ -2781,7 +2869,12 @@ async function syncBank(force = true) {
     if (force) toast(r.skipped ? `Already up to date (${r.skipped})` : `Bank synced — ${r.added} new transaction${r.added === 1 ? '' : 's'}`);
     fetched = force || !r.skipped; // an automatic sync that was skipped fetched nothing: nothing to download
   } catch (err) {
-    if (force) toast(err.message);
+    if (force) {
+      const offline = err.offline || err instanceof TypeError;
+      toast(offline ? 'Can’t reach your budget server. Check Wi-Fi or Tailscale, then try again.' : err.message);
+      if (S()?.bank) S().bank.syncing = false;
+      render();
+    }
   } finally {
     if (fetched) await data.refresh();
   }
@@ -2835,7 +2928,7 @@ const actions = {
       const r = await data.fetch('/api/transactions/import', { method: 'POST', body: { items: ui.csvPreview.items, accountId: ui.csvAccount || undefined } });
       ui.csvPreview = null;
       await data.refresh();
-      const msg = `Imported ${r.added} transaction${r.added === 1 ? '' : 's'}${r.skipped ? ` · skipped ${r.skipped} already in app` : ''}`;
+      const msg = `Imported ${r.added} transaction${r.added === 1 ? '' : 's'}${r.skipped ? ` · skipped ${r.skipped} already in app` : ''}${r.truncated ? ` · ${r.truncated} rows over the 5,000 limit were left out — import the rest as a second file` : ''}`;
       toast(msg, r.added && r.batchId ? {
         label: 'Undo',
         run: async () => {
@@ -2871,7 +2964,10 @@ const actions = {
     } catch (err) { toast(err.message); }
   },
   'edit-rule': (el) => openRuleModal(S().rules[Number(el.dataset.index)]),
-  recategorize: () => { data.recategorizeAll(); toast('Categories updated'); },
+  recategorize: () => {
+    data.recategorizeAll();
+    toast(data.online ? 'Categories updated' : 'Saved — categories update when the server is reachable');
+  },
   'edit-account': (el) => openAccountModal(el.dataset.id),
   'balance-meaning': async (el) => {
     el.disabled = true;
@@ -2903,6 +2999,28 @@ const actions = {
   logout: () => data.logout(),
   'change-server': () => window.BudgetApp?.changeServer(),
   'dismiss-alert': (el) => { dismissAlert(el.dataset.id); render(); },
+  'odds-ask': () => {
+    const amount = round2(Math.abs(parseAmount($('#od-amount')?.value || '')));
+    const out = $('.od-answer');
+    if (!out) return;
+    if (!Number.isFinite(amount) || amount <= 0) { out.textContent = 'Enter the price.'; return; }
+    const before = oddsFor();
+    const r = oddsFor(amount);
+    if (!r || !before) return;
+    const drop = Math.round((before.probability - r.probability) * 100);
+    out.textContent = `After ${short(amount)}: ${oddsLine(r)} (${drop > 0 ? `${drop} points lower` : 'about the same'}), likely ${rangeRON(r.p10, r.p90)} left.`;
+  },
+  'copy-text': async (el) => {
+    try { await navigator.clipboard.writeText(el.dataset.text || ''); toast('Copied'); } catch { toast('Couldn’t copy: select the text and copy it'); }
+  },
+  'ai-key-create': async () => {
+    if (S().ai?.keySet && !await confirmSheet({ title: 'Replace the key?', message: 'Apps using the old key stop working until you give them the new one.', confirmLabel: 'Replace' })) return;
+    try { ui.aiKey = (await data.fetch('/api/mcp/key', { method: 'POST' })).key; S().ai = { keySet: true }; render(); } catch (err) { toast(err.message); }
+  },
+  'ai-key-revoke': async () => {
+    if (!await confirmSheet({ title: 'Turn off network access?', message: 'The phone / claude.ai connector stops working. Claude on the laptop (mcp.js) keeps working.', confirmLabel: 'Turn off' })) return;
+    try { await data.fetch('/api/mcp/key', { method: 'DELETE' }); ui.aiKey = ''; S().ai = { keySet: false }; render(); } catch (err) { toast(err.message); }
+  },
   'scroll-ahead': () => $('#ov-ahead')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
   'series-status': (el) => {
     const map = { ...(S().settings?.recurring || {}) };
@@ -3113,7 +3231,7 @@ async function boot() {
       await data.refresh();
       if (data.state) { showApp(); data.connectLive(); syncBank(false); }
     } catch (err) {
-      $('#login-error').textContent = err.message === 'Failed to fetch' ? "Can't reach the server — are you on your home Wi-Fi?" : err.message;
+      $('#login-error').textContent = err.offline || err.message === 'Failed to fetch' ? 'Can’t reach your budget server. Check Wi-Fi or Tailscale.' : err.message;
     }
   });
 

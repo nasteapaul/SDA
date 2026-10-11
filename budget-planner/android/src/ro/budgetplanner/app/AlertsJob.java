@@ -46,6 +46,7 @@ public class AlertsJob extends JobService {
     private static final long PERIOD_MS = 3 * 60 * 60 * 1000L;
     private static final int MAX_SEEN = 300;
     private static final int FIRST_RUN_MAX = 3; // right after install: the newest few, not a flood
+    private static final int TIMEOUT_MS = 10000;
 
     /** Stores the login (empty = logged out) and schedules or cancels the checks. */
     static void setToken(Context ctx, String token) {
@@ -62,21 +63,28 @@ public class AlertsJob extends JobService {
         }
         ComponentName me = new ComponentName(ctx, AlertsJob.class);
         boolean scheduled = false;
-        for (JobInfo j : js.getAllPendingJobs()) if (j.getId() == JOB_PERIODIC) scheduled = true;
+        for (JobInfo j : js.getAllPendingJobs()) {
+            // A job scheduled by an older version (no battery condition) is replaced.
+            if (j.getId() == JOB_PERIODIC && (Build.VERSION.SDK_INT < 26 || j.isRequireBatteryNotLow())) scheduled = true;
+        }
         if (!scheduled) {
-            js.schedule(new JobInfo.Builder(JOB_PERIODIC, me)
+            js.schedule(sparing(new JobInfo.Builder(JOB_PERIODIC, me)
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                     .setPeriodic(PERIOD_MS)
-                    .setPersisted(true)
-                    .build());
+                    .setPersisted(true)).build());
         }
         if (!t.equals(old)) {
-            js.schedule(new JobInfo.Builder(JOB_SOON, me)
+            js.schedule(sparing(new JobInfo.Builder(JOB_SOON, me)
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                     .setMinimumLatency(60 * 1000L)
-                    .setOverrideDeadline(15 * 60 * 1000L)
-                    .build());
+                    .setOverrideDeadline(15 * 60 * 1000L)).build());
         }
+    }
+
+    /** Alerts can wait: don't wake the phone for them when the battery is low. */
+    private static JobInfo.Builder sparing(JobInfo.Builder b) {
+        if (Build.VERSION.SDK_INT >= 26) b.setRequiresBatteryNotLow(true);
+        return b;
     }
 
     @Override
@@ -107,8 +115,8 @@ public class AlertsJob extends JobService {
         if (server == null || token.isEmpty()) return;
         HttpURLConnection c = (HttpURLConnection) new URL(server + "/api/alerts").openConnection();
         try {
-            c.setConnectTimeout(15000);
-            c.setReadTimeout(15000);
+            c.setConnectTimeout(TIMEOUT_MS);
+            c.setReadTimeout(TIMEOUT_MS);
             c.setUseCaches(false);
             c.setRequestProperty("Authorization", "Bearer " + token);
             c.setRequestProperty("Accept", "application/json");
@@ -172,12 +180,20 @@ public class AlertsJob extends JobService {
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         // The white launcher glyph is the small icon (resources aren't compiled into an R class here).
         int icon = getResources().getIdentifier("ic_launcher_monochrome", "mipmap", getPackageName());
-        b.setSmallIcon(icon != 0 ? icon : android.R.drawable.ic_dialog_info)
+        int smallIcon = icon != 0 ? icon : android.R.drawable.ic_dialog_info;
+        // On the lock screen only "Budget: new alert" shows, not the amounts.
+        Notification.Builder lockScreen = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
+        lockScreen.setSmallIcon(smallIcon)
+                .setContentTitle("Budget: new alert")
+                .setColor(0xFF2563EB);
+        b.setSmallIcon(smallIcon)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setColor(0xFF2563EB)
                 .setAutoCancel(true)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setPublicVersion(lockScreen.build())
                 .setContentIntent(tap);
         nm.notify(req, b.build());
     }

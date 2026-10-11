@@ -1,7 +1,7 @@
 // Service worker: keeps the app shell available offline (e.g. away from home
 // Wi-Fi). Data itself is cached by the app in localStorage; API calls are
 // never cached here. Network-first so updates show up immediately at home.
-const CACHE = 'budget-shell-v8';
+const CACHE = 'budget-shell-v9';
 // Every module the app imports, or the first offline start fails on the missing one.
 const SHELL = [
   '/', '/index.html', '/app.css', '/collapse.css', '/manifest.webmanifest', '/icons/icon.svg',
@@ -11,7 +11,7 @@ const SHELL = [
   '/js/shared/accounts.js', '/js/shared/own.js', '/js/shared/periods.js', '/js/shared/ledger.js', '/js/shared/dedupe.js',
   '/js/shared/refunds.js', '/js/shared/reconcile.js',
   '/js/shared/recurring.js', '/js/shared/safespend.js', '/js/shared/cardpay.js', '/js/shared/trust.js',
-  '/js/shared/review.js', '/js/shared/networth.js', '/js/shared/alerts.js',
+  '/js/shared/review.js', '/js/shared/networth.js', '/js/shared/alerts.js', '/js/shared/odds.js',
 ];
 
 self.addEventListener('install', (e) => {
