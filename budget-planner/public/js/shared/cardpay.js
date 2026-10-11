@@ -7,7 +7,8 @@
 import { round2 } from './money.js';
 
 const DAY = 86400000;
-const FEES_RE = /dobanda|dobanzi|dobânda|dobânzi|interest|comision|fee\b|taxa (anuala|administrare|lunara)/i;
+// Whole words only: "fee" inside "COFFEE" is not a bank fee.
+const FEES_RE = /dob[aâ]nd[aă]|dob[aâ]nzi|\binterest|\bcomision|\bfees?\b|\btax[aă] (anual[aă]|administrare|lunar[aă])/i;
 export const FEES_CATEGORY = 'Interest & fees';
 
 const gap = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / DAY;
@@ -72,15 +73,19 @@ export function creditCost(state, ledger, keyOf, key) {
   return { total: sumIn(key), items, avg3: round2(prev.reduce((n, k) => n + sumIn(k), 0) / 3) };
 }
 
+const REMAINDER_MIN = 50; // a partial repayment leaving less than this still to pay counts as done
+
 /**
  * The card repayment still expected from the current account this period:
- * { min, max, date } when you repaid in at least 2 of the last 3 periods and not
- * yet in this one (date = this period's start + your usual number of days), else null.
+ * { min, max, date } when you repaid in at least 2 of the last 3 periods
+ * (date = this period's start + your usual number of days), else null. After
+ * a partial repayment this period it is what's left of the usual amount
+ * (usual − paid), or null once less than REMAINDER_MIN RON is left.
  */
 export function cardDue(state, ledger, periods, today) {
   const key = periods.keyOf(today);
   const outs = outsOf(state, ledger);
-  if (outs.some((t) => periods.keyOf(t.date) === key)) return null;
+  const paid = round2(outs.filter((t) => periods.keyOf(t.date) === key).reduce((n, t) => n + Number(t.amount), 0));
   const [y, m] = key.split('-').map(Number);
   const prevKeys = [1, 2, 3].map((i) => { const d = new Date(y, m - 1 - i, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
   const perPeriod = prevKeys.map((k) => outs.filter((t) => periods.keyOf(t.date) === k)).filter((list) => list.length);
@@ -97,5 +102,8 @@ export function cardDue(state, ledger, periods, today) {
   const end = periods.end(key);
   if (date > end) date = end;
   if (date < today) date = today;
-  return { min: Math.min(...totals), max: Math.max(...totals), date };
+  const min = round2(Math.max(0, Math.min(...totals) - paid));
+  const max = round2(Math.max(0, Math.max(...totals) - paid));
+  if (paid > 0 && !(max > REMAINDER_MIN)) return null;
+  return { min, max, date };
 }

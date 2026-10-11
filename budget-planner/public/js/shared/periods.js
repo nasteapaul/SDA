@@ -35,6 +35,7 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
     ? transactions.filter((t) => t.type === 'income' && t.category === salaryCategory)
     : [];
   const startCache = new Map();
+  const paidCache = new Map(); // key → a salary payment marks that period's start
 
   function start(key) {
     if (!day) return `${key}-01`;
@@ -43,14 +44,24 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
     const expected = expectedPayday(key, day);
     const e = parse(expected).getTime();
     // The biggest salary payment near the expected date marks the real payday.
+    // Rounded: a gap across a DST change is 23 or 25 hours short of whole days.
     let best = null;
     for (const t of salaries) {
-      const diff = Math.abs(parse(t.date).getTime() - e) / DAY;
+      const diff = Math.round(Math.abs(parse(t.date).getTime() - e) / DAY);
       if (diff <= SEARCH_DAYS && (!best || t.amount > best.amount)) best = t;
     }
     const s = best ? best.date : expected;
     startCache.set(key, s);
+    paidCache.set(key, Boolean(best));
     return s;
+  }
+
+  // Whether the salary that starts period `key` has come in (always true for
+  // calendar months and for a salary date you set by hand).
+  function salaryArrived(key) {
+    if (!day || overrides[key]) return true;
+    start(key);
+    return paidCache.get(key) === true;
   }
 
   // The period whose range [start(k), start(k + 1)) contains the date. A salary
@@ -78,8 +89,10 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
     return addMonths(k, -1);
   }
 
+  // Calendar arithmetic, not milliseconds: a day across a DST change isn't 24 hours.
   function end(key) {
-    return iso(new Date(parse(start(addMonths(key, 1))).getTime() - DAY));
+    const [y, m, d] = start(addMonths(key, 1)).split('-').map(Number);
+    return iso(new Date(y, m - 1, d - 1));
   }
 
   function length(key) {
@@ -100,6 +113,7 @@ export function makePeriods({ payday = null, transactions = [], salaryCategory =
     start,
     end,
     length,
+    salaryArrived,
     current: (today = todayISO()) => keyOf(today),
     // Days left including today.
     daysLeft: (key, today = todayISO()) => Math.max(Math.round((parse(end(key)).getTime() - parse(today).getTime()) / DAY) + 1, 0),

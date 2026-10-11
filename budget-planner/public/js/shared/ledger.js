@@ -137,9 +137,13 @@ export function makeLedger(state) {
     }
   }
 
+  const notLinked = (t) => Boolean(t.accountManual) && !t.accountId && t.source !== 'bank';
+
   function accountOf(t) {
     // From the bank, or set by you in the edit form: certain.
     if (t.accountId && (t.source === 'bank' || t.accountManual)) return accounts.get(t.accountId) || null;
+    // "Not linked (cash / other)" picked in the edit form: none of your accounts.
+    if (notLinked(t)) return null;
     // Statement text: the card number on the row, then the account of the whole statement.
     const d = cardDigitsOf(t);
     if (d && byDigits.has(d)) return byDigits.get(d);
@@ -149,8 +153,9 @@ export function makeLedger(state) {
     return current || null; // manual entries and unknown imports: your everyday account
   }
 
-  /** Counted as the main current account (manual entries included). */
+  /** Counted as the main current account (manual entries included, unless marked "Not linked"). */
   function isMain(t) {
+    if (notLinked(t)) return false;
     const acc = accountOf(t);
     return acc ? acc === current : true;
   }

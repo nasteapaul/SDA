@@ -11,7 +11,7 @@ import { formatRON, todayISO, addMonths } from './money.js';
 import { makePeriods } from './periods.js';
 import { makeLedger } from './ledger.js';
 import { accountView } from './accounts.js';
-import { detectSeries, upcoming } from './recurring.js';
+import { detectSeries, upcoming, dropPending } from './recurring.js';
 import { safeToSpend } from './safespend.js';
 import { cardDue } from './cardpay.js';
 import { consentStatus } from './trust.js';
@@ -24,6 +24,7 @@ const BILL_DAYS = 3; // bills and the card repayment: this many days ahead
 const RENEWAL_DAYS = 7; // yearly renewals: a week ahead
 const PRICE_DAYS = 30; // a price rise stays news for a month
 const STALE_SYNC_HOURS = 48;
+const SALARY_GRACE_DAYS = 5; // a salary this late isn't a reason to warn about money yet
 
 const plus = (iso, n) => { const [y, m, d] = iso.split('-').map(Number); const x = new Date(y, m - 1, d + n); return todayISO(x); };
 const dayText = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }); };
@@ -74,14 +75,17 @@ export function buildAlerts(state, { today = todayISO(), now = Date.now(), ledge
   const series = givenSeries || detectSeries(state, { today, accountOf: (t) => ledger.accountOf(t) });
   const main = ledger.mainAccount;
   // Only what leaves the current account needs money there (card subscriptions don't).
-  const soon = upcoming(series, today, plus(today, BILL_DAYS)).filter((u) => !main || !u.accountId || u.accountId === main.uid);
+  // Bills paid but still pending at the bank are already off the balance: not due any more.
+  const bankBills = (to) => dropPending(upcoming(series, today, to).filter((u) => !main || !u.accountId || u.accountId === main.uid), main?.pendingItems, today);
+  const soon = bankBills(plus(today, BILL_DAYS));
   for (const u of soon) {
     const s = series.find((x) => x.key === u.key);
     if (s?.cadence === 'yearly') continue; // announced a week ahead below
+    const dueOn = u.due || u.date; // the real due date: a late bill keeps one id from day to day
     add({
-      id: `bill:${u.key}:${u.date}`, kind: 'bill', level: 'info',
-      title: `${u.label}: ${range(u.min, u.max)} ${u.late ? 'is due' : when(u.date, today)}`,
-      text: u.late ? 'It was due a few days ago and hasn’t shown up yet.' : 'Make sure the money is in the account.',
+      id: `bill:${u.key}:${dueOn}`, kind: 'bill', level: 'info',
+      title: `${u.label}: ${range(u.min, u.max)} ${u.late ? `was due on ${dayText(dueOn)}` : when(u.date, today)}`,
+      text: u.late ? 'It hasn’t shown up yet. Make sure the money is in the account.' : 'Make sure the money is in the account.',
       date: u.date, link: '#overview',
     });
   }
@@ -108,10 +112,13 @@ export function buildAlerts(state, { today = todayISO(), now = Date.now(), ledge
     add({ id: `refund:${r.tx.id}:${r.due}`, kind: 'refund', level: 'warning', title: `Refund from ${r.tx.description} is late`, text: `Expected by ${dayText(r.due)} for the ${formatRON(r.tx.amount)} purchase on ${dayText(r.tx.date)}.`, date: r.due, link: '#overview' });
   }
 
-  // Bills before payday that the balance doesn't cover.
+  // Bills before payday that the balance doesn't cover. Not while this period's
+  // salary is a few days late: the balance is still last period's money.
   const v = main?.balance ? accountView(main) : null;
-  if (v?.known) {
-    const bills = upcoming(series, today, end).filter((u) => !u.accountId || u.accountId === main.uid);
+  const waitingForSalary = typeof periods.salaryArrived === 'function' && !periods.salaryArrived(key)
+    && today <= plus(periods.start(key), SALARY_GRACE_DAYS);
+  if (v?.known && !waitingForSalary) {
+    const bills = bankBills(end);
     const safe = safeToSpend({ balance: v.cash, today, periodEnd: end, upcoming: bills, cardDue: due, buffer: Number(state.settings?.spendBuffer) || 0 });
     if (safe && safe.low < 0) {
       const short = safe.high < 0;

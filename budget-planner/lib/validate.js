@@ -48,16 +48,18 @@ function optionalId(value, name, max = 200) {
 export function cleanTransaction(input, existing = {}) {
   requireObject(input, 'transaction');
   const t = { ...existing };
-  if (input.type !== undefined) {
+  // A bank row's amount, direction and date are the bank's: edits to them are ignored.
+  const fromBank = existing.source === 'bank';
+  if (input.type !== undefined && !fromBank) {
     if (!['income', 'expense'].includes(input.type)) throw new HttpError(400, 'type must be income or expense');
     t.type = input.type;
   }
-  if (input.amount !== undefined) {
+  if (input.amount !== undefined && !fromBank) {
     const amount = round2(Math.abs(toNumber(input.amount)));
     if (!Number.isFinite(amount) || amount <= 0) throw new HttpError(400, 'amount must be a positive number');
     t.amount = money(amount, 'amount');
   }
-  if (input.date !== undefined) {
+  if (input.date !== undefined && !fromBank) {
     if (!isDate(input.date)) throw new HttpError(400, 'date must be a valid YYYY-MM-DD date');
     t.date = input.date;
   }
@@ -66,7 +68,7 @@ export function cleanTransaction(input, existing = {}) {
   }
   if (input.goalId !== undefined) t.goalId = optionalId(input.goalId, 'goalId', 64);
   if (input.manualCategory !== undefined) t.manualCategory = Boolean(input.manualCategory);
-  if (input.accountId !== undefined && existing.source !== 'bank') t.accountId = optionalId(input.accountId, 'accountId');
+  if (input.accountId !== undefined && !fromBank) t.accountId = optionalId(input.accountId, 'accountId');
   if (input.accountManual !== undefined) t.accountManual = Boolean(input.accountManual);
   if (input.reviewed !== undefined) t.reviewed = Boolean(input.reviewed);
   if (input.refundDue !== undefined) {
@@ -78,7 +80,7 @@ export function cleanTransaction(input, existing = {}) {
     const pocket = input.pocket === '' ? null : input.pocket;
     if (pocket !== null && pocket !== 'vouchers') throw new HttpError(400, 'pocket must be "vouchers" or null');
     // Meal-voucher spending is entered by hand; a bank row is always real account money.
-    if (pocket && existing.source === 'bank') throw new HttpError(400, 'Bank transactions can\'t be moved to the meal-voucher pocket');
+    if (pocket && fromBank) throw new HttpError(400, 'Bank transactions can\'t be moved to the meal-voucher pocket');
     t.pocket = pocket;
   }
   if (input.splits !== undefined) t.splits = input.splits === null ? null : cleanSplits(input.splits);

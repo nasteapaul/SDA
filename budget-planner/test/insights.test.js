@@ -123,6 +123,7 @@ test('alerts: consent running out, price rise, late refund, bills above the bala
     ...charges('NETFLIX.COM', 'Subscriptions', [['2026-07-05', 49.99], ['2026-08-05', 49.99], ['2026-09-05', 49.99], ['2026-10-05', 54.99]]),
     ...charges('LANDLORD SRL', 'Housing', [['2026-07-12', 1500], ['2026-08-12', 1500], ['2026-09-12', 1500]]),
     tx({ date: '2026-10-01', amount: 120, description: 'EMAG order', category: 'Shopping', refundDue: '2026-10-08' }),
+    tx({ date: '2026-10-09', amount: 5000, type: 'income', description: 'ACME SRL', category: 'Salary' }), // salary in: the balance is this period's
   ];
   const alerts = buildAlerts(s, { today: '2026-10-10', now: Date.parse('2026-10-10T09:00:00Z') });
   const kinds = alerts.map((a) => a.kind);

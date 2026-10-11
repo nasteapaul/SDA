@@ -313,7 +313,6 @@ export function bankRef(accountUid, t, nth = 1) {
   return `${accountUid}:h${hash}${nth > 1 ? `#${nth}` : ''}`;
 }
 
-// Income or expense: the bank's credit/debit indicator, else the amount's sign.
 /**
  * Signed total of the payments that are in the bank's balance but not booked
  * yet (status PDNG/HOLD): money out negative. 0 for a booked-only balance type,
@@ -332,6 +331,43 @@ export function pendingTotal(txs, balance) {
   return round2(sum);
 }
 
+const PENDING_ITEMS_MAX = 30;
+
+/**
+ * The payments leaving the account that are in the bank's balance but not
+ * booked yet (status PDNG/HOLD): [{ amount, description, date, currency? }],
+ * newest first, at most PENDING_ITEMS_MAX (currency only when not RON). A bill
+ * among them is already off the balance, so it must not be counted again as
+ * still due (recurring.dropPending). [] for a booked-only balance type, which
+ * still has that money in it.
+ */
+export function pendingItemsOf(txs, balance) {
+  if (!balance || BOOKED_BALANCE_TYPES.has(String(balance.type || '').toUpperCase())) return [];
+  const out = [];
+  for (const t of txs || []) {
+    if (!['PDNG', 'HOLD'].includes(t?.status) || directionOf(t) !== 'expense') continue;
+    const amount = round2(Math.abs(Number(t.transaction_amount?.amount)));
+    if (!Number.isFinite(amount) || !amount) continue;
+    const currency = t.transaction_amount?.currency || 'RON';
+    out.push({
+      amount,
+      description: textOf(t, 'expense').description,
+      date: t.booking_date || t.value_date || t.transaction_date || todayISO(),
+      ...(currency !== 'RON' ? { currency } : {}),
+    });
+  }
+  return out.sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, PENDING_ITEMS_MAX);
+}
+
+// Counterparty, payment details and the description shown for a bank row.
+function textOf(t, type) {
+  const counterparty = (type === 'income' ? t.debtor?.name : t.creditor?.name) || '';
+  const remittance = (t.remittance_information || []).join(' ').replace(/\s+/g, ' ').trim();
+  const description = (counterparty || extractMerchant(remittance) || remittance || t.bank_transaction_code?.description || 'Bank transaction').slice(0, 140);
+  return { counterparty, remittance, description };
+}
+
+// Income or expense: the bank's credit/debit indicator, else the amount's sign.
 function directionOf(t) {
   if (t.credit_debit_indicator === 'CRDT') return 'income';
   if (t.credit_debit_indicator === 'DBIT') return 'expense';
@@ -350,12 +386,10 @@ export function mapBankTransaction(accountUid, t, { rules, categories }, own = n
   const amount = round2(currency === 'RON' ? original : original * rate);
   if (!amount) return null;
   const type = directionOf(t);
-  const counterparty = (type === 'income' ? t.debtor?.name : t.creditor?.name) || '';
-  const remittance = (t.remittance_information || []).join(' ').replace(/\s+/g, ' ').trim();
+  const { counterparty, remittance, description } = textOf(t, type);
   // Money moving between your own linked accounts (e.g. paying off the credit
   // card from the current account) is a transfer, not income or spending.
   const counterpartyIban = ((type === 'income' ? t.debtor_account?.iban : t.creditor_account?.iban) || '').replace(/\s/g, '').toUpperCase();
-  const description = (counterparty || extractMerchant(remittance) || remittance || t.bank_transaction_code?.description || 'Bank transaction').slice(0, 140);
   const note = remittance && remittance !== description ? remittance.slice(0, 280) : '';
   const ownCategory = ownTransferCategory({ accountId: accountUid, type, counterpartyIban, counterparty, description, note }, own);
   const now = new Date().toISOString();
@@ -508,6 +542,7 @@ export async function syncBank(store, client, { lookbackDays = 90, rate = bnrRat
       target.lastSyncAt = new Date().toISOString();
       target.lastAdded = accountAdded;
       target.balance = balance;
+      target.pendingItems = pendingItemsOf(txs, balance);
       recordBalance(s, acc.uid, balance, new Date(), pendingTotal(txs, balance));
       // An incomplete fetch keeps the old date, so the next sync asks for the rest again.
       if (truncated) errors.push(`${acc.nickname || acc.name || acc.uid}: too many transactions, only part was fetched`);

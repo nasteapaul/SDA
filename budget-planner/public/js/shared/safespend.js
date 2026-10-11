@@ -69,6 +69,8 @@ const KIND_ORDER = { salary: 0, refund: 1, bill: 2, card: 3 };
 /**
  * The period's money events, sorted by date:
  * [{ date, label, min, max, kind: 'salary'|'bill'|'card'|'refund' }].
+ * Bills also carry key, variable (min ≠ max), and late + due (the real due
+ * date) when given by recurring.upcoming().
  * Events after periodEnd are dropped, except the salary at nextPayday (which
  * starts the next period). The salary's amount is unknown here: min/max null.
  * refunds: [{ date, label, amount }].
@@ -79,7 +81,9 @@ export function periodCalendar({ today, periodEnd, nextPayday, upcoming = [], ca
     if (!u || !ISO_RE.test(u.date || '') || !inPeriod(u.date, periodEnd)) continue;
     const e = { date: u.date, label: u.label, min: round2(money(u.min)), max: round2(money(u.max)), kind: 'bill' };
     if (u.key) e.key = u.key;
+    e.variable = e.min !== e.max;
     if (u.late) e.late = true;
+    if (ISO_RE.test(u.due || '')) e.due = u.due;
     events.push(e);
   }
   if (cardDue && ISO_RE.test(cardDue.date || '') && inPeriod(cardDue.date, periodEnd)) {

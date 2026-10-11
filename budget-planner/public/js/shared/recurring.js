@@ -3,7 +3,7 @@
 // Pure: no DOM, used by the browser and by Node.
 
 import { round2, todayISO } from './money.js';
-import { merchantKey, DEFAULT_CATEGORIES } from './categories.js';
+import { merchantKey, normalize, DEFAULT_CATEGORIES } from './categories.js';
 
 const DAY = 86400000;
 const CADENCE_DAYS = { weekly: 7, monthly: 30, yearly: 365 };
@@ -11,6 +11,10 @@ const FIXED_SPREAD = 0.10; // last 3 charges within 10% = a fixed price
 const VARIABLE_SPREAD = 0.60; // within 60% = a variable bill (electricity, gas)
 const LATE_DAYS = 5; // a charge due this recently and not seen yet is "late", not skipped
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Taking cash out is not a bill, however regular it is.
+const CASH_CATEGORY = 'Cash';
+const CASH_RE = /retragere numerar|cash withdrawal|\batm\b|bancomat/;
+const PENDING_MATCH = 0.05; // a pending payment within 5% of a bill's amount is that bill
 
 // Day number in UTC, so DST changes never shift a gap by one.
 function dayNum(isoDate) {
@@ -92,8 +96,8 @@ function mostCommon(values) {
  * Series = { key, label, category, cadence, amount, avg, min, max, variable,
  * count, lastDate, nextDate, accountId, status, priceChange, txIds }, sorted by
  * amount (largest first). Only plain expenses count: no goal transfers,
- * unconverted foreign rows, voucher-pocket rows or transfer/savings/repayment
- * categories.
+ * unconverted foreign rows, voucher-pocket rows, transfer/savings/repayment
+ * categories or cash withdrawals.
  */
 export function detectSeries(state, { today = todayISO(), accountOf } = {}) {
   const categories = Array.isArray(state?.categories) ? state.categories : DEFAULT_CATEGORIES;
@@ -101,6 +105,7 @@ export function detectSeries(state, { today = todayISO(), accountOf } = {}) {
   const groups = new Map();
   for (const t of state?.transactions || []) {
     if (t?.type !== 'expense' || t.goalId || t.needsFx || t.pocket || roles.get(t.category)) continue;
+    if (t.category === CASH_CATEGORY || CASH_RE.test(normalize(`${t.description || ''} ${t.note || ''}`))) continue;
     if (!ISO_RE.test(t.date || '') || t.date > today) continue;
     if (!(Number.isFinite(t.amount) && t.amount > 0)) continue;
     const key = merchantKey(t.description) || merchantKey(t.note);
@@ -163,10 +168,12 @@ export function detectSeries(state, { today = todayISO(), accountOf } = {}) {
 }
 
 /**
- * Charges due in (fromISO, toISO] → [{ key, label, date, min, max, category,
- * accountId, late }], sorted by date. A charge that was due in the last
- * LATE_DAYS days (up to and including fromISO) and has not shown up yet is
- * listed on fromISO with late: true. Ignored series are skipped.
+ * Charges due in [fromISO, toISO] → [{ key, label, date, due, min, max,
+ * category, accountId, late }], sorted by date. `due` is the real due date. A
+ * charge that was due in the last LATE_DAYS days (before fromISO) and has not
+ * shown up yet is listed on fromISO (date) with late: true and its real `due`
+ * (so it keeps one identity from day to day); one due on fromISO isn't late.
+ * Ignored series are skipped; suggested (not yet confirmed) ones count.
  */
 export function upcoming(seriesList, fromISO, toISO) {
   if (!ISO_RE.test(fromISO || '') || !ISO_RE.test(toISO || '')) return [];
@@ -178,14 +185,46 @@ export function upcoming(seriesList, fromISO, toISO) {
     const max = s.variable ? s.max : s.amount;
     const base = { key: s.key, label: s.label, min, max, category: s.category, accountId: s.accountId ?? null };
     for (let k = 1; k < 1000; k++) {
-      const date = dueDate(s.lastDate, s.cadence, k);
-      if (date > toISO) break;
-      if (date > fromISO) {
-        out.push({ ...base, date, late: false });
-      } else if (from - dayNum(date) < LATE_DAYS && s.lastDate < date) {
-        out.push({ ...base, date: fromISO, late: true });
+      const due = dueDate(s.lastDate, s.cadence, k);
+      if (due > toISO) break;
+      if (due >= fromISO) {
+        out.push({ ...base, date: due, due, late: false });
+      } else if (from - dayNum(due) < LATE_DAYS && s.lastDate < due) {
+        out.push({ ...base, date: fromISO, due, late: true });
       }
     }
   }
   return out.sort((a, b) => a.date.localeCompare(b.date) || b.max - a.max);
+}
+
+/**
+ * upcomingList without the late or due-today bills already paid but still
+ * pending at the bank. pendingItems: [{ amount, description, date, currency? }]
+ * (an account's pendingItems, see lib/sync.js) — the bank has already taken
+ * them off the balance, so the bill would otherwise be counted twice. A
+ * pending payment matches the bill with the same merchant key, else one whose
+ * amount is within 5%; each pending payment cancels one bill, and only when it
+ * was made no more than LATE_DAYS before the bill's due date.
+ */
+export function dropPending(upcomingList, pendingItems, today = todayISO()) {
+  const list = Array.isArray(upcomingList) ? upcomingList : [];
+  const pending = (Array.isArray(pendingItems) ? pendingItems : [])
+    .filter((p) => p && Number.isFinite(Number(p.amount)) && Number(p.amount) > 0)
+    .map((p) => ({ amount: Number(p.amount), key: merchantKey(p.description), date: ISO_RE.test(p.date || '') ? p.date : null, ron: !p.currency || p.currency === 'RON' }));
+  if (!pending.length || !list.length) return list;
+  const dueNow = (u) => u && (u.late || String(u.due || u.date || '') <= today);
+  const near = (u, p) => !p.date || !ISO_RE.test(u.due || '') || dayNum(p.date) >= dayNum(u.due) - LATE_DAYS;
+  const sameMerchant = (u, p) => Boolean(p.key) && p.key === u.key;
+  const sameAmount = (u, p) => p.ron && p.amount >= (Number(u.min) || 0) * (1 - PENDING_MATCH) && p.amount <= (Number(u.max) || 0) * (1 + PENDING_MATCH);
+  const dropped = new Set();
+  const used = new Set();
+  // The merchant first, so a payment never takes, by its amount, the bill another payment names.
+  for (const match of [sameMerchant, sameAmount]) {
+    for (const p of pending) {
+      if (used.has(p)) continue;
+      const u = list.find((x) => !dropped.has(x) && dueNow(x) && near(x, p) && match(x, p));
+      if (u) { dropped.add(u); used.add(p); }
+    }
+  }
+  return dropped.size ? list.filter((u) => !dropped.has(u)) : list;
 }

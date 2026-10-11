@@ -135,19 +135,25 @@ const NOISE = new Set(`
   payment purchase contactless online terminal id the of to from
   incasare home bank homebank titular ordonator beneficiar contul din catre detalii depunere transfer dl dna
   bucuresti sector cluj napoca iasi timisoara constanta brasov
+  non visa mastercard maestro epos tid rrn utilizare
 `.trim().split(/\s+/));
 
 // Pulls the merchant out of statement text such as
 //   "Card number, **** 7204, Transaction at, CARREFOUR EXPRESS BAILE, Authorization date, ..."
 //   "Cumparare POS ... Tranzactie la:NETFLIX INTERNATIONAL B.V NL Amsterdam"
+//   "Plata la POS non-BT cu card VISA 4140XXXXXXXX1234 TID:12345678 NETFLIX.COM valoare 49,99 RON" (BT)
 export function extractMerchant(text) {
   const s = String(text ?? '');
   const m = s.match(/transaction at,?\s*([^,;]+)/i)
     || s.match(/(?:ordering party|beneficiary|ordonator|beneficiar)\s*[:,]\s*([^,;]+)/i)
     || s.match(/tranzac[tț]i[ea] la:?\s*([^,;]+)/i)
     || s.match(/comerciant:?\s*([^,;]+)/i)
+    // Banca Transilvania: the merchant follows the terminal id, up to the amount/date/reference.
+    || s.match(/\bTID\s*:?\s*[A-Z0-9-]+\s+(.+?)(?=\s+(?:valoare|data|rrn|comision)\b|[,;]|$)/i)
     || s.match(/(?:plata|cumparare) (?:la )?pos\s+([^,;]+)/i);
-  const name = (m ? m[1] : s).replace(/\*+\s*\d+/g, ' ').replace(/\s+/g, ' ').trim();
+  const name = (m ? m[1] : s)
+    .replace(/\b\d{4,6}[X*]{4,}\d{2,4}\b/gi, ' ') // masked card number (4140XXXXXXXX1234)
+    .replace(/\*+\s*\d+/g, ' ').replace(/\s+/g, ' ').trim();
   return name.slice(0, 80);
 }
 
