@@ -4,7 +4,7 @@
 
 import http from 'node:http';
 import https from 'node:https';
-import { promises as fs, readFileSync } from 'node:fs';
+import { promises as fs, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -353,7 +353,12 @@ async function api(req, res, url) {
     if (!PASSWORD) return send(res, 200, { token: '' });
     return send(res, 200, await sessions.create());
   }
-  if (pathname === '/api/health') return send(res, 200, { ok: true, auth: Boolean(PASSWORD) });
+  // awaitingData: a new cloud server waiting for the PC to hand over its data
+  // (deploy/receive-linux.sh); the PC's updater only sends to a server that says so.
+  if (pathname === '/api/health') {
+    const awaitingData = existsSync(path.join(DATA_DIR, '.awaiting-import'));
+    return send(res, 200, { ok: true, auth: Boolean(PASSWORD), ...(awaitingData && { awaitingData }) });
+  }
 
   if (!authorized(req, url)) throw new HttpError(401, 'Login required');
 

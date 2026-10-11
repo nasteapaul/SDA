@@ -151,7 +151,21 @@ There are two ways to get it:
 
 ## 5. Run it in the cloud (no PC left on)
 
-`deploy/setup-linux.sh` sets everything up on a small Linux server in one command: Node.js, the app, your data and bank key, Tailscale (a private HTTPS address; nothing is opened to the internet), a service that starts at boot, and automatic updates from GitHub every 10 minutes. It is made for Google Cloud's free **e2-micro** VM and works on any Debian/Ubuntu machine (e.g. a Raspberry Pi).
+`deploy/setup-linux.sh` sets everything up on a small Linux server in one command: Node.js, the app, your data and bank key, Tailscale (a private HTTPS address; nothing is opened to the internet), a service that starts at boot, and automatic updates from GitHub every 10 minutes. It works on Oracle Cloud's and Google Cloud's free VMs and on any Debian/Ubuntu machine (e.g. a Raspberry Pi).
+
+**Oracle Cloud Always Free (recommended — nothing to type on the server or the PC):**
+1. Create an account at [cloud.oracle.com](https://cloud.oracle.com) (a card is asked for verification only; Always Free resources are not billed). Pick a home region close to you, e.g. *Germany Central (Frankfurt)* — it can't be changed later.
+2. In the [Tailscale admin console](https://login.tailscale.com/admin/settings/keys) → *Settings → Keys → Generate auth key* (defaults are fine). Copy the `tskey-auth-…` key.
+3. *Compute → Instances → Create instance*:
+   - Image: **Canonical Ubuntu 24.04** (or 22.04).
+   - Shape: **VM.Standard.A1.Flex** (Ampere, 1 OCPU / 6 GB) or, if Oracle says it is out of capacity, **VM.Standard.E2.1.Micro**. Both are *Always Free-eligible*.
+   - Networking: leave as it is (a public IPv4 address is needed to reach your bank and GitHub; no ports have to be opened).
+   - *Show advanced options → Management → Paste cloud-init script*: paste [`deploy/oracle-cloud-init.sh`](deploy/oracle-cloud-init.sh) with your key in place of `tskey-auth-PASTE-YOUR-KEY-HERE`.
+   - *Create*. Setup takes about 5 minutes.
+4. That's it. The VM joins your tailnet as `budget` and waits for data. Within ~10 minutes the PC's updater (`windows/auto-update.ps1`, already running every 10 minutes) sees it, stops its own server, sends it the `data` folder, `.env` settings and bank key over Tailscale (Taildrop — only between your own devices, encrypted) and, once the cloud server confirms, removes its own auto-start for good. The PC needs Tailscale on, logged in to the same account; `data\update.log` and `data\moved-to-cloud.txt` on the PC say what happened. If anything fails, the PC's server starts again and it retries 6 hours later.
+5. In the phone app: *Settings → Server address → Change* → `https://budget.<tailnet>.ts.net`. Before you next re-link the bank, add `https://budget.<tailnet>.ts.net/bank/callback` as a redirect URL in the Enable Banking control panel.
+
+Oracle may reclaim Always Free VMs that stay almost idle for 7 days; upgrading the account to *Pay As You Go* (Always Free resources stay free) avoids that. Setup log on the VM: `sudo cat /var/log/budget-setup.log`; handover log: `journalctl -u budget-planner-receive`.
 
 **Google Cloud e2-micro (free tier):**
 1. Create a project at [console.cloud.google.com](https://console.cloud.google.com) and add billing (a card is required). Under *Billing → Budgets & alerts*, add a 5 USD budget with e-mail alerts.

@@ -7,7 +7,8 @@
 # - When a new version is on GitHub it downloads it and restarts the server.
 # - If the new version doesn't answer within ~30 s, it goes back to the previous
 #   one and doesn't try that version again (only a newer one).
-# Your data, .env and keys are never touched (they are not on GitHub).
+# Your data, .env and keys are never touched (they are not on GitHub), except
+# for the one-time move to a cloud server described at Move-ToCloud below.
 # Activity is logged to data\update.log in the app folder.
 $ErrorActionPreference = 'Continue'
 
@@ -82,8 +83,7 @@ if ($LASTEXITCODE -eq 0) {
   }
 } # else offline: try again next time
 
-# Restart the server so the new version is used (same steps as restart-server.bat).
-function Restart-Server {
+function Stop-Server {
   schtasks /End /TN 'Budget Planner' 2>$null | Out-Null
   $pidFile = Join-Path $dataDir 'server.pid'
   if (Test-Path -LiteralPath $pidFile) {
@@ -91,6 +91,11 @@ function Restart-Server {
     $p = Get-Process -Id $id -ErrorAction SilentlyContinue
     if ($p -and $p.ProcessName -eq 'node') { Stop-Process -Id $id -Force }
   }
+}
+
+# Restart the server so the new version is used (same steps as restart-server.bat).
+function Restart-Server {
+  Stop-Server
   Start-Sleep -Seconds 1
   schtasks /Run /TN 'Budget Planner' 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) { Start-Process wscript.exe -ArgumentList ('"{0}"' -f (Join-Path $app 'windows\start-server.vbs')) }
@@ -110,6 +115,100 @@ function Test-Server {
   }
   return $false
 }
+
+# ---- One-time move to a cloud server ----
+# A new cloud server (deploy/setup-linux.sh, Tailscale name "budget") that started
+# without data says so on /api/health (awaitingData). This PC then stops its own
+# server, sends that server its data folder, .env and bank key over Tailscale
+# (Taildrop: only between your own devices, encrypted), and once the server
+# confirms it took them, removes its own auto-start for good: two copies would
+# both sync the bank and drift apart. Recorded in data\moved-to-cloud.txt.
+# If anything fails, this PC's server is started again and it tries again later.
+$movedFile = Join-Path $dataDir 'moved-to-cloud.txt'
+$retryFile = Join-Path $dataDir 'handover-retry-after.txt'
+
+function Find-Tailscale {
+  $cmd = Get-Command tailscale.exe -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  $exe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+  if (Test-Path -LiteralPath $exe) { return $exe }
+  return $null
+}
+
+function Get-CloudHealth($url) {
+  try { return Invoke-RestMethod -UseBasicParsing -TimeoutSec 10 -Uri "$url/api/health" } catch { return $null }
+}
+
+function Move-ToCloud {
+  if (Test-Path -LiteralPath $retryFile) {
+    $after = [datetime]::MinValue
+    if ([datetime]::TryParse("$(Get-Content -LiteralPath $retryFile -TotalCount 1)", [ref]$after) -and (Get-Date) -lt $after) { return $false }
+  }
+  $ts = Find-Tailscale
+  if (-not $ts) { return $false }
+  try { $status = (& $ts status --json 2>$null | Out-String) | ConvertFrom-Json } catch { return $false }
+  if (-not $status -or -not $status.Peer) { return $false }
+  $peer = $status.Peer.PSObject.Properties.Value |
+    Where-Object { $_.HostName -eq 'budget' -and $_.OS -eq 'linux' -and $_.Online -and $_.DNSName } | Select-Object -First 1
+  if (-not $peer) { return $false }
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  $url = 'https://' + $peer.DNSName.TrimEnd('.')
+  $h = Get-CloudHealth $url
+  if (-not $h -or -not $h.awaitingData) { return $false }
+  $target = "$($peer.TailscaleIPs | Select-Object -First 1):"
+
+  Write-Log "Cloud server $url is waiting for data - handing over this PC's data, settings and bank key."
+  $tmp = Join-Path $env:TEMP ('budget-handover-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  try {
+    Stop-Server # so the data doesn't change while it is copied
+    Start-Sleep -Seconds 2
+    $files = @()
+    tar.exe -czf (Join-Path $tmp 'data.tgz') -C $dataDir --exclude '*.log' --exclude '*.log.1' --exclude 'server.pid' `
+      --exclude 'update-bad-commit.txt' --exclude 'handover-retry-after.txt' . 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'packing the data folder failed' }
+    $files += Join-Path $tmp 'data.tgz'
+    if (Test-Path -LiteralPath $envFile) { Copy-Item -LiteralPath $envFile -Destination (Join-Path $tmp 'laptop.env'); $files += Join-Path $tmp 'laptop.env' }
+    $key = if ($envCfg['EB_PRIVATE_KEY_PATH']) { $envCfg['EB_PRIVATE_KEY_PATH'] } else { './enablebanking.pem' }
+    if (-not [IO.Path]::IsPathRooted($key)) { $key = Join-Path $app $key }
+    if (Test-Path -LiteralPath $key) { Copy-Item -LiteralPath $key -Destination (Join-Path $tmp 'enablebanking.pem'); $files += Join-Path $tmp 'enablebanking.pem' }
+    & $ts file cp @files $target 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'sending the files over Tailscale failed (is Taildrop / "Send files" allowed in your tailnet?)' }
+    Set-Content -LiteralPath (Join-Path $tmp 'handover-done.txt') -Value (Get-Date -Format o)
+    & $ts file cp (Join-Path $tmp 'handover-done.txt') $target 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'sending the files over Tailscale failed' }
+
+    $deadline = (Get-Date).AddMinutes(4)
+    $done = $false
+    while (-not $done -and (Get-Date) -lt $deadline) {
+      Start-Sleep -Seconds 5
+      $h = Get-CloudHealth $url
+      $done = $h -and $h.ok -and -not $h.awaitingData
+    }
+    if (-not $done) { throw "the cloud server did not confirm it took the data within 4 minutes" }
+
+    schtasks /Delete /F /TN 'Budget Planner' 2>$null | Out-Null
+    Set-Content -LiteralPath $movedFile -Value @(
+      "Moved to $url on $(Get-Date -Format 'yyyy-MM-dd HH:mm').",
+      'This PC no longer starts the Budget Planner server; the cloud server has the data.',
+      "Phone: Settings -> Server address -> Change -> $url")
+    Remove-Item -LiteralPath $retryFile -ErrorAction SilentlyContinue
+    Write-Log "Handover done: Budget Planner now runs on $url. This PC's server is stopped and no longer starts with Windows."
+    return $true
+  } catch {
+    Write-Log "Handover to $url failed: $_. This PC's server runs again; next try in 6 hours."
+    Set-Content -LiteralPath $retryFile -Value (Get-Date).AddHours(6).ToString('o')
+    schtasks /Run /TN 'Budget Planner' 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { Start-Process wscript.exe -ArgumentList ('"{0}"' -f (Join-Path $app 'windows\start-server.vbs')) }
+    return $false
+  } finally {
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+# Once moved, this PC never restarts its own server after an update.
+if (Test-Path -LiteralPath $movedFile) { $restart = $false }
+elseif (Move-ToCloud) { $restart = $false }
 
 if ($restart) {
   Restart-Server

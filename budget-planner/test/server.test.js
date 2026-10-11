@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +55,17 @@ async function login() {
   assert.ok(token && Date.parse(expiresAt) > Date.now());
   return token;
 }
+
+test('health says when a new server waits for the PC to hand over its data', async () => {
+  assert.deepEqual(await (await fetch(`${BASE}/api/health`)).json(), { ok: true, auth: true });
+  const marker = path.join(dataDir, '.awaiting-import');
+  await writeFile(marker, '');
+  try {
+    assert.deepEqual(await (await fetch(`${BASE}/api/health`)).json(), { ok: true, auth: true, awaitingData: true });
+  } finally {
+    await rm(marker, { force: true });
+  }
+});
 
 test('needs a login, and rejects a wrong password', async () => {
   assert.equal((await fetch(`${BASE}/api/state`)).status, 401);
