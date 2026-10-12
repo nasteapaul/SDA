@@ -383,6 +383,9 @@ test('httpMcp: 401 / 405 / 403 / 202 / 200 over a tiny HTTP server', async () =>
     assert.equal((await post(ping, { key, headers: { 'Content-Type': 'text/plain' } })).status, 415);
     assert.equal((await post(ping, { key, headers: { 'MCP-Protocol-Version': '1999-01-01' } })).status, 400);
     assert.equal((await post(ping, { key, headers: { 'MCP-Protocol-Version': '2025-06-18' } })).status, 200);
+    const newer = await post({ jsonrpc: '2.0', id: 9, method: 'initialize', params: { protocolVersion: '2099-01-01' } }, { key, headers: { 'MCP-Protocol-Version': '2099-01-01' } });
+    assert.equal(newer.status, 200, 'a newer client can still initialize');
+    assert.equal((await newer.json()).result.protocolVersion, '2025-06-18');
   } finally {
     srv.close();
     await fs.rm(dir, { recursive: true, force: true });

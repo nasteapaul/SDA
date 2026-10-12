@@ -712,8 +712,6 @@ export async function httpMcp(req, res, { mcp, keys, readBody = readJson, allowe
     return reply(401, fail(null, -32600, keys?.exists ? 'Wrong or missing MCP key' : 'MCP access is off: create a key first'), { 'WWW-Authenticate': 'Bearer realm="budget-planner"' });
   }
   if (req.method !== 'POST') return reply(405, fail(null, -32600, 'Method not allowed: POST JSON-RPC messages here'), { Allow: 'POST' });
-  const version = req.headers['mcp-protocol-version'];
-  if (version !== undefined && !PROTOCOL_VERSIONS.includes(version)) return reply(400, fail(null, -32600, `Unsupported MCP-Protocol-Version: ${String(version).slice(0, 20)}`));
   let body;
   try {
     body = await readBody(req);
@@ -721,6 +719,11 @@ export async function httpMcp(req, res, { mcp, keys, readBody = readJson, allowe
     const status = err.status || err.statusCode || 400;
     return reply(status, fail(null, err.rpcCode || (status === 400 ? -32700 : -32600), status === 400 ? 'Parse error' : err.message));
   }
+  // A newer client may send its own (newer) version on initialize; the reply then
+  // negotiates one this server knows. After that, an unknown version is refused.
+  const version = req.headers['mcp-protocol-version'];
+  const initializing = [body].flat().some((m) => m?.method === 'initialize');
+  if (version !== undefined && !initializing && !PROTOCOL_VERSIONS.includes(version)) return reply(400, fail(null, -32600, `Unsupported MCP-Protocol-Version: ${String(version).slice(0, 20)}`));
   const result = await mcp.handle(body);
   if (result === null) return reply(202);
   return reply(200, result);
