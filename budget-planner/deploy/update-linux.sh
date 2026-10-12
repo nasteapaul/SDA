@@ -106,20 +106,25 @@ if command -v tailscale >/dev/null && ! tailscale serve status 2>/dev/null | gre
 fi
 
 # Ask Claude from the phone / claude.ai (Settings → Ask Claude): while a read-only
-# key exists, publish only /mcp with Tailscale Funnel on port 8443; once the key is
-# turned off, unpublish it. Nothing else of the app is reachable from the internet.
+# key exists, turn on Tailscale Funnel for the HTTPS address (port 443 — claude.ai
+# doesn't reach other ports); once the key is turned off, turn it off. The server
+# answers internet (Funnel) requests only on /mcp: the app stays tailnet-only.
 if command -v tailscale >/dev/null; then
-  funnel_on=""; case "$(tailscale funnel status 2>/dev/null)" in *:8443*) funnel_on=1 ;; esac
+  fstatus=$(tailscale funnel status 2>/dev/null)
+  # Earlier versions published /mcp on port 8443: retire that.
+  case "$fstatus" in *:8443*) timeout 30 tailscale funnel --https=8443 off </dev/null >/dev/null 2>&1 \
+    || timeout 30 tailscale funnel --https=8443 --set-path=/mcp off </dev/null >/dev/null 2>&1; fstatus=$(tailscale funnel status 2>/dev/null) ;; esac
+  funnel_on=""; case "$fstatus" in *"(Funnel on)"*) funnel_on=1 ;; esac
   if [ -f "$APP/data/.mcp-key.json" ] && [ -z "$funnel_on" ]; then
-    if out=$(timeout 30 tailscale funnel --bg --https=8443 --set-path=/mcp "http://127.0.0.1:$port/mcp" </dev/null 2>&1); then
-      report "Ask Claude: /mcp published on port 8443 (Tailscale Funnel)."
+    if out=$(timeout 30 tailscale funnel --bg "$port" </dev/null 2>&1); then
+      report "Ask Claude: Funnel on (the internet reaches only /mcp)."
     else
       report "tailscale funnel failed ($(tailscale version 2>/dev/null | head -n1)): $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300) - retrying in 10 minutes."
     fi
   elif [ ! -f "$APP/data/.mcp-key.json" ] && [ -n "$funnel_on" ]; then
-    timeout 30 tailscale funnel --https=8443 off </dev/null >/dev/null 2>&1 \
-      || timeout 30 tailscale funnel --https=8443 --set-path=/mcp off </dev/null >/dev/null 2>&1
-    report "Ask Claude turned off: /mcp is no longer published."
+    timeout 30 tailscale funnel --https=443 off </dev/null >/dev/null 2>&1
+    timeout 30 tailscale serve --bg "$port" </dev/null >/dev/null 2>&1 # keep the tailnet address
+    report "Ask Claude turned off: Funnel off."
   fi
 fi
 

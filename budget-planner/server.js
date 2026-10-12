@@ -747,8 +747,12 @@ async function handler(req, res) {
   try {
     let url;
     try { url = new URL(req.url, 'http://local'); } catch { throw new URIError('malformed URL'); }
+    const isMcp = url.pathname === '/mcp' || url.pathname.startsWith('/mcp/');
+    // Tailscale Funnel (the internet) marks its requests with this header (and strips
+    // it from tailnet ones): from there, only the read-only /mcp is reachable.
+    if (req.headers['tailscale-funnel-request'] !== undefined && !isMcp) throw new HttpError(404, 'Not found');
     // MCP clients (Claude) send no Origin and may come through Tailscale Funnel's host: own checks.
-    if (url.pathname === '/mcp' || url.pathname.startsWith('/mcp/')) return await httpMcp(req, res, { mcp, keys: mcpKeys, allowedHosts: [PUBLIC_HOST] });
+    if (isMcp) return await httpMcp(req, res, { mcp, keys: mcpKeys, allowedHosts: [PUBLIC_HOST] });
     checkOrigin(req);
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname === '/bank/callback') {

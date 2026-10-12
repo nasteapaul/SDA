@@ -217,10 +217,10 @@ claude mcp add -s user budget -- node C:\Users\<you>\SDA\budget-planner\mcp.js  
 **Phone / claude.ai (optional, off by default):** claude.ai and the Claude phone app reach MCP servers from Anthropic's cloud, so they need a public HTTPS address. The server answers on `/mcp` only with a separate read-only key (never your password):
 
 1. `node mcp.js --new-key` prints the key (shown once; a new one replaces the old one).
-2. Publish only that path with Tailscale Funnel, on its own port so the app itself stays private: `tailscale funnel --bg --https=8443 --set-path=/mcp http://127.0.0.1:8080/mcp`
-3. In claude.ai: *Settings → Connectors → Add custom connector*, URL `https://<machine>.<tailnet>.ts.net:8443/mcp/<key>`. It then works on the phone app too.
+2. Turn on Tailscale Funnel for the HTTPS address: `tailscale funnel --bg 8080` (a cloud server set up with `deploy/setup-linux.sh` does this by itself while a key exists). claude.ai only reaches port 443. Requests from the internet carry Tailscale's `Tailscale-Funnel-Request` header, and the server answers them only on `/mcp`: the app itself stays private.
+3. In claude.ai: *Settings → Connectors → Add custom connector*, URL `https://<machine>.<tailnet>.ts.net/mcp/<key>`. It then works on the phone app too.
 
-Trade-off: this puts a read-only door to your budget on the internet. Anyone who has that URL can read your figures, and what Claude reads goes through Anthropic like any chat. Keep the URL private. To turn it off: `node mcp.js --revoke-key` and `tailscale funnel --https=8443 off`.
+Trade-off: this puts a read-only door to your budget on the internet. Anyone who has that URL can read your figures, and what Claude reads goes through Anthropic like any chat. Keep the URL private. To turn it off: `node mcp.js --revoke-key` and `tailscale funnel --https=443 off`, then `tailscale serve --bg 8080`.
 
 ---
 

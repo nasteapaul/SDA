@@ -1059,14 +1059,15 @@ const ALERT_LABELS = {
 function aiCardHTML() {
   const ai = S().ai || {};
   const code = (text) => `<div class="ai-code"><code>${esc(text)}</code><button class="btn small ghost" type="button" data-action="copy-text" data-text="${esc(text)}">Copy</button></div>`;
-  const link = ui.aiKey ? `https://${location.hostname}:8443/mcp/${ui.aiKey}` : '';
+  const link = ui.aiKey ? `https://${location.hostname}/mcp/${ui.aiKey}` : '';
   const how = `<ol class="ai-steps">
       <li><b>Claude Desktop on the laptop</b> (only when the server runs on the laptop): Settings → Developer → Edit config, add
         ${code('"budget": { "command": "node", "args": ["C:\\\\Users\\\\<you>\\\\SDA\\\\budget-planner\\\\mcp.js"] }')}
         inside <code class="inline">"mcpServers"</code>, then restart Claude.</li>
       <li><b>Claude Code</b> (same): ${code('claude mcp add -s user budget -- node ~/SDA/budget-planner/mcp.js')}</li>
-      <li><b>Phone or claude.ai</b> (optional): create a key. A cloud server publishes only <code class="inline">/mcp</code> by itself within 10 minutes; a laptop server needs
-        ${code('tailscale funnel --bg --https=8443 --set-path=/mcp http://127.0.0.1:8080/mcp')}
+      <li><b>Phone or claude.ai</b> (optional): create a key. A cloud server turns on Tailscale Funnel by itself within 10 minutes; a laptop server needs
+        ${code('tailscale funnel --bg 8080')}
+        From the internet the server answers only <code class="inline">/mcp</code>; the app stays private.
         Then add a custom connector in claude.ai (Settings → Connectors) with the address below. Anyone with that address can read your figures: keep it private.
         <div class="ai-key">${link ? `<p class="ss-help"><b>Connector address</b> (shown once — copy it now):</p>${code(link)}` : ''}
           <div class="ss-inline-form">

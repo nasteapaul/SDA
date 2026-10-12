@@ -67,6 +67,15 @@ test('health says when a new server waits for the PC to hand over its data', asy
   }
 });
 
+test('from the internet (Tailscale Funnel) only /mcp is reachable', async () => {
+  const funnel = { headers: { 'Tailscale-Funnel-Request': '?1' } };
+  for (const p of ['/', '/index.html', '/api/health', '/api/state', '/bank/callback']) {
+    assert.equal((await fetch(`${BASE}${p}`, funnel)).status, 404, p);
+  }
+  assert.equal((await fetch(`${BASE}/mcp`, { method: 'POST', ...funnel })).status, 401, '/mcp still answers (needs its key)');
+  assert.equal((await fetch(`${BASE}/api/health`)).status, 200, 'the tailnet is unaffected');
+});
+
 test('needs a login, and rejects a wrong password', async () => {
   assert.equal((await fetch(`${BASE}/api/state`)).status, 401);
   assert.equal((await fetch(`${BASE}/api/login`, json({ password: 'wrong' }))).status, 401);
