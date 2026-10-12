@@ -93,6 +93,16 @@ if [ "$changed" = 1 ]; then
   fi
 fi
 
+# HTTPS for phone and PC: `tailscale serve` only works once HTTPS certificates are
+# turned on in the tailnet (Tailscale admin → DNS); keep trying until it is set up.
+if command -v tailscale >/dev/null && ! tailscale serve status 2>/dev/null | grep -q "127.0.0.1:$port"; then
+  if timeout 30 tailscale serve --bg "$port" </dev/null >/dev/null 2>&1; then
+    echo "HTTPS turned on (tailscale serve -> port $port)."
+  else
+    echo "tailscale serve failed: turn on MagicDNS and HTTPS Certificates in the Tailscale admin console (DNS page); retrying in 10 minutes."
+  fi
+fi
+
 # Keep the installed updater as new as the repo's copy (after a possible rollback).
 src="$APP/deploy/update-linux.sh"
 if [ -f "$src" ] && ! cmp -s "$src" "$SELF"; then install -m 0755 "$src" "$SELF"; fi
