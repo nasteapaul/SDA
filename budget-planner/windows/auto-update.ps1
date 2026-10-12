@@ -206,9 +206,23 @@ function Move-ToCloud {
   }
 }
 
-# Once moved, this PC never restarts its own server after an update.
-if (Test-Path -LiteralPath $movedFile) { $restart = $false }
-elseif (Move-ToCloud) { $restart = $false }
+# Once moved, this PC never runs its own server: a copy still running (started by
+# hand or before the move) is stopped, and the auto-start task removed, so only the
+# cloud server syncs the bank.
+function Stop-LeftoverServer {
+  # The node process listening on this app's port (not other node programs).
+  $ids = @(Get-NetTCPConnection -LocalPort ([int]$port) -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+  $procs = @($ids | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue } | Where-Object { $_.ProcessName -eq 'node' })
+  schtasks /Query /TN 'Budget Planner' 2>$null | Out-Null
+  $task = $LASTEXITCODE -eq 0
+  if ($procs.Count -eq 0 -and -not $task) { return }
+  if ($task) { schtasks /End /TN 'Budget Planner' 2>$null | Out-Null; schtasks /Delete /F /TN 'Budget Planner' 2>$null | Out-Null }
+  foreach ($p in $procs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+  Write-Log 'Budget Planner runs in the cloud now (see moved-to-cloud.txt): stopped the server still running on this PC.'
+}
+
+if (Test-Path -LiteralPath $movedFile) { $restart = $false; Stop-LeftoverServer }
+elseif (Move-ToCloud) { $restart = $false; Stop-LeftoverServer }
 
 if ($restart) {
   Restart-Server
