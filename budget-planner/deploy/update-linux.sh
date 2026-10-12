@@ -20,6 +20,8 @@ APP="$REPO/budget-planner"
 BAD_FILE="$STATE_DIR/bad-commit" # a version that failed to start: skipped until a newer one arrives
 
 as_app() { runuser -u "$APP_USER" -- git -C "$REPO" "$@"; }
+# Also on the serial console (Oracle: instance → Console history), readable without logging in.
+report() { echo "$*"; echo "[budget-update] $*" > /dev/console 2>/dev/null || true; }
 
 # Where the server answers: PORT / HOST / TLS_CERT from .env, as server.js reads them.
 env_value() {
@@ -97,9 +99,9 @@ fi
 # turned on in the tailnet (Tailscale admin → DNS); keep trying until it is set up.
 if command -v tailscale >/dev/null && ! tailscale serve status 2>/dev/null | grep -q "127.0.0.1:$port"; then
   if timeout 30 tailscale serve --bg "$port" </dev/null >/dev/null 2>&1; then
-    echo "HTTPS turned on (tailscale serve -> port $port)."
+    report "HTTPS turned on (tailscale serve -> port $port)."
   else
-    echo "tailscale serve failed: turn on MagicDNS and HTTPS Certificates in the Tailscale admin console (DNS page); retrying in 10 minutes."
+    report "tailscale serve failed: turn on MagicDNS and HTTPS Certificates in the Tailscale admin console (DNS page); retrying in 10 minutes."
   fi
 fi
 
@@ -109,15 +111,15 @@ fi
 if command -v tailscale >/dev/null; then
   funnel_on=""; tailscale funnel status 2>/dev/null | grep -q ':8443' && funnel_on=1
   if [ -f "$APP/data/.mcp-key.json" ] && [ -z "$funnel_on" ]; then
-    if timeout 30 tailscale funnel --bg --https=8443 --set-path=/mcp "http://127.0.0.1:$port/mcp" </dev/null >/dev/null 2>&1; then
-      echo "Ask Claude: /mcp published on port 8443 (Tailscale Funnel)."
+    if out=$(timeout 30 tailscale funnel --bg --https=8443 --set-path=/mcp "http://127.0.0.1:$port/mcp" </dev/null 2>&1); then
+      report "Ask Claude: /mcp published on port 8443 (Tailscale Funnel)."
     else
-      echo "tailscale funnel failed: allow Funnel for this machine in the Tailscale admin console (Access controls); retrying in 10 minutes."
+      report "tailscale funnel failed ($(tailscale version 2>/dev/null | head -n1)): $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300) - retrying in 10 minutes."
     fi
   elif [ ! -f "$APP/data/.mcp-key.json" ] && [ -n "$funnel_on" ]; then
     timeout 30 tailscale funnel --https=8443 off </dev/null >/dev/null 2>&1 \
       || timeout 30 tailscale funnel --https=8443 --set-path=/mcp off </dev/null >/dev/null 2>&1
-    echo "Ask Claude turned off: /mcp is no longer published."
+    report "Ask Claude turned off: /mcp is no longer published."
   fi
 fi
 
