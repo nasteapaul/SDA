@@ -743,6 +743,15 @@ async function serveStatic(req, res, url) {
   }, data, { etag: true, compress: COMPRESSIBLE.has(ext), cache: true });
 }
 
+// One log line per request from the internet (Tailscale Funnel), so a connector that
+// can't connect can be diagnosed from the log; the key in /mcp/<key> is never logged.
+function logFunnel(req, res, url) {
+  const where = url.pathname.replace(/^\/mcp\/[^/]+/, '/mcp/<key>');
+  const h = req.headers;
+  res.on('finish', () => console.log(`[funnel] ${req.method} ${where} -> ${res.statusCode}`
+    + ` auth=${h.authorization ? 'yes' : 'no'} origin=${h.origin || '-'} accept=${h.accept || '-'} ua=${String(h['user-agent'] || '-').slice(0, 60)}`));
+}
+
 async function handler(req, res) {
   try {
     let url;
@@ -750,6 +759,7 @@ async function handler(req, res) {
     const isMcp = url.pathname === '/mcp' || url.pathname.startsWith('/mcp/');
     // Tailscale Funnel (the internet) marks its requests with this header (and strips
     // it from tailnet ones): from there, only the read-only /mcp is reachable.
+    if (req.headers['tailscale-funnel-request'] !== undefined) logFunnel(req, res, url);
     if (req.headers['tailscale-funnel-request'] !== undefined && !isMcp) throw new HttpError(404, 'Not found');
     // MCP clients (Claude) send no Origin and may come through Tailscale Funnel's host: own checks.
     if (isMcp) return await httpMcp(req, res, { mcp, keys: mcpKeys, allowedHosts: [PUBLIC_HOST] });

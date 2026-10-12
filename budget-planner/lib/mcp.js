@@ -680,12 +680,12 @@ async function readJson(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw httpError(400, 'Parse error', -32700); }
 }
 
-/** The key from "Authorization: Bearer <key>" or the path /mcp/<key> (for clients that can't send headers). */
-function keyFrom(req) {
+/** The keys offered: "Authorization: Bearer <key>" and/or the path /mcp/<key> (for clients that
+ * can't send headers). Either may be right: a client may also send a token of its own. */
+function keysFrom(req) {
   const auth = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '');
-  if (auth) return auth[1];
   const m = /^\/mcp\/([A-Za-z0-9_-]{16,128})\/?$/.exec(String(req.url || '').split('?')[0]);
-  return m ? m[1] : null;
+  return [auth?.[1], m?.[1]].filter(Boolean);
 }
 
 /**
@@ -701,7 +701,7 @@ export async function httpMcp(req, res, { mcp, keys, readBody = readJson, allowe
     res.writeHead(status, { 'Cache-Control': 'no-store', ...(body === undefined ? {} : { 'Content-Type': 'application/json; charset=utf-8' }), ...headers });
     res.end(body === undefined ? undefined : JSON.stringify(body));
   };
-  const keyOk = Boolean(keys?.exists && keys.valid(keyFrom(req)));
+  const keyOk = Boolean(keys?.exists && keysFrom(req).some((k) => keys.valid(k)));
   // Browsers on other sites (and DNS rebinding) send their own Origin: refuse it,
   // unless the request carries the secret key — web clients such as claude.ai
   // send their own Origin, and without the key nothing can be read anyway.

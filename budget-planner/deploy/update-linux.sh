@@ -128,6 +128,9 @@ if command -v tailscale >/dev/null; then
   fi
 fi
 
+# Requests that came from the internet (Ask Claude) in the last 10 minutes, on the console.
+journalctl -u budget-planner --since "-11 min" -o cat 2>/dev/null | grep '^\[funnel\]' | tail -n 20 | while IFS= read -r line; do report "$line"; done
+
 # One status line on the console whenever it changes (Oracle: Console history).
 if command -v tailscale >/dev/null; then
   status="version $(as_app rev-parse --short HEAD 2>/dev/null), app $(curl -ks -o /dev/null -w '%{http_code}' --max-time 3 "$HEALTH"), mcp key $([ -f "$APP/data/.mcp-key.json" ] && echo yes || echo no), serve: $(tailscale serve status 2>&1 | tr '\n' ' ' | tr -s ' ' | cut -c1-200), funnel: $(tailscale funnel status 2>&1 | tr '\n' ' ' | tr -s ' ' | cut -c1-200)"

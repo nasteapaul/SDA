@@ -375,6 +375,8 @@ test('httpMcp: 401 / 405 / 403 / 202 / 200 over a tiny HTTP server', async () =>
     assert.equal((await init.json()).result.protocolVersion, '2025-06-18');
     const viaPath = await post({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'net_worth', arguments: {} } }, { url: `/mcp/${key}` });
     assert.equal(viaPath.status, 200);
+    const pathAndOtherToken = await post(ping, { url: `/mcp/${key}`, headers: { Authorization: 'Bearer some-other-token' } });
+    assert.equal(pathAndOtherToken.status, 200, 'the key in the path counts even next to a token of the client');
     assert.equal(JSON.parse((await viaPath.json()).result.content[0].text).total, 21800);
     const batch = await post([ping, { jsonrpc: '2.0', id: 2, method: 'tools/list' }], { key });
     assert.deepEqual((await batch.json()).map((r) => r.id), [1, 2]);
