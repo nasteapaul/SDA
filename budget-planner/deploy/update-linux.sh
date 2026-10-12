@@ -123,6 +123,15 @@ if command -v tailscale >/dev/null; then
   fi
 fi
 
+# One status line on the console whenever it changes (Oracle: Console history).
+if command -v tailscale >/dev/null; then
+  status="version $(as_app rev-parse --short HEAD 2>/dev/null), app $(curl -ks -o /dev/null -w '%{http_code}' --max-time 3 "$HEALTH"), mcp key $([ -f "$APP/data/.mcp-key.json" ] && echo yes || echo no), serve: $(tailscale serve status 2>&1 | tr '\n' ' ' | tr -s ' ' | cut -c1-200), funnel: $(tailscale funnel status 2>&1 | tr '\n' ' ' | tr -s ' ' | cut -c1-200)"
+  if [ "$status" != "$(cat "$STATE_DIR/status" 2>/dev/null)" ]; then
+    mkdir -p "$STATE_DIR" && printf '%s' "$status" > "$STATE_DIR/status"
+    report "status: $status"
+  fi
+fi
+
 # Keep the installed updater as new as the repo's copy (after a possible rollback).
 src="$APP/deploy/update-linux.sh"
 if [ -f "$src" ] && ! cmp -s "$src" "$SELF"; then install -m 0755 "$src" "$SELF"; fi
