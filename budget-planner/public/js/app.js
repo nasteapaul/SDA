@@ -1061,13 +1061,13 @@ function aiCardHTML() {
   const code = (text) => `<div class="ai-code"><code>${esc(text)}</code><button class="btn small ghost" type="button" data-action="copy-text" data-text="${esc(text)}">Copy</button></div>`;
   const link = ui.aiKey ? `https://${location.hostname}:8443/mcp/${ui.aiKey}` : '';
   const how = `<ol class="ai-steps">
-      <li><b>Claude Desktop on the laptop</b>: Settings → Developer → Edit config, add
+      <li><b>Claude Desktop on the laptop</b> (only when the server runs on the laptop): Settings → Developer → Edit config, add
         ${code('"budget": { "command": "node", "args": ["C:\\\\Users\\\\<you>\\\\SDA\\\\budget-planner\\\\mcp.js"] }')}
         inside <code class="inline">"mcpServers"</code>, then restart Claude.</li>
-      <li><b>Claude Code</b>: ${code('claude mcp add -s user budget -- node ~/SDA/budget-planner/mcp.js')}</li>
-      <li><b>Phone or claude.ai</b> (optional): create a key, publish only <code class="inline">/mcp</code> on the laptop with
+      <li><b>Claude Code</b> (same): ${code('claude mcp add -s user budget -- node ~/SDA/budget-planner/mcp.js')}</li>
+      <li><b>Phone or claude.ai</b> (optional): create a key. A cloud server publishes only <code class="inline">/mcp</code> by itself within 10 minutes; a laptop server needs
         ${code('tailscale funnel --bg --https=8443 --set-path=/mcp http://127.0.0.1:8080/mcp')}
-        then add a custom connector in claude.ai with the address below. Anyone with that address can read your figures: keep it private.
+        Then add a custom connector in claude.ai (Settings → Connectors) with the address below. Anyone with that address can read your figures: keep it private.
         <div class="ai-key">${link ? `<p class="ss-help"><b>Connector address</b> (shown once — copy it now):</p>${code(link)}` : ''}
           <div class="ss-inline-form">
             <button class="btn small" type="button" data-action="ai-key-create">${ai.keySet ? 'New key' : 'Create a key'}</button>

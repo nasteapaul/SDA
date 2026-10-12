@@ -103,6 +103,24 @@ if command -v tailscale >/dev/null && ! tailscale serve status 2>/dev/null | gre
   fi
 fi
 
+# Ask Claude from the phone / claude.ai (Settings → Ask Claude): while a read-only
+# key exists, publish only /mcp with Tailscale Funnel on port 8443; once the key is
+# turned off, unpublish it. Nothing else of the app is reachable from the internet.
+if command -v tailscale >/dev/null; then
+  funnel_on=""; tailscale funnel status 2>/dev/null | grep -q ':8443' && funnel_on=1
+  if [ -f "$APP/data/.mcp-key.json" ] && [ -z "$funnel_on" ]; then
+    if timeout 30 tailscale funnel --bg --https=8443 --set-path=/mcp "http://127.0.0.1:$port/mcp" </dev/null >/dev/null 2>&1; then
+      echo "Ask Claude: /mcp published on port 8443 (Tailscale Funnel)."
+    else
+      echo "tailscale funnel failed: allow Funnel for this machine in the Tailscale admin console (Access controls); retrying in 10 minutes."
+    fi
+  elif [ ! -f "$APP/data/.mcp-key.json" ] && [ -n "$funnel_on" ]; then
+    timeout 30 tailscale funnel --https=8443 off </dev/null >/dev/null 2>&1 \
+      || timeout 30 tailscale funnel --https=8443 --set-path=/mcp off </dev/null >/dev/null 2>&1
+    echo "Ask Claude turned off: /mcp is no longer published."
+  fi
+fi
+
 # Keep the installed updater as new as the repo's copy (after a possible rollback).
 src="$APP/deploy/update-linux.sh"
 if [ -f "$src" ] && ! cmp -s "$src" "$SELF"; then install -m 0755 "$src" "$SELF"; fi
