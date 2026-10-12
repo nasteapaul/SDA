@@ -61,7 +61,9 @@ fi
 
 say "System packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+# On a VM's first boot, Ubuntu's own updates may hold the package lock: wait for it.
+echo 'DPkg::Lock::Timeout "900";' > /etc/apt/apt.conf.d/90budget-lock-wait
+for i in 1 2 3 4 5 6 7 8 9 10; do apt-get update -qq && break; [ "$i" = 10 ] && die "apt-get update kept failing."; sleep 30; done
 apt-get install -y -qq git curl ca-certificates xz-utils tar >/dev/null
 
 if ! /usr/local/bin/node --version 2>/dev/null | grep -q "^v${NODE_MAJOR}\."; then
@@ -253,7 +255,7 @@ systemctl restart budget-planner
 [ -z "${RECEIVE:-}" ] || systemctl enable --now budget-planner-receive >/dev/null
 
 say "HTTPS for your devices (tailscale serve)"
-tailscale serve --bg 8080 >/dev/null 2>&1 || {
+timeout 30 tailscale serve --bg 8080 </dev/null >/dev/null 2>&1 || {
   echo "  'tailscale serve' failed: turn on HTTPS certificates in the Tailscale admin console"
   echo "  (DNS page → HTTPS Certificates → Enable), then run: sudo tailscale serve --bg 8080"
 }
