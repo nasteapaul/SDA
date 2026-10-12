@@ -109,7 +109,7 @@ fi
 # key exists, publish only /mcp with Tailscale Funnel on port 8443; once the key is
 # turned off, unpublish it. Nothing else of the app is reachable from the internet.
 if command -v tailscale >/dev/null; then
-  funnel_on=""; tailscale funnel status 2>/dev/null | grep -q ':8443' && funnel_on=1
+  funnel_on=""; case "$(tailscale funnel status 2>/dev/null)" in *:8443*) funnel_on=1 ;; esac
   if [ -f "$APP/data/.mcp-key.json" ] && [ -z "$funnel_on" ]; then
     if out=$(timeout 30 tailscale funnel --bg --https=8443 --set-path=/mcp "http://127.0.0.1:$port/mcp" </dev/null 2>&1); then
       report "Ask Claude: /mcp published on port 8443 (Tailscale Funnel)."

@@ -363,7 +363,8 @@ test('httpMcp: 401 / 405 / 403 / 202 / 200 over a tiny HTTP server', async () =>
     const get = await fetch(`${base}/mcp`, { headers: { Authorization: `Bearer ${key}` } });
     assert.equal(get.status, 405);
     assert.equal(get.headers.get('allow'), 'POST');
-    assert.equal((await post(ping, { key, headers: { Origin: 'https://evil.example' } })).status, 403);
+    assert.equal((await post(ping, { headers: { Origin: 'https://evil.example' } })).status, 403, 'other site, no key');
+    assert.equal((await post(ping, { key, headers: { Origin: 'https://claude.ai' } })).status, 200, 'web client with the key');
     assert.equal((await post(ping, { key, headers: { Origin: base } })).status, 200, 'same host is fine');
     const note = await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, { key });
     assert.equal(note.status, 202);

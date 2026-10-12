@@ -692,7 +692,7 @@ function keyFrom(req) {
  * Streamable HTTP transport (stateless, JSON replies, no SSE stream):
  * POST one JSON-RPC message or a batch → 200 application/json, or 202 when it
  * held only notifications; GET/DELETE/other → 405; missing or wrong key → 401;
- * an Origin from another host → 403. readBody(req) must resolve to the parsed
+ * an Origin from another host without a valid key → 403. readBody(req) must resolve to the parsed
  * JSON (arrays allowed); by default a 1 MB application/json reader is used.
  * allowedHosts: extra Origin hosts to accept (e.g. the public HTTPS host).
  */
@@ -701,14 +701,17 @@ export async function httpMcp(req, res, { mcp, keys, readBody = readJson, allowe
     res.writeHead(status, { 'Cache-Control': 'no-store', ...(body === undefined ? {} : { 'Content-Type': 'application/json; charset=utf-8' }), ...headers });
     res.end(body === undefined ? undefined : JSON.stringify(body));
   };
-  // Browsers on other sites (and DNS rebinding) send their own Origin: refuse it.
+  const keyOk = Boolean(keys?.exists && keys.valid(keyFrom(req)));
+  // Browsers on other sites (and DNS rebinding) send their own Origin: refuse it,
+  // unless the request carries the secret key — web clients such as claude.ai
+  // send their own Origin, and without the key nothing can be read anyway.
   const origin = req.headers.origin;
-  if (origin !== undefined) {
+  if (origin !== undefined && !keyOk) {
     let host = '';
     try { host = new URL(origin).host; } catch { /* "null" or junk */ }
     if (!host || (host !== req.headers.host && !allowedHosts.includes(host))) return reply(403, fail(null, -32600, 'Cross-site request blocked'));
   }
-  if (!keys?.exists || !keys.valid(keyFrom(req))) {
+  if (!keyOk) {
     return reply(401, fail(null, -32600, keys?.exists ? 'Wrong or missing MCP key' : 'MCP access is off: create a key first'), { 'WWW-Authenticate': 'Bearer realm="budget-planner"' });
   }
   if (req.method !== 'POST') return reply(405, fail(null, -32600, 'Method not allowed: POST JSON-RPC messages here'), { Allow: 'POST' });
