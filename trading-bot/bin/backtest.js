@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Backtests the EMA/RSI strategy.
 //   node bin/backtest.js data/dax-5m.csv [--spread 1.2] [--risk 1] [--capital 10000] [--fast 9 --slow 21]
-//   node --env-file=.env bin/backtest.js --ig IX.D.DAX.IFMM.IP --resolution MINUTE_5 --max 1000
+//   node --env-file=.env bin/backtest.js --ig IX.D.DAX.DAILY.IP --resolution MINUTE_5 --max 1000
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { parseCsv } from '../lib/candles.js';

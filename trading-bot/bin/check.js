@@ -15,7 +15,7 @@ try {
   for (const m of (await client.searchMarkets(term)).slice(0, 10)) {
     console.log(`  ${m.epic.padEnd(22)} ${m.name} (${m.type}, ${m.expiry}, ${m.status})`);
   }
-  const epic = env.BOT_EPIC ?? 'IX.D.DAX.IFMM.IP';
+  const epic = env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP';
   const m = await client.market(epic);
   console.log(`\nPiața din .env, ${epic}:`);
   console.log(`  preț ${m.bid} / ${m.offer} (spread ${(m.offer - m.bid).toFixed(1)}), stare ${m.status}, monedă ${m.currency}`);

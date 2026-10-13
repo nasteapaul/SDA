@@ -1,6 +1,6 @@
 // Optional Telegram messages for the events that matter (trades, halts, errors that stop
 // the bot). Without TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID it does nothing.
-const IMPORTANT = /^(Deschis|Închis|Pierderea|Nu știu|Eroare de autentificare|Pornit|Program încheiat|Nu pot porni)/;
+const IMPORTANT = /^(Deschis|Închis|Pierderea|Nu știu|Eroare de autentificare|Pornit|Program încheiat|Nu pot porni|Nu primesc prețuri)/;
 
 export function telegramNotifier({ token, chatId, fetchImpl = fetch } = {}) {
   if (!token || !chatId) return null;

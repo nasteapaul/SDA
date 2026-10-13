@@ -171,3 +171,19 @@ test('telegram notes go out only for trades, halts and stops', async () => {
   await notify('Deschis BUY 1 la 100, stop 10, țintă 20.');
   assert.deepEqual(sent, ['🤖 DAX demo: Deschis BUY 1 la 100, stop 10, țintă 20.']);
 });
+
+test('warns once when IG sends no live prices for an open market', async () => {
+  const client = fakeClient();
+  client.market = async () => ({ bid: null, offer: null, status: 'TRADEABLE', currency: 'EUR', minSize: 0.5, minStop: 5, minStopUnit: 'POINTS', decimals: 1 });
+  const lines = [];
+  const bot = makeBot(client, { log: (m) => lines.push(m) });
+  await bot.start();
+  await runUp(bot, client, 5);
+  const warnings = lines.filter((l) => l.startsWith('Nu primesc prețuri'));
+  assert.equal(warnings.length, 1);
+  assert.equal(client.orders.length, 0);
+  const { telegramNotifier } = await import('../lib/notify.js');
+  const sent = [];
+  await telegramNotifier({ token: 't', chatId: 'c', fetchImpl: async (url, o) => sent.push(o.body) })(warnings[0]);
+  assert.equal(sent.length, 1);
+});
