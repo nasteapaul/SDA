@@ -1,0 +1,19 @@
+{
+  "day": "2026-10-13",
+  "dayStartEquity": 10232.84,
+  "halted": false,
+  "markets": {
+    "AU200": {
+      "day": "2026-10-13",
+      "done": false
+    },
+    "EURUSD": {
+      "day": "2026-10-13",
+      "done": true
+    },
+    "GBPUSD": {
+      "day": "2026-10-13",
+      "done": true
+    }
+  }
+}
