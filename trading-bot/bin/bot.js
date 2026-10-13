@@ -43,7 +43,7 @@ if (!presets[strategy]) throw new Error(`BOT_STRATEGY must be one of: ${Object.k
 const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
 const bot = new Bot({
   client,
-  epic: env.BOT_EPIC ?? 'IX.D.DAX.IFMM.IP',
+  epic: env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP',
   ...presets[strategy],
   ...(env.BOT_RESOLUTION ? { resolution: env.BOT_RESOLUTION } : {}),
   size: num('BOT_SIZE', 1),

@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseCsv, validateCandle } from './candles.js';
-import { berlinClock } from './session.js';
+import { localClock } from './session.js';
 
 // HistData.com ASCII minute bars: "20180102 020100;open;high;low;close;volume".
 // Their timestamps are EST without daylight saving, i.e. always UTC-5.
@@ -15,6 +15,20 @@ export function parseHistData(text) {
       open: +m[7], high: +m[8], low: +m[9], close: +m[10],
     };
     if (validateCandle(c)) out.push(c);
+  }
+  return out;
+}
+
+// Oanda files: "2016-06-01 00:03:00,close,high,low,open,volume", UTC.
+export function parseOanda(text) {
+  const out = [];
+  for (const line of text.split('\n')) {
+    const p = line.split(',');
+    if (p.length < 5 || !/^\d{4}-/.test(p[0])) continue;
+    const s = p[0];
+    const time = Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), +s.slice(11, 13), +s.slice(14, 16));
+    const c = { time, close: +p[1], high: +p[2], low: +p[3], open: +p[4] };
+    if (c.high >= Math.max(c.open, c.close) && c.low <= Math.min(c.open, c.close)) out.push(c);
   }
   return out;
 }
@@ -40,12 +54,12 @@ export function loadBars(paths, warn = console.warn) {
   return bars;
 }
 
-// Groups bars by Frankfurt trading day; each bar gets its local minute of day.
-export function groupDays(bars) {
+// Groups bars by local trading day of `tz` (Frankfurt by default); each bar gets its local minute of day.
+export function groupDays(bars, tz = 'Europe/Berlin') {
   const days = [];
   let cur = null;
   for (const b of bars) {
-    const { day, mod, dow } = berlinClock(b.time);
+    const { day, mod, dow } = localClock(b.time, tz);
     if (dow === 0 || dow === 6) continue;
     if (!cur || cur.day !== day) {
       cur = { day, dow, bars: [] };

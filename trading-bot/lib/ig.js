@@ -138,7 +138,7 @@ export class IgClient {
     const { data } = await this.request('GET', '/positions', { version: 2 });
     return (data.positions ?? [])
       .filter((p) => !epic || p.market?.epic === epic)
-      .map((p) => ({ dealId: p.position.dealId, direction: p.position.direction, size: p.position.size }));
+      .map((p) => ({ dealId: p.position.dealId, direction: p.position.direction, size: p.position.size, epic: p.market?.epic }));
   }
 
   // Market order with a mandatory stop. Distances are in the market's points.

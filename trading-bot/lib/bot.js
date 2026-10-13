@@ -56,6 +56,10 @@ export class Bot {
     this.builder.flush(now);
     if (m.status === 'TRADEABLE' && m.bid != null && m.offer != null) {
       this.builder.push({ time: now, price: (m.bid + m.offer) / 2 });
+    } else if (m.status === 'TRADEABLE' && !this.warnedNoPrice) {
+      // Without live prices no candle closes, so the strategy can never fire.
+      this.warnedNoPrice = true;
+      this.log(`Nu primesc prețuri de la IG pentru ${this.epic}, deși piața e deschisă. Fără prețuri nu pot tranzacționa; verifică piața (BOT_EPIC).`);
     }
     await this.checkRisk();
     await this.flattenAfterHours(now);

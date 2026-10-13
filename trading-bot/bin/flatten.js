@@ -6,7 +6,7 @@ import { IgClient } from '../lib/ig.js';
 import { telegramNotifier } from '../lib/notify.js';
 
 const env = process.env;
-const epic = env.BOT_EPIC ?? 'IX.D.DAX.IFMM.IP';
+const epic = env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP';
 const notify = telegramNotifier({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID });
 const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
 
