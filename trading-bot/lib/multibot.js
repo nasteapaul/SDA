@@ -205,7 +205,7 @@ export class MultiBot {
       const st = this.risk.markets[m.key] ?? {};
       const { mod } = localClock(now, m.tz);
       const what = st.traded ? 'a tranzacționat azi' : st.done ? 'gata pe azi'
-        : mod < m.open ? 'aștept deschiderea' : st.range ? 'aștept ruperea intervalului' : 'formez intervalul';
+        : mod < m.open || mod >= m.close ? 'sesiunea e închisă' : mod < m.open + m.live.rangeMin ? 'formez intervalul' : st.range ? 'aștept ruperea intervalului' : 'formez intervalul';
       return `${m.name}: ${what}`;
     });
     this.log(`Activ. Azi rezultat ${Number.isFinite(pnl) ? pnl.toFixed(2) : '-'}. ${parts.join('; ')}.`);
