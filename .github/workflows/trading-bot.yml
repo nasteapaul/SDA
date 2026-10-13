@@ -18,10 +18,10 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'run = start the bot now, flatten = close open positions'
+        description: 'run = start the bot now, flatten = close open positions, check = test the IG connection'
         default: run
         type: choice
-        options: [run, flatten]
+        options: [run, flatten, check]
 
 permissions:
   contents: write   # daily-loss state on the trading-bot-data branch
@@ -72,6 +72,10 @@ jobs:
             echo "The bot already ran today; nothing to do."; exit 0
           fi
           node trading-bot/bin/bot.js
+
+      - name: Check IG connection
+        if: env.HAS_IG == 'true' && env.JOB == 'check'
+        run: node trading-bot/bin/check.js
 
       - name: Close open positions
         if: env.HAS_IG == 'true' && env.JOB == 'flatten'

@@ -20,6 +20,8 @@ try {
   console.log(`\nPiața din .env, ${epic}:`);
   console.log(`  preț ${m.bid} / ${m.offer} (spread ${(m.offer - m.bid).toFixed(1)}), stare ${m.status}, monedă ${m.currency}`);
   console.log(`  mărime minimă ${m.minSize}, stop minim ${m.minStop} ${m.minStopUnit}`);
+  const { data } = await client.request('GET', `/markets/${encodeURIComponent(epic)}`, { version: 3 });
+  console.log(`  snapshot IG: ${JSON.stringify(data.snapshot)}`);
   const open = await client.openPositions(epic);
   console.log(`  poziții deschise: ${open.length}`);
   console.log('\nTotul e în regulă. Poți porni bot-ul.');
