@@ -8,11 +8,11 @@ const firstIdxAt = (bars, mod) => bars.findIndex((b) => b.mod >= mod);
 const XETRA_OPEN = 540; // 09:00
 const XETRA_CLOSE = 1050; // 17:30
 
-// Previous trading day's cash-session close (last bar before 17:30).
-function prevClose(days, d) {
+// Previous trading day's cash-session close (last bar before `close`, default 17:30).
+function prevClose(days, d, close = XETRA_CLOSE) {
   const prev = days[d - 1];
   if (!prev) return null;
-  const s = prev.bars.filter((b) => b.mod < XETRA_CLOSE);
+  const s = prev.bars.filter((b) => b.mod < close);
   return s.length ? s.at(-1).close : null;
 }
 
@@ -20,13 +20,14 @@ function prevClose(days, d) {
 // beyond it before `lastEntry` enters on the next bar; stop at the other side of the range
 // (or `stopFrac` of it), optional target in R, flat at `exit`.
 // `trend`: only trade in the direction of yesterday's close vs its 20-day average.
-// `open`: start of the range (default 09:00; 930 = 15:30 for the US open).
-export function orb({ rangeMin = 15, targetR = null, stopFrac = 1, open = XETRA_OPEN, lastEntry = 720, exit = XETRA_CLOSE, minRange = 5, maxRange = 150, trend = false } = {}) {
+// `open`: start of the range (default 09:00; 930 = 15:30 for the US open). `close`: the
+// session close used for yesterday's close in the trend filter.
+export function orb({ rangeMin = 15, targetR = null, stopFrac = 1, open = XETRA_OPEN, lastEntry = 720, exit = XETRA_CLOSE, close = XETRA_CLOSE, minRange = 5, maxRange = 150, trend = false } = {}) {
   return (day, days, d) => {
     const bars = day.bars;
     const start = firstIdxAt(bars, open);
     if (start < 0 || bars[start].mod > open + 5) return [];
-    const bias = trend ? trendBias(days, d) : 0;
+    const bias = trend ? trendBias(days, d, 20, close) : 0;
     if (trend && !bias) return [];
     let hi = -Infinity, lo = Infinity, i = start;
     for (; i < bars.length && bars[i].mod < open + rangeMin; i++) {
@@ -50,10 +51,10 @@ export function orb({ rangeMin = 15, targetR = null, stopFrac = 1, open = XETRA_
 }
 
 // +1 if yesterday's cash close is above the average of the 20 closes before it, else -1.
-function trendBias(days, d, n = 20) {
+function trendBias(days, d, n = 20, close = XETRA_CLOSE) {
   const closes = [];
   for (let k = d - 1; k >= 0 && closes.length < n + 1; k--) {
-    const c = prevClose(days, k + 1);
+    const c = prevClose(days, k + 1, close);
     if (c != null) closes.push(c);
   }
   if (closes.length < n + 1) return 0;
