@@ -1,0 +1,11 @@
+# Render Blueprint: deploys the Farul game server (free plan, HTTPS + WebSockets).
+services:
+  - type: web
+    name: farul
+    runtime: node
+    plan: free
+    rootDir: farul
+    buildCommand: "echo no build needed"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    autoDeploy: true

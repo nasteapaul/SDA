@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Farul</title>
+  <meta name="description" content="Farul — joc cooperativ de strategie pentru doi.">
+  <meta name="theme-color" content="#050b1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Farul">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- HOME -->
+    <section id="home" class="screen active">
+      <canvas id="homeCanvas"></canvas>
+      <div class="home-content">
+        <div class="logo">
+          <span class="logo-kicker">un joc de strategie pentru doi</span>
+          <h1>Farul</h1>
+          <span class="logo-sub">Țineți coasta aprinsă. Împreună.</span>
+        </div>
+        <label class="name-field">
+          <span>Numele tău</span>
+          <input id="nameInput" maxlength="16" autocomplete="nickname" placeholder="ex: Paul">
+        </label>
+        <div class="menu">
+          <button id="btnContinue" class="btn primary hidden">▶ Continuă partida</button>
+          <button id="btnCreate" class="btn primary">⚓ Joc nou în doi</button>
+          <button id="btnJoin" class="btn">🔑 Intră cu un cod</button>
+          <button id="btnLocal" class="btn ghost">🎓 Antrenament pe un telefon</button>
+        </div>
+        <div class="row">
+          <button id="btnShop" class="btn small">🐚 Atelier <b id="shellCount">0</b></button>
+          <button id="btnRules" class="btn small">📜 Reguli</button>
+          <button id="btnSound" class="btn small icon" aria-label="Sunet">🔊</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- CREATE -->
+    <section id="create" class="screen panel-screen">
+      <header class="bar"><button class="back" data-go="home">‹</button><h2>Joc nou</h2></header>
+      <div class="scroll">
+        <h3>Ce rol iei?</h3>
+        <div class="roles" id="rolePick">
+          <button class="role-card selected" data-role="A">
+            <span class="role-icon">🔭</span><b>Paznicul farului</b>
+            <small>Vede unde lovesc furtunile în noaptea asta și în următoarea.</small>
+          </button>
+          <button class="role-card" data-role="B">
+            <span class="role-icon">⚓</span><b>Căpitanul portului</b>
+            <small>Vede ce marfă cere fiecare port și până când.</small>
+          </button>
+          <button class="role-card wide" data-role="random"><span class="role-icon">🎲</span><b>La întâmplare</b></button>
+        </div>
+        <h3>Dificultate</h3>
+        <div class="seg" id="diffPick">
+          <button data-v="usor">🌤 Ușor</button><button data-v="normal" class="selected">🌊 Normal</button><button data-v="furtuna">⛈ Furtună</button>
+        </div>
+        <h3>Comunicare</h3>
+        <div class="seg" id="modePick">
+          <button data-v="silent" class="selected">🤫 Liniște radio</button><button data-v="talk">💬 Vorbit liber</button>
+        </div>
+        <p class="hint" id="modeHint"></p>
+        <h3>Relicvă <small>(din Atelier)</small></h3>
+        <div class="relics" id="relicPick"></div>
+        <label class="toggle"><input type="checkbox" id="dailyToggle"> <span>🗓 Harta zilei — aceeași hartă pentru toată ziua; bateți-vă recordul</span></label>
+      </div>
+      <footer class="actions"><button id="btnDoCreate" class="btn primary">Creează camera</button></footer>
+    </section>
+
+    <!-- JOIN -->
+    <section id="join" class="screen panel-screen">
+      <header class="bar"><button class="back" data-go="home">‹</button><h2>Intră în cameră</h2></header>
+      <div class="scroll center">
+        <p class="lead">Scrie codul de 4 litere primit de la partener.</p>
+        <input id="codeInput" class="code-input" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="ABCD">
+        <button id="btnDoJoin" class="btn primary">Intră</button>
+      </div>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="lobby" class="screen panel-screen">
+      <header class="bar"><button class="back" id="lobbyBack">‹</button><h2>Camera ta</h2></header>
+      <div class="scroll center">
+        <p class="lead">Trimite codul partenerului tău:</p>
+        <div class="big-code" id="lobbyCode">····</div>
+        <button id="btnShare" class="btn">📤 Trimite invitația</button>
+        <div class="waiting"><span class="beacon"></span><span id="lobbyStatus">Aștept partenerul…</span></div>
+        <div class="lobby-role" id="lobbyRole"></div>
+      </div>
+    </section>
+
+    <!-- GAME -->
+    <section id="game" class="screen">
+      <header class="hud">
+        <div class="stat" id="hudNight"><span>🌙</span><b>1</b><small>/10</small></div>
+        <div class="stat goal" id="hudGoal"><span>📦</span><b>0</b><small>/7</small><i class="bar-fill"></i></div>
+        <div class="lights" id="hudLights"></div>
+        <div class="stat" id="hudSignals"><span>📡</span><b>2</b></div>
+        <button class="hud-btn" id="btnMenu" aria-label="Meniu">☰</button>
+      </header>
+      <div class="secret" id="secret"></div>
+      <div class="board-wrap">
+        <canvas id="board"></canvas>
+        <div id="toasts"></div>
+        <div id="floaters"></div>
+      </div>
+      <div class="turnbar" id="turnbar"></div>
+      <div class="hand" id="hand"></div>
+      <div class="tools">
+        <button class="tool" id="btnSignal">📡 <span>Semnal</span></button>
+        <button class="tool" id="btnDiscard">🗑 <span>Aruncă</span></button>
+        <button class="tool" id="btnReact">😊</button>
+      </div>
+      <div class="sheet" id="sheet"></div>
+      <div class="react-pop hidden" id="reactPop"></div>
+    </section>
+
+    <!-- RESULT -->
+    <section id="result" class="screen overlay">
+      <div class="result-card">
+        <div class="result-icon" id="resIcon">🏆</div>
+        <h2 id="resTitle"></h2>
+        <p id="resSub"></p>
+        <div class="stars" id="resStars"></div>
+        <div class="res-grid" id="resGrid"></div>
+        <div class="shells-earned" id="resShells"></div>
+        <button id="btnRematch" class="btn primary">🔄 Revanșă (schimbați rolurile)</button>
+        <button id="btnHome" class="btn ghost">Acasă</button>
+      </div>
+      <div id="confetti"></div>
+    </section>
+
+    <!-- SHOP -->
+    <section id="shop" class="screen panel-screen">
+      <header class="bar"><button class="back" data-go="home">‹</button><h2>Atelier</h2><span class="shell-pill">🐚 <b id="shopShells">0</b></span></header>
+      <div class="scroll" id="shopList"></div>
+    </section>
+
+    <!-- RULES -->
+    <section id="rules" class="screen panel-screen">
+      <header class="bar"><button class="back" id="rulesBack">‹</button><h2>Cum se joacă</h2></header>
+      <div class="scroll rules">
+        <p class="lead">Sunteți o echipă. Coasta are <b>5 faruri</b> și un <b>depozit de ulei</b>. În <b>10 nopți</b> trebuie să faceți un anumit număr de <b>livrări</b> fără să lăsați <b>3 faruri să se stingă</b>.</p>
+        <h3>🔭 vs ⚓ — fiecare vede altceva</h3>
+        <p><b>Paznicul farului</b> vede furtunile: zonele roșii lovesc <b>în noaptea asta</b>, cele mov <b>mâine</b>. 🌀 este ochiul furtunii: farurile de lângă el pierd lumină.</p>
+        <p><b>Căpitanul portului</b> vede cererile: ce marfă vrea fiecare port și în câte nopți expiră. Paznicul vede doar ❓.</p>
+        <h3>🃏 O noapte</h3>
+        <p>Fiecare are 3 cărți. Pe rând, jucați câte o carte: tu, partenerul, tu, partenerul. <b>Orice carte poate muta orice navă</b> — și pe cele ale partenerului.</p>
+        <p>Când o navă ajunge într-un port, <b>livrează automat</b> marfa cerută acolo. Poți alege să <b>încarci</b> marfa portului (🐟 🧂 🪵) sau ulei de la Depozit 🛢️.</p>
+        <p>După 4 cărți vine furtuna ⛈: navele din zona ei pierd 1 corp (la 0 se scufundă și se întorc la Depozit fără marfă). Navele dintr-un port aprins sunt la adăpost.</p>
+        <h3>🔥 Lumina</h3>
+        <p>Farurile pierd lumină din cauza furtunilor, a cererilor ratate și a fitilului care arde din când în când. Duceți <b>ulei</b> (+2) sau livrați marfă (+1). Un far stins nu primește marfă, doar ulei.</p>
+        <h3>📡 Semnale</h3>
+        <p>În <b>Liniște radio</b> nu aveți voie să vă spuneți ce vedeți. Aveți 2 semnale pe noapte: ⚠ pe un hex periculos sau o marfă dorită pe un port. Le puteți pune oricând, chiar dacă nu e rândul vostru.</p>
+        <h3>🎁 Obiecte pe mare</h3>
+        <p>🛢️ butoi de ulei · 🍾 sticlă (+1 semnal) · 🛟 colac (repară nava) · 🐚 scoică de aur (puncte și scoici pentru Atelier).</p>
+        <h3>⭐ Stele</h3>
+        <p>Câștig = 1 stea. +1 dacă nu s-a scufundat nicio navă. +1 dacă toate farurile ard la final.</p>
+      </div>
+    </section>
+
+    <div id="modal" class="modal hidden"></div>
+  </div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

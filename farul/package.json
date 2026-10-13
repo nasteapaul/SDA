@@ -1,0 +1,12 @@
+{
+  "name": "farul",
+  "version": "1.0.0",
+  "description": "Farul — joc cooperativ pentru doi, pe Android și iPhone (PWA)",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  }
+}
