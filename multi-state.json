@@ -13,11 +13,20 @@
     },
     "EURUSD": {
       "day": "2026-10-14",
-      "done": false
+      "done": true,
+      "range": {
+        "hi": 11208.25,
+        "lo": 11199.8
+      },
+      "traded": true
     },
     "GBPUSD": {
       "day": "2026-10-14",
-      "done": false
+      "done": false,
+      "range": {
+        "hi": 13269.650000000001,
+        "lo": 13256.95
+      }
     }
   }
 }
