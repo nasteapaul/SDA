@@ -104,6 +104,8 @@ export class IgClient {
       minStop: data.dealingRules?.minNormalStopOrLimitDistance?.value ?? 0,
       minStopUnit: data.dealingRules?.minNormalStopOrLimitDistance?.unit ?? 'POINTS',
       decimals: decimalsOf(data.snapshot?.decimalPlacesFactor),
+      // Spread-bet accounts must send the market's expiry (e.g. DFB); '-' is CFD only.
+      expiry: data.instrument?.expiry ?? '-',
     };
   }
 
@@ -142,7 +144,7 @@ export class IgClient {
   }
 
   // Market order with a mandatory stop. Distances are in the market's points.
-  async openMarket({ epic, direction, size, currency, stopDistance, limitDistance }) {
+  async openMarket({ epic, expiry = '-', direction, size, currency, stopDistance, limitDistance }) {
     if (!(stopDistance > 0)) throw new Error('A stop distance is required for every order');
     // Our own reference lets us find the deal if the response is lost. Never re-send a trade.
     const dealReference = `bot-${randomUUID().replaceAll('-', '').slice(0, 24)}`;
@@ -152,7 +154,7 @@ export class IgClient {
         body: {
           dealReference,
         epic,
-        expiry: '-',
+        expiry,
         direction,
         size,
         orderType: 'MARKET',

@@ -49,6 +49,9 @@ test('openMarket requires a stop and checks the confirmation', async () => {
   await assert.rejects(c.openMarket({ epic: 'E', direction: 'BUY', size: 1, stopDistance: 10 }), /MARKET_CLOSED/);
   assert.equal(f.calls[0].body.stopDistance, 10);
   assert.equal(f.calls[0].body.orderType, 'MARKET');
+  assert.equal(f.calls[0].body.expiry, '-');
+  await assert.rejects(c.openMarket({ epic: 'E', expiry: 'DFB', direction: 'BUY', size: 1, stopDistance: 10 }), /MARKET_CLOSED/);
+  assert.equal(f.calls[2].body.expiry, 'DFB');
   assert.match(f.calls[0].body.dealReference, /^bot-[a-f0-9]{24}$/);
   assert.ok(f.calls[1].url.endsWith(f.calls[0].body.dealReference));
 });

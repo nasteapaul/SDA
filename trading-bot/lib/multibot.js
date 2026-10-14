@@ -160,7 +160,7 @@ export class MultiBot {
     st.done = true; // set before sending, so a crash never sends a second order today
     this.state.save(this.risk);
     const res = await this.client.openMarket({
-      epic: m.live.epic, direction: side, size, currency: info.currency, stopDistance, limitDistance,
+      epic: m.live.epic, expiry: info.expiry, direction: side, size, currency: info.currency, stopDistance, limitDistance,
     });
     st.traded = true;
     this.state.save(this.risk);

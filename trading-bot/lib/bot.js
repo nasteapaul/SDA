@@ -108,6 +108,7 @@ export class Bot {
     try {
       const res = await this.client.openMarket({
         epic: this.epic,
+        expiry: this.market.expiry,
         direction: sig.side,
         size: this.size,
         currency: this.market.currency,

@@ -26,7 +26,7 @@ function fakeClient() {
     history: [],
     candleCalls: 0,
     login: async () => {},
-    market: async () => ({ bid: c.price - 0.5, offer: c.price + 0.5, status: 'TRADEABLE', currency: 'GBP', minSize: 0.03, minStop: 4, minStopUnit: 'POINTS', decimals: 1 }),
+    market: async () => ({ bid: c.price - 0.5, offer: c.price + 0.5, status: 'TRADEABLE', currency: 'GBP', minSize: 0.03, minStop: 4, minStopUnit: 'POINTS', decimals: 1, expiry: 'DFB' }),
     candles: async () => { c.candleCalls++; return c.history.map((h) => ({ ...h })); },
     equity: async () => c.equityValue,
     openPositions: async () => c.positions,
@@ -65,6 +65,7 @@ test('buys the first close above the opening range with stop at its low and a 2R
   const o = client.orders[0];
   assert.equal(o.direction, 'BUY');
   assert.equal(o.epic, 'GBP');
+  assert.equal(o.expiry, 'DFB'); // spread-bet accounts reject '-'
   assert.equal(o.stopDistance, 25.5); // offer 125.5 - range low 100
   assert.equal(o.limitDistance, 51);
   assert.equal(o.size, 1.96); // 50 / 25.5, rounded down
