@@ -147,3 +147,26 @@ test('XTB check: a stock page means listed, a redirect to the stock list means n
   assert.equal(await onXtb({ xtb: 'SRTA.US' }, { fetchImpl: fake('https://www.xtb.com/int/stocks') }), false);
   await assert.rejects(onXtb({ xtb: 'X.US' }, { fetchImpl: async () => ({ ok: false, status: 403 }) }));
 });
+
+test('insider buys: CFO, first position and bigger stakes add weight; 10% holders are ignored', () => {
+  const xml = `<ownershipDocument><issuer><issuerCik>1</issuerCik><issuerName>A</issuerName><issuerTradingSymbol>A</issuerTradingSymbol></issuer>
+    <reportingOwner><reportingOwnerRelationship><isTenPercentOwner>1</isTenPercentOwner></reportingOwnerRelationship></reportingOwner>
+    <nonDerivativeTable><nonDerivativeTransaction><transactionCoding><transactionCode>P</transactionCode></transactionCoding>
+    <transactionAmounts><transactionShares><value>1000</value></transactionShares><transactionPricePerShare><value>10</value></transactionPricePerShare>
+    <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode></transactionAmounts>
+    <postTransactionAmounts><sharesOwnedFollowingTransaction><value>1000</value></sharesOwnedFollowingTransaction></postTransactionAmounts></nonDerivativeTransaction></nonDerivativeTable></ownershipDocument>`;
+  const f = parseForm4(xml);
+  assert.equal(f.owner.tenPct, true);
+  assert.equal(f.shares, 1000);
+  assert.equal(f.after, 1000);
+
+  const base = [{ owner: 'A', title: 'Director', value: 60e3 }, { owner: 'B', title: 'Director', value: 60e3 }];
+  assert.equal(scoreInsiders(base).score, 3);
+  assert.equal(scoreInsiders([...base, { owner: 'C', title: 'Chief Financial Officer', value: 80e3 }]).score, 4);
+  const first = scoreInsiders([base[0], { owner: 'B', title: 'Director', value: 60e3, shares: 1000, after: 1000 }]);
+  assert.equal(first.score, 4);
+  assert.match(first.reasons.join(), /primele acțiuni/);
+  assert.equal(scoreInsiders([base[0], { owner: 'B', title: 'Director', value: 60e3, shares: 500, after: 1500 }]).score, 4);
+  assert.equal(scoreInsiders([base[0], { owner: 'Fund', title: '', value: 5e6, tenPctOnly: true }]).score, 0);
+  assert.equal(scoreInsiders([{ owner: 'C', title: 'CFO', value: 80e3, shares: 10, after: 10 }]).score, 0, 'a lone small buy still means little');
+});

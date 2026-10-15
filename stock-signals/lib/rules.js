@@ -61,7 +61,11 @@ export function scoreText(text, items = []) {
 }
 
 // Open-market buying by insiders with their own money, summed over the last 30 days.
-export function scoreInsiders(buys) {
+// Studies of Form 4 buys (e.g. arXiv 2602.06198) find the strongest follow-through when
+// several insiders buy, when the CFO buys and when it is an insider's first position or a
+// big addition; buys by 10% holders who don't run the company show no edge, so they're dropped.
+export function scoreInsiders(all) {
+  const buys = all.filter((b) => !b.tenPctOnly);
   const owners = new Set(buys.map((b) => b.owner));
   const total = buys.reduce((s, b) => s + b.value, 0);
   const boss = buys.some((b) => /chief executive|ceo|chief financial|cfo|chair/i.test(b.title) && b.value >= 250e3);
@@ -70,6 +74,14 @@ export function scoreInsiders(buys) {
   if (owners.size >= 2 && total >= 100e3) { score += 3; reasons.push(`${owners.size} directori au cumpărat acțiuni cu banii lor`); }
   if (boss) { score += 2; reasons.push('CEO/CFO a cumpărat peste 250.000 $'); }
   if (total >= 1e6) { score += 1; reasons.push('cumpărări de insideri peste 1 mil. $'); }
+  if (score > 0 || owners.size >= 2) {
+    // Only as extra weight: on its own a single small buy still means little.
+    if (buys.some((b) => /chief financial|\bcfo\b/i.test(b.title) && b.value >= 50e3)) { score += 1; reasons.push('directorul financiar (CFO) a cumpărat'); }
+    const first = buys.find((b) => b.shares > 0 && b.after > 0 && b.shares / b.after >= 0.9);
+    const bigger = buys.find((b) => b.shares > 0 && b.after > b.shares && b.shares / (b.after - b.shares) >= 0.5);
+    if (first) { score += 1; reasons.push(`${first.owner} își cumpără primele acțiuni în firmă`); }
+    else if (bigger) { score += 1; reasons.push(`${bigger.owner} și-a mărit pachetul cu peste 50%`); }
+  }
   return { score, reasons, total, owners: owners.size };
 }
 

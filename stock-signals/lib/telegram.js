@@ -42,7 +42,8 @@ export function explain(s) {
       sale ? 'A spus deschis că vrea ca firma să fie vândută sau să-și caute un cumpărător, iar un cumpărător plătește de obicei peste prețul de acum.' : null,
     ].filter(Boolean).join(' ');
   }
-  if (s.source === 'SEC Form 4') return 'Directorii firmei au cumpărat acțiuni cu banii lor. Ei știu cel mai bine cum merge firma, așa că de obicei e un semn bun.';
+  if (s.source === 'Reddit') return 'Lumea a început brusc să vorbească mult despre acțiunea asta pe forumurile de investiții. Uneori asta împinge prețul în sus câteva zile, dar e și cel mai riscant tip de semnal: intră doar cu stop-loss.';
+  if (s.source === 'SEC Form 4') return 'Directorii firmei au cumpărat acțiuni cu banii lor. Ei știu cel mai bine cum merge firma, așa că de obicei e un semn bun.' + (s.reasons?.length ? ` Pe scurt: ${s.reasons.join('; ')}.` : '');
   return `Motiv: ${s.reasons.join('; ')}.`;
 }
 

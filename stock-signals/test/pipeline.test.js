@@ -24,6 +24,7 @@ function fakeIo(news) {
       return { currency: 'USD', price: 50, bars: bars(30) };
     },
     assess: async () => ({ summary: 'Contract important.', impact: 1 }),
+    ripple: async () => [],
     alert: async (ev) => sent.push(ev),
     notify: async (m) => sent.push(m),
   };
@@ -146,4 +147,27 @@ test('skips stocks XTB does not offer and caches the answer', async () => {
   asked.length = 0;
   await runOnce({ state, config: CONFIG, feeds, io, now: now + 3600e3 });
   assert.deepEqual(asked, [], 'cached answer reused');
+});
+
+test('Reddit mention spikes become events; strong events feed the knock-on queue', async () => {
+  const state = loadState('/nonexistent/state.json');
+  let batch = [];
+  const io = fakeIo(() => rss(batch));
+  io.tickers = async () => new Map([['1', 'HYPE'], ['2', 'CALM'], ['3', 'BETA']]);
+  io.buzz = async () => [
+    { ticker: 'HYPE', name: 'Hype Corp', mentions: 120, mentions_24h_ago: 10 },
+    { ticker: 'CALM', name: 'Calm Inc', mentions: 100, mentions_24h_ago: 80 },
+    { ticker: 'SPY', name: 'SPDR S&P 500 ETF Trust', mentions: 400, mentions_24h_ago: 20 },
+  ];
+  const feeds = [{ name: 'Wire', url: 'u' }];
+  const now = Date.parse('2026-10-08T15:00:00Z');
+  await runOnce({ state, config: CONFIG, feeds, io, now });
+  batch = [['b', 'Beta wins $90 million contract with NVIDIA', 'Beta (NYSE: BETA)']];
+  const alerts = await runOnce({ state, config: CONFIG, feeds, io, now: now + 86400e3 });
+  const hype = alerts.find((a) => a.source === 'Reddit');
+  assert.equal(hype?.listing.xtb, 'HYPE.US', 'big jump with AI +1 alerts');
+  assert.ok(!alerts.some((a) => a.company === 'Calm Inc'));
+  assert.match(formatSignal(hype), /forumurile de investiții/);
+  assert.ok(state.ripple.queue.some((q) => /Beta/.test(q.title)), 'strong event queued for knock-on ideas');
+  assert.ok(!state.ripple.queue.some((q) => /Hype/.test(q.title)), 'Reddit buzz is not');
 });
