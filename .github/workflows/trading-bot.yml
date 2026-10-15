@@ -43,6 +43,8 @@ jobs:
       BOT_STATE: ${{ github.workspace }}/state/trading-state.json
       BOT_EXIT_AT: '12:05'
       MULTI_STATE: ${{ github.workspace }}/state/multi-state.json
+      BOT_RISK_PCT: '0.5'
+      BOT_MAX_DAILY_LOSS_PCT: '1.5'
       JOB: ${{ github.event.inputs.job || 'multi' }}
     steps:
       - uses: actions/checkout@v4

@@ -36,8 +36,8 @@ function fakeClient() {
   return c;
 }
 
-function makeBot(client, start) {
-  const bot = new MultiBot({ client, markets: [GBP], riskPerTrade: 50, maxDailyLoss: 150, log: () => {} });
+function makeBot(client, start, opts = {}) {
+  const bot = new MultiBot({ client, markets: [GBP], riskPerTrade: 50, maxDailyLoss: 150, log: () => {}, ...opts });
   bot.clock = start;
   bot.now = () => bot.clock;
   return bot;
@@ -122,4 +122,46 @@ test('daily loss limit stops trading and closes the bot positions', async () => 
   assert.equal(bot.risk.halted, true);
   assert.deepEqual(client.closed.map((p) => p.dealId), ['X']);
   assert.equal(bot.hasWork(), false);
+});
+
+test('sizes from a percentage of the day start equity', async () => {
+  const client = fakeClient();
+  const bot = makeBot(client, OPEN - 20 * MIN, { riskPct: 1, maxDailyLossPct: 3 });
+  await bot.start();
+  assert.equal(bot.tradeRisk(), 100); // 1% of 10000
+  assert.equal(bot.dailyLimit(), 300);
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 90, (t) => (t >= OPEN + 63 * MIN ? 125 : 110));
+  assert.equal(client.orders[0].size, 3.92); // 100 / 25.5, rounded down
+});
+
+test('skips a spread bet whose margin the account cannot cover', async () => {
+  const client = fakeClient();
+  const market = client.market;
+  client.market = async () => ({ ...(await market()), marginPct: 3.33 });
+  client.available = async () => 5; // 1.96 × 125.5 × 3.33% ≈ 8.2 needed
+  const notes = [];
+  const bot = makeBot(client, OPEN - 20 * MIN, { log: (m) => notes.push(m) });
+  await bot.start();
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 90, (t) => (t >= OPEN + 63 * MIN ? 125 : 110));
+  assert.equal(client.orders.length, 0);
+  assert.equal(bot.risk.markets.GBPUSD.done, true);
+  assert.ok(notes.some((n) => /marjă insuficientă/.test(n)));
+});
+
+test('a refusal for insufficient funds ends the day for that market', async () => {
+  const client = fakeClient();
+  client.openMarket = async () => { throw new Error('Order rejected: INSUFFICIENT_FUNDS'); };
+  const notes = [];
+  const bot = makeBot(client, OPEN - 20 * MIN, { log: (m) => notes.push(m) });
+  await bot.start();
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 90, (t) => (t >= OPEN + 63 * MIN ? 125 : 110));
+  assert.equal(bot.risk.markets.GBPUSD.done, true);
+  assert.ok(notes.some((n) => /fonduri insuficiente/.test(n)));
+});
+
+test('refuses a risk percentage above 2', () => {
+  assert.throws(() => new MultiBot({ client: fakeClient(), markets: [GBP], riskPct: 5, maxDailyLoss: 150 }), /BOT_RISK_PCT/);
 });
