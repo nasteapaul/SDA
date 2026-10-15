@@ -5,6 +5,23 @@
 import { IgClient } from '../lib/ig.js';
 
 const env = process.env;
+if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+  // Shows which Telegram bot the trading messages go to (bot name only, never the token).
+  try {
+    const api = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
+    const me = await (await fetch(`${api}/getMe`, { signal: AbortSignal.timeout(10000) })).json();
+    const text = '🤖 Test bot de trading: mesajele de trading vin pe acest bot.';
+    const sent = await (await fetch(`${api}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text }),
+      signal: AbortSignal.timeout(10000),
+    })).json();
+    console.log(`Telegram: @${me.result?.username ?? '?'} (secret ${env.TELEGRAM_SOURCE ?? '?'}), mesaj de test ${sent.ok ? 'trimis' : `refuzat: ${sent.description}`}`);
+  } catch (e) {
+    console.log(`Telegram: ${e.message}`);
+  }
+}
 const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
 if (env.IG_ACCOUNT_ID) {
   // Diagnostics for switching accounts: what the login offers before any switch.
