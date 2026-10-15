@@ -19,12 +19,13 @@ export class IgError extends Error {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class IgClient {
-  constructor({ apiKey, identifier, password, baseUrl = DEMO_URL, fetchImpl = globalThis.fetch, timeoutMs = 15000, wait = sleep }) {
+  constructor({ apiKey, identifier, password, accountId, baseUrl = DEMO_URL, fetchImpl = globalThis.fetch, timeoutMs = 15000, wait = sleep }) {
     if (baseUrl !== DEMO_URL) throw new Error('Only the IG demo API is allowed');
     if (!apiKey || !identifier || !password) throw new Error('IG_API_KEY, IG_USERNAME and IG_PASSWORD are required');
     this.apiKey = apiKey;
     this.identifier = identifier;
     this.password = password;
+    this.wantedAccount = accountId || null;
     this.baseUrl = baseUrl;
     this.fetch = fetchImpl;
     this.timeoutMs = timeoutMs;
@@ -90,7 +91,18 @@ export class IgClient {
     this.tokens = { cst: headers.get('CST'), xst: headers.get('X-SECURITY-TOKEN') };
     if (!this.tokens.cst || !this.tokens.xst) throw new Error('IG login returned no session tokens');
     this.accountId = data.currentAccountId;
+    // A login may hold several accounts (spread bet, CFD); switch when another one is asked for.
+    if (this.wantedAccount && this.wantedAccount !== this.accountId) {
+      await this.request('PUT', '/session', { body: { accountId: this.wantedAccount, defaultAccount: false } });
+      this.accountId = this.wantedAccount;
+      data.currentAccountId = this.wantedAccount;
+    }
     return data;
+  }
+
+  async accounts() {
+    const { data } = await this.request('GET', '/accounts');
+    return (data.accounts ?? []).map((a) => ({ id: a.accountId, name: a.accountName, type: a.accountType, currency: a.currency, balance: a.balance }));
   }
 
   async market(epic) {

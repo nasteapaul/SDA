@@ -5,21 +5,26 @@
 import { IgClient } from '../lib/ig.js';
 
 const env = process.env;
-const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
+const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
 try {
   const session = await client.login();
   console.log(`✓ Conectat la IG DEMO, cont ${session.currentAccountId} (${session.currencyIsoCode ?? '?'}).`);
   console.log(`✓ Sold + profit deschis: ${await client.equity()}`);
+  for (const a of await client.accounts()) {
+    console.log(`  cont ${a.id}: ${a.name}, ${a.type}, ${a.currency}, sold ${a.balance?.balance}, disponibil ${a.balance?.available}`);
+  }
   const terms = process.argv.length > 2 ? process.argv.slice(2) : ['Germany 40', 'EUR/USD', 'GBP/USD', 'Australia 200'];
   for (const term of terms) {
     console.log(`\nPiețe găsite pentru "${term}":`);
     for (const m of (await client.searchMarkets(term)).slice(0, 10)) {
       console.log(`  ${m.epic.padEnd(22)} ${m.name} (${m.type}, ${m.expiry}, ${m.status})`);
-      if (m.expiry !== 'DFB') continue;
+      if (m.expiry !== 'DFB' && m.expiry !== '-') continue;
       const { data } = await client.request('GET', `/markets/${encodeURIComponent(m.epic)}`, { version: 3 });
       const s = data.snapshot ?? {};
       const r = data.dealingRules ?? {};
-      console.log(`    preț ${s.bid}/${s.offer}, scalare ${s.scalingFactor}, zecimale ${s.decimalPlacesFactor}, mărime minimă ${r.minDealSize?.value}, stop minim ${r.minNormalStopOrLimitDistance?.value} ${r.minNormalStopOrLimitDistance?.unit}, ore ${JSON.stringify(data.instrument?.openingHours?.marketTimes ?? null)}`);
+      const i = data.instrument ?? {};
+      console.log(`    preț ${s.bid}/${s.offer}, scalare ${s.scalingFactor}, zecimale ${s.decimalPlacesFactor}, mărime minimă ${r.minDealSize?.value}, stop minim ${r.minNormalStopOrLimitDistance?.value} ${r.minNormalStopOrLimitDistance?.unit}, ore ${JSON.stringify(i.openingHours?.marketTimes ?? null)}`);
+      console.log(`    contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}, monede ${JSON.stringify((i.currencies ?? []).map((c) => c.code))}`);
     }
   }
   const epic = env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP';

@@ -40,6 +40,16 @@ test('login stores tokens and sends them afterwards', async () => {
   assert.equal(f.calls[0].headers.Version, '2');
 });
 
+test('login switches to the requested account', async () => {
+  const f = fakeFetch({ 'POST /session': login, 'PUT /session': { body: {} } });
+  const c = new IgClient({ ...creds, accountId: 'B2', fetchImpl: f });
+  const data = await c.login();
+  assert.equal(c.accountId, 'B2');
+  assert.equal(data.currentAccountId, 'B2');
+  assert.equal(f.calls[1].method, 'PUT');
+  assert.deepEqual(f.calls[1].body, { accountId: 'B2', defaultAccount: false });
+});
+
 test('openMarket requires a stop and checks the confirmation', async () => {
   const f = fakeFetch({
     'POST /positions/otc': { body: { dealReference: 'R1' } },

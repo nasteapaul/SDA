@@ -21,6 +21,10 @@ on:
         default: multi
         type: choice
         options: [multi, run, flatten, check]
+      account:
+        description: 'check only: IG account id to inspect (e.g. the demo CFD account)'
+        required: false
+        default: ''
 
 permissions:
   contents: write   # daily-loss state on the trading-bot-data branch
@@ -76,6 +80,8 @@ jobs:
 
       - name: Check IG connection
         if: env.HAS_IG == 'true' && env.JOB == 'check'
+        env:
+          IG_ACCOUNT_ID: ${{ github.event.inputs.account }}
         run: node trading-bot/bin/check.js
 
       - name: Close open positions
