@@ -122,3 +122,28 @@ test('ripple: queued headlines become alerts for a US-listed company the AI name
   await runOnce({ state, config: CONFIG, feeds, io, now: Date.parse('2026-10-15T20:02:00Z') });
   assert.equal(seen, null);
 });
+
+test('skips stocks XTB does not offer and caches the answer', async () => {
+  const state = loadState('/nonexistent/state.json');
+  let batch = [];
+  const io = fakeIo(() => rss(batch));
+  const asked = [];
+  io.xtb = async (l) => { asked.push(l.xtb); if (l.xtb === 'DOWN.US') throw new Error('HTTP 503'); return l.xtb !== 'SRTA.US'; };
+  const feeds = [{ name: 'Wire', url: 'u' }];
+  const now = Date.parse('2026-10-08T15:00:00Z');
+  await runOnce({ state, config: CONFIG, feeds, io, now });
+  batch = [
+    ['a', 'Strata wins $90 million contract with NVIDIA', 'Strata (NASDAQ: SRTA)'],
+    ['b', 'Beta wins $90 million contract with NVIDIA', 'Beta (NYSE: BETA)'],
+    ['c', 'Down wins $90 million contract with NVIDIA', 'Down (NYSE: DOWN)'],
+  ];
+  const alerts = await runOnce({ state, config: CONFIG, feeds, io, now: now + 1800e3 });
+  assert.deepEqual(alerts.map((a) => a.listing.xtb).sort(), ['BETA.US', 'DOWN.US']);
+  assert.equal(alerts.find((a) => a.listing.xtb === 'DOWN.US').xtbUnchecked, true);
+  assert.match(formatSignal(alerts.find((a) => a.listing.xtb === 'DOWN.US')), /n-am putut verifica/);
+  assert.deepEqual(state.xtb['SRTA.US'].ok, false);
+  batch = [['d', 'Strata wins another $90 million contract with NVIDIA', 'Strata (NASDAQ: SRTA)']];
+  asked.length = 0;
+  await runOnce({ state, config: CONFIG, feeds, io, now: now + 3600e3 });
+  assert.deepEqual(asked, [], 'cached answer reused');
+});

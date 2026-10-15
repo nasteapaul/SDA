@@ -137,3 +137,13 @@ test('ripple ideas are parsed defensively', async () => {
   assert.deepEqual(out, [{ item: 1, ticker: 'ABC', company: 'Abc', why: 'Furnizor.', confidence: 3 }]);
   assert.deepEqual(parseRipple('nimic', 3), []);
 });
+
+test('XTB check: a stock page means listed, a redirect to the stock list means not', async () => {
+  const { xtbPage, onXtb } = await import('../lib/xtb.js');
+  assert.equal(xtbPage({ xtb: 'MPW.US' }), 'https://www.xtb.com/int/stocks/mpw-us');
+  assert.equal(xtbPage({ xtb: 'BRK.B.US' }), 'https://www.xtb.com/int/stocks/brk-b-us');
+  const fake = (url) => async () => ({ ok: true, url });
+  assert.equal(await onXtb({ xtb: 'MPW.US' }, { fetchImpl: fake('https://www.xtb.com/int/stocks/medical-properties') }), true);
+  assert.equal(await onXtb({ xtb: 'SRTA.US' }, { fetchImpl: fake('https://www.xtb.com/int/stocks') }), false);
+  await assert.rejects(onXtb({ xtb: 'X.US' }, { fetchImpl: async () => ({ ok: false, status: 403 }) }));
+});

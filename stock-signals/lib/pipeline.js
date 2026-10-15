@@ -5,6 +5,7 @@ import { scoreText, scoreInsiders, score13D } from './rules.js';
 import { extractListings, usListing } from './tickers.js';
 import { chart, summarize } from './market.js';
 import { assess, ripple } from './ai.js';
+import { onXtb } from './xtb.js';
 import { record, prune, forwardReturns, pending } from './journal.js';
 
 const DAY = 86400e3;
@@ -68,6 +69,10 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     } catch {
       ev.market = null; // no price context; still worth sending if the event is strong
     }
+    if (!(await listedOnXtb(state, ev, io, now))) {
+      log(`Sar peste ${ev.listing.xtb}: nu se găsește pe XTB.`);
+      continue;
+    }
     // GitHub Models' free tier allows about 150 calls a day; the bot now runs all day.
     const day = new Date(now).toISOString().slice(0, 10);
     if (state.ai?.day !== day) state.ai = { day, n: 0 };
@@ -91,6 +96,25 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
   }
   log(`${events.length} evenimente noi, ${candidates.length} candidați, ${alerts.length} alerte.`);
   return alerts;
+}
+
+// Paul can only act on stocks XTB offers. Answers are cached (a week if listed, a day if not);
+// when xtb.com can't be reached the alert still goes out, marked as unchecked.
+async function listedOnXtb(state, ev, io, now) {
+  if (!io.xtb) return true;
+  state.xtb ??= {};
+  const key = ev.listing.xtb;
+  const c = state.xtb[key];
+  if (c && now - c.at < (c.ok ? 7 : 1) * DAY) return c.ok;
+  try {
+    const ok = await io.xtb(ev.listing);
+    state.xtb[key] = { ok, at: now };
+    return ok;
+  } catch (e) {
+    io.log?.(`XTB ${key}: ${e.message}`);
+    ev.xtbUnchecked = true;
+    return true;
+  }
 }
 
 const isNew = (state, id, now = Date.now()) => {
@@ -286,6 +310,7 @@ export function makeIo({ secAgent, githubToken, telegram, dryRun, log = console.
     chart: (sym, range) => chart(sym, { range }),
     assess: (ev) => assess(ev, { token: githubToken }),
     ripple: (items) => ripple(items, { token: githubToken }),
+    xtb: (listing) => onXtb(listing),
     alert: telegram.alert,
     notify: telegram.notify,
     dryRun,

@@ -49,7 +49,7 @@ export function explain(s) {
 export function formatSignal(s) {
   const strength = s.score >= 8 ? 'semnal puternic' : 'semnal mediu';
   const lines = [
-    `${s.score >= 8 ? '🟢🟢' : '🟢'} <b>${esc(s.company)}</b> · în XTB: <code>${esc(s.listing.xtb)}</code> · ${strength}`,
+    `${s.score >= 8 ? '🟢🟢' : '🟢'} <b>${esc(s.company)}</b> · în XTB: <code>${esc(s.listing.xtb)}</code>${s.xtbUnchecked ? ' (n-am putut verifica dacă e în XTB)' : ''} · ${strength}`,
     esc(s.title),
     '',
     `<b>De ce merită:</b> ${esc(explain(s))}`,
