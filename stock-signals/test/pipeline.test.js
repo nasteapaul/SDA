@@ -104,3 +104,21 @@ test('a new 13D by an activist becomes an alert for the target company', async (
   // Seen once: the next check does not alert again.
   assert.equal((await runOnce({ state, config: CONFIG, feeds: [], io })).length, 0);
 });
+
+test('ripple: queued headlines become alerts for a US-listed company the AI names', async () => {
+  const state = { ...loadState('/nonexistent'), warm: true };
+  const io = fakeIo(() => rss([['h1', 'Big Pharma said to weigh bid for rival biotech', 'Talks are early, sources say']]));
+  io.tickers = async () => new Map([['1', 'BIOX']]);
+  let seen;
+  io.ripple = async (items) => { seen = items; return [{ item: 0, ticker: 'BIOX', company: 'BioX', why: 'Ar putea fi cumpărată.', confidence: 3 }, { item: 0, ticker: 'FAKE', company: 'Nope', why: 'x', confidence: 3 }]; };
+  const feeds = [{ name: 'Rumours', url: 'u', kind: 'ripple' }];
+  const alerts = await runOnce({ state, config: CONFIG, feeds, io, now: Date.parse('2026-10-15T20:00:00Z') });
+  assert.equal(seen.length, 1);
+  assert.deepEqual(alerts.map((a) => a.listing.xtb), ['BIOX.US'], 'only tickers that exist');
+  assert.match(formatSignal(alerts[0]), /De ce merită:<\/b> Ar putea fi cumpărată\./);
+  // The next batch waits for rippleEveryMin.
+  io.news = async () => rss([['h2', 'Another headline', '']]);
+  seen = null;
+  await runOnce({ state, config: CONFIG, feeds, io, now: Date.parse('2026-10-15T20:02:00Z') });
+  assert.equal(seen, null);
+});

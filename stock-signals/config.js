@@ -6,6 +6,8 @@ export const CONFIG = {
   minPriceUsd: 1,         // penny stocks are where pump-and-dumps live
   maxAiCalls: 10,         // per run; GitHub Models' free tier is rate limited
   maxAiPerDay: 120,       // the free tier allows about 150 calls a day
+  rippleEveryMin: 45,     // how often the AI reads the queued headlines for knock-on effects
+  rippleBatch: 40,        // headlines per AI call
   maxSecDocs: 30,         // 8-K documents fetched per run
   maxForm4: 150,          // Form 4 files fetched per run
   secPages: 2,            // pages of 100 filings read from each SEC feed per run

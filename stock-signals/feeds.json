@@ -1,8 +1,77 @@
 {
-  "_comment": "Press-release feeds (free RSS). A feed that keeps failing is reported once on Telegram; remove or replace it here.",
+  "_comment": "Press-release feeds (free RSS). kind \"ripple\": general, specialist and rumour headlines that the AI reads in batches for companies that gain from them. A feed that keeps failing is reported once on Telegram; remove or replace it here.",
   "feeds": [
-    { "name": "GlobeNewswire", "url": "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies" },
-    { "name": "PR Newswire", "url": "https://www.prnewswire.com/rss/news-releases-list.rss" },
-    { "name": "Business Wire", "url": "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ==" }
+    {
+      "name": "GlobeNewswire",
+      "url": "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies"
+    },
+    {
+      "name": "PR Newswire",
+      "url": "https://www.prnewswire.com/rss/news-releases-list.rss"
+    },
+    {
+      "name": "Business Wire",
+      "url": "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ=="
+    },
+    {
+      "name": "Zvonuri de preluare",
+      "kind": "ripple",
+      "url": "https://news.google.com/rss/search?q=%22exploring+a+sale%22+OR+%22explores+sale%22+OR+%22takeover+interest%22+OR+%22weighing+a+sale%22+OR+%22in+talks+to+acquire%22+OR+%22approached%22+acquisition+sources+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+    },
+    {
+      "name": "Activiști și oferte",
+      "kind": "ripple",
+      "url": "https://news.google.com/rss/search?q=activist+investor+stake+OR+%22unsolicited+offer%22+OR+%22buyout+offer%22+OR+%22go+private%22+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+    },
+    {
+      "name": "Lanț de aprovizionare",
+      "kind": "ripple",
+      "url": "https://news.google.com/rss/search?q=shortage+OR+%22export+ban%22+OR+tariff+OR+sanctions+OR+%22supply+deal%22+OR+%22selects+supplier%22+stocks+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+    },
+    {
+      "name": "CNBC",
+      "kind": "ripple",
+      "url": "https://www.cnbc.com/id/10001147/device/rss/rss.html"
+    },
+    {
+      "name": "MarketWatch",
+      "kind": "ripple",
+      "url": "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"
+    },
+    {
+      "name": "Yahoo Finance",
+      "kind": "ripple",
+      "url": "https://finance.yahoo.com/news/rssindex"
+    },
+    {
+      "name": "Fierce Biotech",
+      "kind": "ripple",
+      "url": "https://www.fiercebiotech.com/rss/xml"
+    },
+    {
+      "name": "Endpoints News",
+      "kind": "ripple",
+      "url": "https://endpts.com/feed/"
+    },
+    {
+      "name": "TechCrunch",
+      "kind": "ripple",
+      "url": "https://techcrunch.com/feed/"
+    },
+    {
+      "name": "Electrek",
+      "kind": "ripple",
+      "url": "https://electrek.co/feed/"
+    },
+    {
+      "name": "Mining.com",
+      "kind": "ripple",
+      "url": "https://www.mining.com/feed/"
+    },
+    {
+      "name": "OilPrice",
+      "kind": "ripple",
+      "url": "https://oilprice.com/rss/main"
+    }
   ]
 }

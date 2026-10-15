@@ -130,3 +130,10 @@ test('trade plan: stop 2 ATR below, target 4 ATR above, warns after a big jump',
   assert.match(html, /Vinde când ajunge la: <b>108\.00<\/b> \(\+8\.0%\)/);
   assert.match(html, /Stop-loss: <b>96\.00<\/b> \(-4\.0%\)/);
 });
+
+test('ripple ideas are parsed defensively', async () => {
+  const { parseRipple } = await import('../lib/ai.js');
+  const out = parseRipple('```json\n{"idei":[{"stire":2,"ticker":"abc","companie":"Abc","de_ce":"Furnizor.","incredere":5},{"stire":9,"ticker":"X","de_ce":"y"}]}\n```', 3);
+  assert.deepEqual(out, [{ item: 1, ticker: 'ABC', company: 'Abc', why: 'Furnizor.', confidence: 3 }]);
+  assert.deepEqual(parseRipple('nimic', 3), []);
+});
