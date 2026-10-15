@@ -21,12 +21,21 @@ on:
         default: multi
         type: choice
         options: [multi, run, flatten, check]
+      account:
+        description: 'IG account id to use instead of the default one (e.g. the demo CFD account)'
+        required: false
+        default: ''
+      epics:
+        description: 'check only: exact epics to print, comma separated'
+        required: false
+        default: ''
 
 permissions:
   contents: write   # daily-loss state on the trading-bot-data branch
 
 concurrency:
-  group: trading-bot
+  # Runs on different IG accounts may overlap; each account keeps its own state file.
+  group: trading-bot-${{ github.event.inputs.account || 'default' }}
   cancel-in-progress: false
 
 jobs:
@@ -46,6 +55,7 @@ jobs:
       BOT_RISK_PCT: '0.5'
       BOT_MAX_DAILY_LOSS_PCT: '1.5'
       JOB: ${{ github.event.inputs.job || 'multi' }}
+      IG_ACCOUNT_ID: ${{ github.event.inputs.account }}
     steps:
       - uses: actions/checkout@v4
         if: env.HAS_IG == 'true'
@@ -68,7 +78,8 @@ jobs:
 
       - name: Run multi-market bot
         if: env.HAS_IG == 'true' && env.JOB == 'multi'
-        run: BOT_STATE="$MULTI_STATE" node trading-bot/bin/multibot.js
+        # One state file per account: each has its own day start equity and trades.
+        run: BOT_STATE="${MULTI_STATE%.json}${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/multibot.js
 
       - name: Run DAX bot
         if: env.HAS_IG == 'true' && env.JOB == 'run'
@@ -76,6 +87,8 @@ jobs:
 
       - name: Check IG connection
         if: env.HAS_IG == 'true' && env.JOB == 'check'
+        env:
+          CHECK_EPICS: ${{ github.event.inputs.epics }}
         run: node trading-bot/bin/check.js
 
       - name: Close open positions
@@ -90,4 +103,6 @@ jobs:
           [ -n "$(ls ./*.json 2>/dev/null)" ] || exit 0
           git add -A .
           git -c user.name=trading-bot -c user.email=actions@users.noreply.github.com commit -qm "state" || exit 0
+          # Another account's run may have saved its own file meanwhile.
+          git -c user.name=trading-bot -c user.email=actions@users.noreply.github.com pull -q --rebase origin trading-bot-data 2>/dev/null || true
           git push -q origin HEAD:refs/heads/trading-bot-data

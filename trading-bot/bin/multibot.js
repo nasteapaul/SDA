@@ -13,7 +13,7 @@ import { telegramNotifier } from '../lib/notify.js';
 
 const env = process.env;
 const num = (k, d) => (env[k] === undefined || env[k] === '' ? d : Number(env[k]));
-const notify = telegramNotifier({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID, label: 'Bot multi-piață demo' });
+const notify = telegramNotifier({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID, label: `Bot multi-piață demo${env.IG_ACCOUNT_ID ? ` ${env.IG_ACCOUNT_ID}` : ''}` });
 const pendingNotes = [];
 const log = (m) => {
   console.log(`${new Date().toISOString()} ${m}`);
@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const keys = env.BOT_MARKETS ? env.BOT_MARKETS.split(',').map((s) => s.trim()) : null;
 const markets = liveMarkets().filter((m) => !keys || keys.includes(m.key));
-const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
+const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
 const bot = new MultiBot({
   client,
   markets,

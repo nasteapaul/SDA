@@ -19,12 +19,13 @@ export class IgError extends Error {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class IgClient {
-  constructor({ apiKey, identifier, password, baseUrl = DEMO_URL, fetchImpl = globalThis.fetch, timeoutMs = 15000, wait = sleep }) {
+  constructor({ apiKey, identifier, password, accountId, baseUrl = DEMO_URL, fetchImpl = globalThis.fetch, timeoutMs = 15000, wait = sleep }) {
     if (baseUrl !== DEMO_URL) throw new Error('Only the IG demo API is allowed');
     if (!apiKey || !identifier || !password) throw new Error('IG_API_KEY, IG_USERNAME and IG_PASSWORD are required');
     this.apiKey = apiKey;
     this.identifier = identifier;
     this.password = password;
+    this.wantedAccount = accountId || null;
     this.baseUrl = baseUrl;
     this.fetch = fetchImpl;
     this.timeoutMs = timeoutMs;
@@ -90,24 +91,49 @@ export class IgClient {
     this.tokens = { cst: headers.get('CST'), xst: headers.get('X-SECURITY-TOKEN') };
     if (!this.tokens.cst || !this.tokens.xst) throw new Error('IG login returned no session tokens');
     this.accountId = data.currentAccountId;
+    const typeOf = (id) => data.accounts?.find((a) => a.accountId === id)?.accountType;
+    this.accountType = typeOf(this.accountId);
+    // A login may hold several accounts (spread bet, CFD); switch when another one is asked for.
+    if (this.wantedAccount && this.wantedAccount !== this.accountId) {
+      const { headers: h } = await this.request('PUT', '/session', { body: { accountId: this.wantedAccount, defaultAccount: false } });
+      // IG issues a new security token for the switched account; the old one is rejected.
+      this.tokens = { cst: h.get('CST') ?? this.tokens.cst, xst: h.get('X-SECURITY-TOKEN') ?? this.tokens.xst };
+      this.accountId = this.wantedAccount;
+      this.accountType = typeOf(this.wantedAccount);
+      data.currentAccountId = this.wantedAccount;
+    }
     return data;
+  }
+
+  async accounts() {
+    const { data } = await this.request('GET', '/accounts');
+    return (data.accounts ?? []).map((a) => ({ id: a.accountId, name: a.accountName, type: a.accountType, currency: a.currency, balance: a.balance }));
   }
 
   async market(epic) {
     const { data } = await this.request('GET', `/markets/${encodeURIComponent(epic)}`, { version: 3 });
+    const i = data.instrument ?? {};
+    const ccy = i.currencies?.find((c) => c.isDefault) ?? i.currencies?.[0];
     return {
       bid: data.snapshot?.bid,
       offer: data.snapshot?.offer,
       status: data.snapshot?.marketStatus,
-      currency: data.instrument?.currencies?.find((c) => c.isDefault)?.code ?? data.instrument?.currencies?.[0]?.code,
+      currency: ccy?.code,
+      // CFD only: price × scaling = points (10000 on FX, where the price is e.g. 1.1221), the
+      // value of one point per contract in the market currency, and that currency's value in
+      // the account currency (IG's baseExchangeRate is account → market currency).
+      scaling: Number(data.snapshot?.scalingFactor) || 1,
+      pointValue: Number(i.valueOfOnePip) || null,
+      contractSize: Number(i.contractSize) || 1,
+      toAccount: ccy?.baseExchangeRate > 0 ? 1 / ccy.baseExchangeRate : 1,
       minSize: data.dealingRules?.minDealSize?.value ?? 0,
       minStop: data.dealingRules?.minNormalStopOrLimitDistance?.value ?? 0,
       minStopUnit: data.dealingRules?.minNormalStopOrLimitDistance?.unit ?? 'POINTS',
       decimals: decimalsOf(data.snapshot?.decimalPlacesFactor),
       // Spread-bet accounts must send the market's expiry (e.g. DFB); '-' is CFD only.
-      expiry: data.instrument?.expiry ?? '-',
+      expiry: i.expiry ?? '-',
       // Deposit IG holds while a position is open, as % of its value (null if quoted otherwise).
-      marginPct: data.instrument?.marginFactorUnit === 'PERCENTAGE' ? Number(data.instrument.marginFactor) : null,
+      marginPct: i.marginFactorUnit === 'PERCENTAGE' ? Number(i.marginFactor) : null,
     };
   }
 

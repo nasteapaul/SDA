@@ -5,23 +5,52 @@
 import { IgClient } from '../lib/ig.js';
 
 const env = process.env;
-const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
+const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
+if (env.IG_ACCOUNT_ID) {
+  // Diagnostics for switching accounts: what the login offers before any switch.
+  const probe = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
+  try {
+    const d = await probe.login();
+    console.log(`Login: cont curent ${d.currentAccountId}, conturi ${JSON.stringify((d.accounts ?? []).map((a) => [a.accountId, a.accountType, a.preferred]))}`);
+  } catch (e) {
+    console.log(`Login de probă: ${e.message}`);
+  }
+}
 try {
   const session = await client.login();
   console.log(`✓ Conectat la IG DEMO, cont ${session.currentAccountId} (${session.currencyIsoCode ?? '?'}).`);
   console.log(`✓ Sold + profit deschis: ${await client.equity()}`);
-  const terms = process.argv.length > 2 ? process.argv.slice(2) : ['Germany 40', 'EUR/USD', 'GBP/USD', 'Australia 200'];
+  for (const a of await client.accounts()) {
+    console.log(`  cont ${a.id}: ${a.name}, ${a.type}, ${a.currency}, sold ${a.balance?.balance}, disponibil ${a.balance?.available}`);
+  }
+  const terms = env.CHECK_EPICS ? [] : process.argv.length > 2 ? process.argv.slice(2) : ['Germany 40', 'EUR/USD', 'GBP/USD', 'Australia 200'];
   for (const term of terms) {
     console.log(`\nPiețe găsite pentru "${term}":`);
     for (const m of (await client.searchMarkets(term)).slice(0, 10)) {
       console.log(`  ${m.epic.padEnd(22)} ${m.name} (${m.type}, ${m.expiry}, ${m.status})`);
-      if (m.expiry !== 'DFB') continue;
+      if (m.expiry !== 'DFB' && m.expiry !== '-') continue;
       const { data } = await client.request('GET', `/markets/${encodeURIComponent(m.epic)}`, { version: 3 });
       const s = data.snapshot ?? {};
       const r = data.dealingRules ?? {};
-      console.log(`    preț ${s.bid}/${s.offer}, scalare ${s.scalingFactor}, zecimale ${s.decimalPlacesFactor}, mărime minimă ${r.minDealSize?.value}, stop minim ${r.minNormalStopOrLimitDistance?.value} ${r.minNormalStopOrLimitDistance?.unit}, ore ${JSON.stringify(data.instrument?.openingHours?.marketTimes ?? null)}`);
+      const i = data.instrument ?? {};
+      console.log(`    preț ${s.bid}/${s.offer}, scalare ${s.scalingFactor}, zecimale ${s.decimalPlacesFactor}, mărime minimă ${r.minDealSize?.value}, stop minim ${r.minNormalStopOrLimitDistance?.value} ${r.minNormalStopOrLimitDistance?.unit}, ore ${JSON.stringify(i.openingHours?.marketTimes ?? null)}`);
+      console.log(`    contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}, monede ${JSON.stringify((i.currencies ?? []).map((c) => c.code))}`);
     }
   }
+  // Exact epics (comma separated): raw instrument data, without the market search.
+  for (const e of (env.CHECK_EPICS ?? '').split(',').map((x) => x.trim()).filter(Boolean)) {
+    const data = await client.request('GET', `/markets/${encodeURIComponent(e)}`, { version: 3 }).then((r) => r.data, (err) => {
+      console.log(`\n${e}: ${err.message}`);
+      return null;
+    });
+    if (!data) continue;
+    const i = data.instrument ?? {};
+    console.log(`\n${e}: ${i.name}, tip ${i.type}, expiry ${i.expiry}, preț ${data.snapshot?.bid}/${data.snapshot?.offer}, scalare ${data.snapshot?.scalingFactor}`);
+    console.log(`  contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}`);
+    console.log(`  monede ${JSON.stringify(i.currencies)}`);
+    console.log(`  reguli ${JSON.stringify({ min: data.dealingRules?.minDealSize, stop: data.dealingRules?.minNormalStopOrLimitDistance })}`);
+  }
+  if (env.CHECK_EPICS) process.exit(0);
   const epic = env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP';
   const m = await client.market(epic);
   console.log(`\nPiața din .env, ${epic}:`);

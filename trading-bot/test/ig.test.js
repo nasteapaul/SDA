@@ -40,6 +40,22 @@ test('login stores tokens and sends them afterwards', async () => {
   assert.equal(f.calls[0].headers.Version, '2');
 });
 
+test('login switches to the requested account', async () => {
+  const f = fakeFetch({
+    'POST /session': login,
+    'PUT /session': { headers: { 'X-SECURITY-TOKEN': 'x2' }, body: {} },
+    'GET /accounts': { body: { accounts: [{ accountId: 'B2', balance: { balance: 1, profitLoss: 0 } }] } },
+  });
+  const c = new IgClient({ ...creds, accountId: 'B2', fetchImpl: f });
+  const data = await c.login();
+  await c.equity();
+  assert.equal(f.calls[2].headers['X-SECURITY-TOKEN'], 'x2');
+  assert.equal(c.accountId, 'B2');
+  assert.equal(data.currentAccountId, 'B2');
+  assert.equal(f.calls[1].method, 'PUT');
+  assert.deepEqual(f.calls[1].body, { accountId: 'B2', defaultAccount: false });
+});
+
 test('openMarket requires a stop and checks the confirmation', async () => {
   const f = fakeFetch({
     'POST /positions/otc': { body: { dealReference: 'R1' } },
@@ -115,4 +131,20 @@ test('candles skip bars without prices and accept IG time formats', async () => 
   const c = new IgClient({ ...creds, fetchImpl: f });
   const out = await c.candles('E', 'MINUTE_5', 3);
   assert.deepEqual(out.map((x) => x.time), [Date.parse('2026-10-07T09:00:00Z'), Date.parse('2026-10-07T09:10:00Z')]);
+});
+
+test('market reads CFD scaling, point value and the rate to the account currency', async () => {
+  const f = fakeFetch({
+    'POST /session': login,
+    'GET /markets/CS.D.EURUSD.MINI.IP': { body: {
+      snapshot: { bid: 1.1221, offer: 1.12216, marketStatus: 'TRADEABLE', scalingFactor: 10000, decimalPlacesFactor: 5 },
+      instrument: { expiry: '-', contractSize: '10000', valueOfOnePip: '1.00', marginFactor: 3.33, marginFactorUnit: 'PERCENTAGE',
+        currencies: [{ code: 'USD', baseExchangeRate: 1.25, isDefault: false }] },
+      dealingRules: { minDealSize: { value: 0.1 }, minNormalStopOrLimitDistance: { unit: 'POINTS', value: 2 } },
+    } },
+  });
+  const c = new IgClient({ ...creds, fetchImpl: f });
+  await c.login();
+  const m = await c.market('CS.D.EURUSD.MINI.IP');
+  assert.deepEqual([m.currency, m.scaling, m.pointValue, m.contractSize, m.toAccount, m.marginPct], ['USD', 10000, 1, 10000, 0.8, 3.33]);
 });
