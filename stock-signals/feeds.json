@@ -41,7 +41,7 @@
     {
       "name": "Yahoo Finance",
       "kind": "ripple",
-      "url": "https://finance.yahoo.com/news/rssindex"
+      "url": "https://news.google.com/rss/search?q=site%3Afinance.yahoo.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
     },
     {
       "name": "Fierce Biotech",
@@ -51,7 +51,7 @@
     {
       "name": "Endpoints News",
       "kind": "ripple",
-      "url": "https://endpts.com/feed/"
+      "url": "https://news.google.com/rss/search?q=site%3Aendpts.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
     },
     {
       "name": "TechCrunch",
@@ -66,7 +66,7 @@
     {
       "name": "Mining.com",
       "kind": "ripple",
-      "url": "https://www.mining.com/feed/"
+      "url": "https://news.google.com/rss/search?q=site%3Amining.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
     },
     {
       "name": "OilPrice",
