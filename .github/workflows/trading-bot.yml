@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'multi = multi-market bot, run / flatten = old DAX bot, check = test the IG connection'
+        description: 'multi = multi-market bot, run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
         default: multi
         type: choice
         options: [multi, run, flatten, check]
@@ -51,6 +51,7 @@ jobs:
       # Its own Telegram bot when TRADING_TELEGRAM_BOT_TOKEN is set; otherwise the signals bot.
       TELEGRAM_BOT_TOKEN: ${{ secrets.TRADING_TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_SOURCE: ${{ secrets.TRADING_TELEGRAM_BOT_TOKEN != '' && 'TRADING_TELEGRAM_BOT_TOKEN' || 'TELEGRAM_BOT_TOKEN' }}
       BOT_STATE: ${{ github.workspace }}/state/trading-state.json
       BOT_EXIT_AT: '12:05'
       MULTI_STATE: ${{ github.workspace }}/state/multi-state.json

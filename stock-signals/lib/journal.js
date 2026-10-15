@@ -41,6 +41,7 @@ export function record(state, s, now) {
     benchmark: benchmarkFor(s.listing),
     score: s.score,
     title: s.title.slice(0, 200),
+    plan: s.market?.plan ? { price: s.market.price, buyUpTo: s.market.plan.buyUpTo, stop: s.market.plan.stop, target: s.market.plan.target } : undefined,
     returns: {},
   });
 }
