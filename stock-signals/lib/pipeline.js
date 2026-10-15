@@ -1,7 +1,7 @@
 import { get, sleep } from './http.js';
 import { parseFeed, stripTags } from './feed.js';
 import { currentFeedUrl, parseCurrentEntry, folderUrl, pickDocument, parseForm4, tickerMap, SEC } from './sec.js';
-import { scoreText, scoreInsiders } from './rules.js';
+import { scoreText, scoreInsiders, score13D } from './rules.js';
 import { extractListings, usListing } from './tickers.js';
 import { chart, summarize } from './market.js';
 import { assess } from './ai.js';
@@ -18,6 +18,7 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
   const sources = [
     ['SEC 8-K', () => secEvents(state, config, io, events)],
     ['SEC Form 4', () => insiderEvents(state, config, io, events, now)],
+    ['SEC 13D', () => stakeEvents(state, config, io, events)],
     ...feeds.map((f) => [f.name, () => newsEvents(state, f, io, events)]),
   ];
   let ok = 0;
@@ -65,8 +66,12 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     } catch {
       ev.market = null; // no price context; still worth sending if the event is strong
     }
-    if (aiCalls < config.maxAiCalls) {
+    // GitHub Models' free tier allows about 150 calls a day; the bot now runs all day.
+    const day = new Date(now).toISOString().slice(0, 10);
+    if (state.ai?.day !== day) state.ai = { day, n: 0 };
+    if (aiCalls < config.maxAiCalls && state.ai.n < config.maxAiPerDay) {
       aiCalls++;
+      state.ai.n++;
       const a = await io.assess(ev);
       if (a) {
         ev.summary = a.summary;
@@ -163,6 +168,34 @@ async function insiderEvents(state, config, io, events, now) {
       title: `Insiderii au cumpărat acțiuni de ${(s.total / 1e3).toFixed(0)} mii $ în ultimele 30 de zile`,
       text: `Cumpărări pe piață ale insiderilor: ${names}. Total ${s.total} $.`,
       link: last.link, listing: usListing(last.ticker), score: s.score, reasons: s.reasons,
+    });
+  }
+}
+
+// Schedule 13D: one filing shows up twice in the feed, as "Subject" (the company) and
+// "Filed by" (the investor). Amendments are skipped: the first filing is the news.
+async function stakeEvents(state, config, io, events) {
+  const entries = parseFeed(await io.sec(currentFeedUrl('SCHEDULE 13D'))).map(parseCurrentEntry).filter(Boolean);
+  const filers = new Map(entries.filter((e) => e.role !== 'Subject').map((e) => [e.acc, e.company]));
+  const tickers = await io.tickers();
+  let docs = 0;
+  for (const f of entries) {
+    if (f.role !== 'Subject' || !/^(SCHEDULE|SC) 13D$/.test(f.form) || !isNew(state, `13d:${f.acc}`)) continue;
+    const ticker = tickers.get(f.cik);
+    if (!ticker || docs >= config.maxSecDocs) continue;
+    docs++;
+    const filer = filers.get(f.acc) ?? '';
+    let text = '';
+    try {
+      const folder = folderUrl(f.cik, f.acc);
+      const doc = pickDocument(JSON.parse(await io.sec(`${folder}/index.json`)), '13d');
+      if (doc) text = stripTags(await io.sec(`${folder}/${doc}`)).slice(0, 8000);
+    } catch { /* the filer's name alone still scores */ }
+    events.push({
+      source: 'SEC 13D', company: f.company,
+      title: `${filer || 'Un investitor'} a cumpărat peste 5% din ${f.company}`,
+      text: text || `Schedule 13D depus de ${filer} pentru ${f.company}.`,
+      link: f.link, listing: usListing(ticker), ...score13D(filer, text),
     });
   }
 }
