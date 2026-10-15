@@ -132,3 +132,19 @@ test('candles skip bars without prices and accept IG time formats', async () => 
   const out = await c.candles('E', 'MINUTE_5', 3);
   assert.deepEqual(out.map((x) => x.time), [Date.parse('2026-10-07T09:00:00Z'), Date.parse('2026-10-07T09:10:00Z')]);
 });
+
+test('market reads CFD scaling, point value and the rate to the account currency', async () => {
+  const f = fakeFetch({
+    'POST /session': login,
+    'GET /markets/CS.D.EURUSD.MINI.IP': { body: {
+      snapshot: { bid: 1.1221, offer: 1.12216, marketStatus: 'TRADEABLE', scalingFactor: 10000, decimalPlacesFactor: 5 },
+      instrument: { expiry: '-', contractSize: '10000', valueOfOnePip: '1.00', marginFactor: 3.33, marginFactorUnit: 'PERCENTAGE',
+        currencies: [{ code: 'USD', baseExchangeRate: 1.25, isDefault: false }] },
+      dealingRules: { minDealSize: { value: 0.1 }, minNormalStopOrLimitDistance: { unit: 'POINTS', value: 2 } },
+    } },
+  });
+  const c = new IgClient({ ...creds, fetchImpl: f });
+  await c.login();
+  const m = await c.market('CS.D.EURUSD.MINI.IP');
+  assert.deepEqual([m.currency, m.scaling, m.pointValue, m.contractSize, m.toAccount, m.marginPct], ['USD', 10000, 1, 10000, 0.8, 3.33]);
+});

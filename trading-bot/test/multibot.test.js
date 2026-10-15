@@ -165,3 +165,27 @@ test('a refusal for insufficient funds ends the day for that market', async () =
 test('refuses a risk percentage above 2', () => {
   assert.throws(() => new MultiBot({ client: fakeClient(), markets: [GBP], riskPct: 5, maxDailyLoss: 150 }), /BOT_RISK_PCT/);
 });
+
+test('on a CFD account sizes in contracts from the point value in account currency', async () => {
+  const client = fakeClient();
+  client.accountType = 'CFD';
+  const market = client.market;
+  client.market = async (epic) => ({
+    ...(await market()), expiry: '-', currency: 'USD', scaling: 1, pointValue: 10, toAccount: 0.5, contractSize: 10, marginPct: 5,
+    ...(epic === 'NOPRICE' ? { bid: null, offer: null } : {}),
+  });
+  client.available = async () => 1000;
+  const cfdMarket = { ...GBP, live: { ...GBP.live, cfdEpics: ['NOPRICE', 'GBP-CFD'] } };
+  const bot = new MultiBot({ client, markets: [cfdMarket], riskPerTrade: 50, maxDailyLoss: 150, log: () => {} });
+  bot.clock = OPEN - 20 * MIN;
+  bot.now = () => bot.clock;
+  await bot.start();
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 90, (t) => (t >= OPEN + 63 * MIN ? 125 : 110));
+  const o = client.orders[0];
+  assert.equal(o.epic, 'GBP-CFD'); // the first epic had no prices
+  assert.equal(o.expiry, '-');
+  assert.equal(o.currency, 'USD');
+  assert.equal(o.stopDistance, 25.5);
+  assert.equal(o.size, 0.39); // 50 / (25.5 points × 10 × 0.5)
+});

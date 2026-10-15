@@ -38,10 +38,20 @@ export class MultiBot {
 
   async start() {
     await this.client.login();
+    this.epics = {};
     for (const m of this.markets) {
-      const info = await this.client.market(m.live.epic);
-      if (info.minStopUnit !== 'POINTS') throw new Error(`Unsupported stop unit ${info.minStopUnit} on ${m.live.epic}`);
-      this.info[m.key] = info;
+      const cfd = this.client.accountType === 'CFD';
+      const candidates = cfd ? m.live.cfdEpics ?? [] : [m.live.epic];
+      for (const epic of candidates) {
+        const info = await this.client.market(epic);
+        // A CFD contract with no prices on this account is skipped for the next one.
+        if (cfd && (info.bid == null || !(info.pointValue > 0))) continue;
+        if (info.minStopUnit !== 'POINTS') throw new Error(`Unsupported stop unit ${info.minStopUnit} on ${epic}`);
+        this.epics[m.key] = epic;
+        this.info[m.key] = info;
+        break;
+      }
+      if (!this.epics[m.key]) throw new Error(`No tradeable epic for ${m.name} on this ${cfd ? 'CFD' : 'spread-bet'} account`);
     }
     await this.checkRisk();
     const pct = (p) => (p != null ? ` (${p}% din cont)` : '');
@@ -75,7 +85,7 @@ export class MultiBot {
     const positions = await this.client.openPositions();
     for (const m of this.markets) {
       try {
-        await this.step(m, now, positions.filter((p) => p.epic === m.live.epic));
+        await this.step(m, now, positions.filter((p) => p.epic === this.epics[m.key]));
       } catch (e) {
         if (e.code === 'UNKNOWN_ORDER_STATE') {
           // Until a human checks, any new order could double the position.
@@ -116,7 +126,7 @@ export class MultiBot {
     if (!st.range) {
       // The range comes from IG's 1-minute candles (more exact than polled prices).
       const count = Math.min(mod - m.open + 2, ENTRY_HOURS * 60 + 2);
-      const bars = (await this.client.candles(live.epic, 'MINUTE', count))
+      const bars = (await this.client.candles(this.epics[m.key], 'MINUTE', count))
         .map((c) => ({ ...c, ...localClock(c.time, m.tz) }))
         .filter((c) => c.day === day && c.time + MIN <= now);
       const inRange = bars.filter((c) => c.mod >= m.open && c.mod < rangeEnd);
@@ -132,7 +142,7 @@ export class MultiBot {
       this.log(`${m.name}: interval ${lo}–${hi}. Aștept o închidere de minut în afara lui.`);
     }
 
-    const q = await this.client.market(live.epic);
+    const q = await this.client.market(this.epics[m.key]);
     this.info[m.key] = { ...this.info[m.key], ...q };
     if (q.status !== 'TRADEABLE' || q.bid == null || q.offer == null) return;
     const spread = q.offer - q.bid;
@@ -162,22 +172,28 @@ export class MultiBot {
     const stopLevel = side === 'BUY' ? st.range.lo : st.range.hi;
     const dist = (entry - stopLevel) * (side === 'BUY' ? 1 : -1);
     if (!(dist > 0)) return this.finish(st, m, `prețul a trecut deja de nivelul de stop.`);
-    const stopDistance = this.round(Math.max(dist, info.minStop), info);
-    const limitDistance = m.live.targetR ? this.round(Math.max(dist * m.live.targetR, info.minStop), info) : undefined;
+    // Spread bet: distances are in price units and the stake is per point in account currency.
+    // CFD: distances in points (price × scaling), one contract moves pointValue (market
+    // currency) per point, and notional = contracts × contract size × price.
+    const cfd = info.expiry === '-';
+    const scale = cfd ? info.scaling : 1;
+    const perPoint = cfd ? info.pointValue * info.toAccount : 1;
+    const round = cfd ? (n) => Math.round(n * 10) / 10 : (n) => this.round(n, info);
+    const stopDistance = round(Math.max(dist * scale, info.minStop));
+    const limitDistance = m.live.targetR ? round(Math.max(dist * scale * m.live.targetR, info.minStop)) : undefined;
     const risk = this.tradeRisk();
-    let size = Math.floor((risk / stopDistance) * 100) / 100;
+    let size = Math.floor((risk / (stopDistance * perPoint)) * 100) / 100;
     if (size < info.minSize) {
-      // The smallest allowed bet may risk a bit more than planned, but never over double.
-      if (info.minSize * stopDistance > 2 * risk) {
+      // The smallest allowed size may risk a bit more than planned, but never over double.
+      if (info.minSize * stopDistance * perPoint > 2 * risk) {
         return this.finish(st, m, `stopul e prea larg pentru riscul ales.`);
       }
       size = info.minSize;
     }
     if (await this.checkRisk()) return;
-    // Spread bets: margin = stake per point × price × margin %. Other accounts are left to
-    // IG, which refuses the order when funds are short.
-    if (info.marginPct > 0 && info.expiry !== '-' && this.client.available) {
-      const need = size * entry * info.marginPct / 100;
+    if (info.marginPct > 0 && this.client.available) {
+      const value = cfd ? size * info.contractSize * entry * info.toAccount : size * entry;
+      const need = value * info.marginPct / 100;
       const free = await this.client.available();
       if (need > free) return this.finish(st, m, `marjă insuficientă (trebuie ≈ ${need.toFixed(0)}, disponibil ${free.toFixed(0)}).`);
     }
@@ -186,7 +202,7 @@ export class MultiBot {
     let res;
     try {
       res = await this.client.openMarket({
-        epic: m.live.epic, expiry: info.expiry, direction: side, size, currency: info.currency, stopDistance, limitDistance,
+        epic: this.epics[m.key], expiry: info.expiry, direction: side, size, currency: info.currency, stopDistance, limitDistance,
       });
     } catch (e) {
       if (/INSUFFICIENT_FUNDS/.test(e.message)) return this.finish(st, m, 'IG a refuzat ordinul: fonduri insuficiente pentru marjă.');
@@ -194,7 +210,7 @@ export class MultiBot {
     }
     st.traded = true;
     this.state.save(this.risk);
-    this.log(`Deschis ${m.name} ${side} ${size} la ${res.level}, stop ${stopDistance}, țintă ${limitDistance ?? 'fără (închid la sfârșitul sesiunii)'}. Risc ≈ ${(size * stopDistance).toFixed(2)}.`);
+    this.log(`Deschis ${m.name} ${side} ${size} la ${res.level}, stop ${stopDistance}, țintă ${limitDistance ?? 'fără (închid la sfârșitul sesiunii)'}. Risc ≈ ${(size * stopDistance * perPoint).toFixed(2)}.`);
   }
 
   finish(st, m, reason) {
@@ -223,7 +239,7 @@ export class MultiBot {
       this.risk.halted = true;
       this.state.save(this.risk);
       this.log(`Pierderea zilei a atins ${limit}. Închid pozițiile și nu mai tranzacționez azi.`);
-      const epics = new Set(this.markets.map((m) => m.live.epic));
+      const epics = new Set(Object.values(this.epics ?? {}));
       for (const p of await this.client.openPositions()) if (epics.has(p.epic)) await this.client.closePosition(p);
     }
     return this.risk.halted;
