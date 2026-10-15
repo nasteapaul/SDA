@@ -39,7 +39,11 @@ try {
   }
   // Exact epics (comma separated): raw instrument data, without the market search.
   for (const e of (env.CHECK_EPICS ?? '').split(',').map((x) => x.trim()).filter(Boolean)) {
-    const { data } = await client.request('GET', `/markets/${encodeURIComponent(e)}`, { version: 3 });
+    const data = await client.request('GET', `/markets/${encodeURIComponent(e)}`, { version: 3 }).then((r) => r.data, (err) => {
+      console.log(`\n${e}: ${err.message}`);
+      return null;
+    });
+    if (!data) continue;
     const i = data.instrument ?? {};
     console.log(`\n${e}: ${i.name}, tip ${i.type}, expiry ${i.expiry}, preț ${data.snapshot?.bid}/${data.snapshot?.offer}, scalare ${data.snapshot?.scalingFactor}`);
     console.log(`  contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}`);
