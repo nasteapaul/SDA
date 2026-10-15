@@ -26,6 +26,12 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
   throw 'winget is missing: install "App Installer" from the Microsoft Store, then run this again.'
 }
 
+# npm and other tools ship as .ps1 scripts, which Windows blocks by default: allow
+# local and signed scripts for this user (the usual developer setting).
+if ((Get-ExecutionPolicy -Scope CurrentUser) -in 'Undefined', 'Restricted', 'AllSigned') {
+  Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+}
+
 Install-IfMissing git 'Git.Git' 'Git'
 Install-IfMissing node 'OpenJS.NodeJS.LTS' 'Node.js LTS'
 
@@ -62,7 +68,7 @@ if (Test-Path -LiteralPath (Join-Path $Dir '.git')) {
 Say 'Checking the app (tests)'
 Push-Location (Join-Path $Dir 'budget-planner')
 $ErrorActionPreference = 'Continue' # test output on stderr is not an error here
-try { npm test --silent 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 8 } finally { Pop-Location }
+try { npm.cmd test --silent 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 8 } finally { Pop-Location }
 
 Write-Host @"
 
