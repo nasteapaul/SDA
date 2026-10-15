@@ -4,7 +4,8 @@ import { parseFeed, stripTags } from '../lib/feed.js';
 import { parseCurrentEntry, parseForm4, pickDocument, tickerMap } from '../lib/sec.js';
 import { extractListings } from '../lib/tickers.js';
 import { scoreText, scoreInsiders, score13D } from '../lib/rules.js';
-import { summarize } from '../lib/market.js';
+import { summarize, tradePlan } from '../lib/market.js';
+import { formatPlan } from '../lib/telegram.js';
 import { parseAssessment } from '../lib/ai.js';
 import { forwardReturns, journalStats } from '../lib/journal.js';
 
@@ -115,4 +116,16 @@ test('13D: activists and a stated sale or board push score higher', () => {
   const s = score13D('ELLIOTT INVESTMENT MANAGEMENT L.P.', 'Item 4. The Reporting Persons may seek board representation');
   assert.equal(s.score, 7);
   assert.match(s.reasons.join(' '), /ELLIOTT/);
+});
+
+test('trade plan: stop 2 ATR below, target 4 ATR above, warns after a big jump', () => {
+  const bars = Array.from({ length: 20 }, (_, i) => ({ time: i, high: 101, low: 99, close: 100 }));
+  const p = tradePlan(100, bars);
+  assert.equal(p.atr, 2);
+  assert.deepEqual([p.buyUpTo, p.stop, p.target, p.stretched], [101, 96, 108, false]);
+  assert.equal(tradePlan(110, bars).stretched, true);
+  assert.equal(tradePlan(100, bars.slice(0, 3)), null);
+  const html = formatPlan({ price: 100, currency: 'USD', plan: p });
+  assert.match(html, /cumpără până la 101\.00 USD/);
+  assert.match(html, /Vinde la 108\.00 \(\+8\.0%\).*Stop-loss 96\.00 \(-4\.0%\)/);
 });

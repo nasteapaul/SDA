@@ -9,7 +9,7 @@ export async function chart(symbol, { range = '3mo', fetchImpl } = {}) {
   if (!r?.timestamp) throw new Error(`No price data for ${symbol}`);
   const q = r.indicators.quote[0];
   const bars = r.timestamp
-    .map((t, i) => ({ time: t * 1000, close: q.close[i], volume: q.volume[i] }))
+    .map((t, i) => ({ time: t * 1000, high: q.high?.[i], low: q.low?.[i], close: q.close[i], volume: q.volume[i] }))
     .filter((b) => Number.isFinite(b.close));
   return { currency: r.meta.currency, price: r.meta.regularMarketPrice ?? bars.at(-1)?.close, bars };
 }
@@ -29,5 +29,37 @@ export function summarize({ currency, price, bars }) {
     dollarVolume: avgVol * price * rate,
     volumeRatio: avgVol > 0 ? (last?.volume ?? 0) / avgVol : null,
     change1d: bars.length >= 2 ? price / bars.at(-2).close - 1 : null,
+    plan: tradePlan(price, bars),
+  };
+}
+
+// Average true range over the last `n` days: how much the stock normally moves in a day.
+export function atr(bars, n = 14) {
+  const ranges = [];
+  for (let i = 1; i < bars.length; i++) {
+    const { high, low } = bars[i];
+    const prev = bars[i - 1].close;
+    if (!Number.isFinite(high) || !Number.isFinite(low)) continue;
+    ranges.push(Math.max(high - low, Math.abs(high - prev), Math.abs(low - prev)));
+  }
+  const last = ranges.slice(-n);
+  return last.length >= 5 ? last.reduce((s, r) => s + r, 0) / last.length : null;
+}
+
+// Levels sized to the stock's normal daily move: stop 2 ATR below, target 4 ATR above
+// (2:1 reward to risk), and no buying more than half an ATR above the alert price.
+export function tradePlan(price, bars) {
+  const a = atr(bars);
+  if (!a || !(price > 0)) return null;
+  const stop = price - 2 * a;
+  if (stop <= 0) return null;
+  const prevClose = bars.at(-2)?.close;
+  return {
+    atr: a,
+    buyUpTo: price + 0.5 * a,
+    stop,
+    target: price + 4 * a,
+    // Already up more than 3 normal days' moves today: much of the news is in the price.
+    stretched: Number.isFinite(prevClose) && price - prevClose > 3 * a,
   };
 }
