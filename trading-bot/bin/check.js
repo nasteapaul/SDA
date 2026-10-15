@@ -6,6 +6,16 @@ import { IgClient } from '../lib/ig.js';
 
 const env = process.env;
 const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
+if (env.IG_ACCOUNT_ID) {
+  // Diagnostics for switching accounts: what the login offers before any switch.
+  const probe = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
+  try {
+    const d = await probe.login();
+    console.log(`Login: cont curent ${d.currentAccountId}, conturi ${JSON.stringify((d.accounts ?? []).map((a) => [a.accountId, a.accountType, a.preferred]))}`);
+  } catch (e) {
+    console.log(`Login de probă: ${e.message}`);
+  }
+}
 try {
   const session = await client.login();
   console.log(`✓ Conectat la IG DEMO, cont ${session.currentAccountId} (${session.currencyIsoCode ?? '?'}).`);
