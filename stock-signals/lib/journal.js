@@ -22,6 +22,7 @@ const DAY = 86400e3;
 export function prune(state, now) {
   for (const [k, t] of Object.entries(state.seen)) if (now - t > 10 * DAY) delete state.seen[k];
   for (const [k, t] of Object.entries(state.lastAlert)) if (now - t > 30 * DAY) delete state.lastAlert[k];
+  for (const [k, c] of Object.entries(state.xtb ?? {})) if (now - c.at > 7 * DAY) delete state.xtb[k];
   for (const [cik, buys] of Object.entries(state.insiders)) {
     const keep = buys.filter((b) => now - b.time <= 30 * DAY);
     if (keep.length) state.insiders[cik] = keep;
