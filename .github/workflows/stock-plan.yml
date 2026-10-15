@@ -1,0 +1,28 @@
+# Sends buy / target / stop-loss levels for one stock to Telegram, on request.
+name: stock-plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Yahoo symbol, e.g. SRTA or SAP.DE'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Send plan
+        env:
+          PLAN_SYMBOL: ${{ github.event.inputs.symbol }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node stock-signals/bin/plan.js

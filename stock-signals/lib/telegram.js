@@ -15,31 +15,49 @@ export async function send({ token, chatId, fetchImpl = fetch }, html) {
 const pct = (x) => (x == null ? '-' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`);
 
 export function formatPlan(m) {
-  const p = m?.plan;
-  if (!p) return null;
+  if (!m?.price) return '💵 Preț acum: necunoscut (nu am primit date de preț), deci fără niveluri de cumpărare.';
   const cur = esc(m.currency);
   const num = (x) => x.toFixed(m.price >= 1 ? 2 : 4);
+  const p = m.plan;
+  if (!p) return `💵 Preț acum: <b>${num(m.price)} ${cur}</b> (prea puține date ca să calculez nivelurile).`;
   return [
-    `<b>Plan:</b> cumpără până la ${num(p.buyUpTo)} ${cur}`,
-    `🎯 Vinde la ${num(p.target)} (${pct(p.target / m.price - 1)}) · 🛑 Stop-loss ${num(p.stop)} (${pct(p.stop / m.price - 1)})`,
-    `Dacă în ~4 săptămâni n-a atins niciuna, închide.`,
-    p.stretched ? '⚠️ A urcat deja mult azi: nu cumpăra peste nivelul de mai sus, mai bine aștepți o retragere.' : null,
+    `💵 Preț acum: <b>${num(m.price)} ${cur}</b>`,
+    `✅ Cumpără până la: <b>${num(p.buyUpTo)}</b>`,
+    `🎯 Vinde când ajunge la: <b>${num(p.target)}</b> (${pct(p.target / m.price - 1)})`,
+    `🛑 Stop-loss: <b>${num(p.stop)}</b> (${pct(p.stop / m.price - 1)})`,
+    '⏳ Dacă în ~4 săptămâni n-a atins nici ținta, nici stopul, vinde.',
+    p.stretched ? '⚠️ A urcat deja mult azi: nu cumpăra peste nivelul de mai sus, mai bine aștepți o scădere.' : null,
   ].filter(Boolean).join('\n');
 }
 
+// Why the event matters, in plain words.
+export function explain(s) {
+  if (s.source === 'SEC 13D') {
+    const activist = s.reasons.some((r) => /activist/.test(r));
+    const sale = s.reasons.some((r) => /scopul declarat/.test(r));
+    return [
+      'Un fond a cumpărat peste 5% din firmă și vrea să schimbe lucruri acolo, nu doar să țină acțiunile.',
+      activist ? 'E un fond cunoscut pentru asta: de obicei forțează vânzarea firmei, schimbări în conducere sau răscumpărări, iar prețul tinde să crească în lunile următoare.' : null,
+      sale ? 'A spus deschis că vrea ca firma să fie vândută sau să-și caute un cumpărător, iar un cumpărător plătește de obicei peste prețul de acum.' : null,
+    ].filter(Boolean).join(' ');
+  }
+  if (s.source === 'SEC Form 4') return 'Directorii firmei au cumpărat acțiuni cu banii lor. Ei știu cel mai bine cum merge firma, așa că de obicei e un semn bun.';
+  return `Motiv: ${s.reasons.join('; ')}.`;
+}
+
 export function formatSignal(s) {
-  const icon = s.score >= 8 ? '🟢🟢' : '🟢';
+  const strength = s.score >= 8 ? 'semnal puternic' : 'semnal mediu';
   const lines = [
-    `${icon} <b>${esc(s.company)}</b> · XTB: <code>${esc(s.listing.xtb)}</code> · scor ${s.score}`,
+    `${s.score >= 8 ? '🟢🟢' : '🟢'} <b>${esc(s.company)}</b> · în XTB: <code>${esc(s.listing.xtb)}</code> · ${strength}`,
     esc(s.title),
     '',
-    s.summary ? esc(s.summary) : null,
-    `<i>De ce:</i> ${esc(s.reasons.join('; '))}`,
-    s.market ? `Preț ${s.market.price?.toFixed(2)} ${esc(s.market.currency)}, azi ${pct(s.market.change1d)}${s.market.volumeRatio ? `, volum ${s.market.volumeRatio.toFixed(1)}× media` : ''}` : null,
-    formatPlan(s.market),
-    `<a href="${esc(s.link)}">Sursa (${esc(s.source)})</a>`,
+    `<b>De ce merită:</b> ${esc(explain(s))}`,
+    s.summary ? `<i>${esc(s.summary)}</i>` : null,
     '',
-    '<i>Doar informație, nu sfat de investiții. Verifică sursa înainte să cumperi.</i>',
+    formatPlan(s.market),
+    '',
+    `<a href="${esc(s.link)}">Sursa</a>`,
+    '<i>Doar informație, nu sfat de investiții. Pune stop-loss-ul în XTB imediat după cumpărare.</i>',
   ];
   return lines.filter((l) => l !== null).join('\n');
 }

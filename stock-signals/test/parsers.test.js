@@ -126,6 +126,7 @@ test('trade plan: stop 2 ATR below, target 4 ATR above, warns after a big jump',
   assert.equal(tradePlan(110, bars).stretched, true);
   assert.equal(tradePlan(100, bars.slice(0, 3)), null);
   const html = formatPlan({ price: 100, currency: 'USD', plan: p });
-  assert.match(html, /cumpără până la 101\.00 USD/);
-  assert.match(html, /Vinde la 108\.00 \(\+8\.0%\).*Stop-loss 96\.00 \(-4\.0%\)/);
+  assert.match(html, /Cumpără până la: <b>101\.00<\/b>/);
+  assert.match(html, /Vinde când ajunge la: <b>108\.00<\/b> \(\+8\.0%\)/);
+  assert.match(html, /Stop-loss: <b>96\.00<\/b> \(-4\.0%\)/);
 });
