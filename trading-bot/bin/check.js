@@ -23,7 +23,7 @@ try {
   for (const a of await client.accounts()) {
     console.log(`  cont ${a.id}: ${a.name}, ${a.type}, ${a.currency}, sold ${a.balance?.balance}, disponibil ${a.balance?.available}`);
   }
-  const terms = process.argv.length > 2 ? process.argv.slice(2) : ['Germany 40', 'EUR/USD', 'GBP/USD', 'Australia 200'];
+  const terms = env.CHECK_EPICS ? [] : process.argv.length > 2 ? process.argv.slice(2) : ['Germany 40', 'EUR/USD', 'GBP/USD', 'Australia 200'];
   for (const term of terms) {
     console.log(`\nPiețe găsite pentru "${term}":`);
     for (const m of (await client.searchMarkets(term)).slice(0, 10)) {
@@ -37,6 +37,16 @@ try {
       console.log(`    contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}, monede ${JSON.stringify((i.currencies ?? []).map((c) => c.code))}`);
     }
   }
+  // Exact epics (comma separated): raw instrument data, without the market search.
+  for (const e of (env.CHECK_EPICS ?? '').split(',').map((x) => x.trim()).filter(Boolean)) {
+    const { data } = await client.request('GET', `/markets/${encodeURIComponent(e)}`, { version: 3 });
+    const i = data.instrument ?? {};
+    console.log(`\n${e}: ${i.name}, tip ${i.type}, expiry ${i.expiry}, preț ${data.snapshot?.bid}/${data.snapshot?.offer}, scalare ${data.snapshot?.scalingFactor}`);
+    console.log(`  contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}`);
+    console.log(`  monede ${JSON.stringify(i.currencies)}`);
+    console.log(`  reguli ${JSON.stringify({ min: data.dealingRules?.minDealSize, stop: data.dealingRules?.minNormalStopOrLimitDistance })}`);
+  }
+  if (env.CHECK_EPICS) process.exit(0);
   const epic = env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP';
   const m = await client.market(epic);
   console.log(`\nPiața din .env, ${epic}:`);
