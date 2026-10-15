@@ -91,18 +91,33 @@ export class IgClient {
     this.tokens = { cst: headers.get('CST'), xst: headers.get('X-SECURITY-TOKEN') };
     if (!this.tokens.cst || !this.tokens.xst) throw new Error('IG login returned no session tokens');
     this.accountId = data.currentAccountId;
-    const typeOf = (id) => data.accounts?.find((a) => a.accountId === id)?.accountType;
-    this.accountType = typeOf(this.accountId);
-    // A login may hold several accounts (spread bet, CFD); switch when another one is asked for.
-    if (this.wantedAccount && this.wantedAccount !== this.accountId) {
-      const { headers: h } = await this.request('PUT', '/session', { body: { accountId: this.wantedAccount, defaultAccount: false } });
-      // IG issues a new security token for the switched account; the old one is rejected.
-      this.tokens = { cst: h.get('CST') ?? this.tokens.cst, xst: h.get('X-SECURITY-TOKEN') ?? this.tokens.xst };
-      this.accountId = this.wantedAccount;
-      this.accountType = typeOf(this.wantedAccount);
-      data.currentAccountId = this.wantedAccount;
+    this.accountTypes = Object.fromEntries((data.accounts ?? []).map((a) => [a.accountId, a.accountType]));
+    this.accountType = this.accountTypes[this.accountId];
+    // The active account is shared by every session of this login, so another run may have
+    // switched it. Without an explicit choice, stay on the login's preferred account.
+    this.defaultAccount ??= data.accounts?.find((a) => a.preferred)?.accountId ?? data.currentAccountId;
+    const wanted = this.wantedAccount || this.defaultAccount;
+    if (wanted !== this.accountId) {
+      await this.switchTo(wanted);
+      data.currentAccountId = wanted;
     }
     return data;
+  }
+
+  async switchTo(accountId) {
+    const { headers: h } = await this.request('PUT', '/session', { body: { accountId, defaultAccount: false } });
+    // IG issues a new security token for the switched account; the old one is rejected.
+    this.tokens = { cst: h.get('CST') ?? this.tokens.cst, xst: h.get('X-SECURITY-TOKEN') ?? this.tokens.xst };
+    this.accountId = accountId;
+    this.accountType = this.accountTypes?.[accountId];
+  }
+
+  // One client can serve several accounts of the same login, one at a time.
+  async use(accountId) {
+    this.wantedAccount = accountId || null;
+    if (!this.tokens) return this.login();
+    const wanted = this.wantedAccount || this.defaultAccount;
+    if (wanted !== this.accountId) await this.switchTo(wanted);
   }
 
   async accounts() {

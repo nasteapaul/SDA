@@ -148,3 +148,31 @@ test('market reads CFD scaling, point value and the rate to the account currency
   const m = await c.market('CS.D.EURUSD.MINI.IP');
   assert.deepEqual([m.currency, m.scaling, m.pointValue, m.contractSize, m.toAccount, m.marginPct], ['USD', 10000, 1, 10000, 0.8, 3.33]);
 });
+
+test('login returns to the preferred account when another run switched it', async () => {
+  const f = fakeFetch({
+    'POST /session': { headers: { CST: 'c', 'X-SECURITY-TOKEN': 'x' }, body: { currentAccountId: 'CFD1', accounts: [
+      { accountId: 'SB1', accountType: 'SPREADBET', preferred: true }, { accountId: 'CFD1', accountType: 'CFD', preferred: false }] } },
+    'PUT /session': { headers: { 'X-SECURITY-TOKEN': 'x2' }, body: {} },
+  });
+  const c = new IgClient({ ...creds, fetchImpl: f });
+  await c.login();
+  assert.deepEqual([c.accountId, c.accountType], ['SB1', 'SPREADBET']);
+  assert.deepEqual(f.calls[1].body, { accountId: 'SB1', defaultAccount: false });
+});
+
+test('use() switches between accounts of one login only when needed', async () => {
+  const f = fakeFetch({
+    'POST /session': { headers: { CST: 'c', 'X-SECURITY-TOKEN': 'x' }, body: { currentAccountId: 'SB1', accounts: [
+      { accountId: 'SB1', accountType: 'SPREADBET', preferred: true }, { accountId: 'CFD1', accountType: 'CFD' }] } },
+    'PUT /session': { headers: { 'X-SECURITY-TOKEN': 'x2' }, body: {} },
+  });
+  const c = new IgClient({ ...creds, fetchImpl: f });
+  await c.use('');
+  await c.use('CFD1');
+  assert.equal(c.accountType, 'CFD');
+  await c.use('CFD1');
+  await c.use('');
+  assert.equal(c.accountId, 'SB1');
+  assert.deepEqual(f.calls.map((x) => x.method), ['POST', 'PUT', 'PUT']);
+});
