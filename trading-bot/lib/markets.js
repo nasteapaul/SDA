@@ -22,7 +22,7 @@ export const MARKETS = Object.freeze([
   { key: 'OIL', name: 'US Crude', history: 'oanda/WTICO_USD', tz: 'America/New_York', open: 540, close: 870, spread: 0.028 },
   { key: 'NATGAS', name: 'Natural Gas', history: 'oanda/NATGAS_USD', tz: 'America/New_York', open: 540, close: 870, spread: 0.006 },
   { key: 'EURUSD', name: 'EUR/USD', history: 'oanda/EUR_USD', tz: 'Europe/London', open: 480, close: 960, spread: 0.00006, live: { epic: 'CS.D.EURUSD.TODAY.IP', cfdEpics: ['CS.D.EURUSD.MINI.IP'], rangeMin: 30, targetR: null } },
-  { key: 'GBPUSD', name: 'GBP/USD', history: 'oanda/GBP_USD', tz: 'Europe/London', open: 480, close: 960, spread: 0.00009, live: { epic: 'CS.D.GBPUSD.TODAY.IP', cfdEpics: ['CS.D.GBPUSD.MINI.IP'], rangeMin: 60, targetR: 2 } },
+  { key: 'GBPUSD', name: 'GBP/USD', history: 'oanda/GBP_USD', tz: 'Europe/London', open: 480, close: 960, spread: 0.00009, live: { epic: 'CS.D.GBPUSD.TODAY.IP', cfdEpics: ['CS.D.GBPUSD.MINI.IP'], rangeMin: 30, targetR: null } },
   { key: 'EURJPY', name: 'EUR/JPY', history: 'oanda/EUR_JPY', tz: 'Europe/London', open: 480, close: 960, spread: 0.015 },
   { key: 'AUDUSD', name: 'AUD/USD', history: 'oanda/AUD_USD', tz: 'Asia/Tokyo', open: 540, close: 900, spread: 0.00006 },
   { key: 'USDCAD', name: 'USD/CAD', history: 'oanda/USD_CAD', tz: 'America/New_York', open: 480, close: 960, spread: 0.00013 },
