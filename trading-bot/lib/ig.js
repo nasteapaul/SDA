@@ -93,7 +93,9 @@ export class IgClient {
     this.accountId = data.currentAccountId;
     // A login may hold several accounts (spread bet, CFD); switch when another one is asked for.
     if (this.wantedAccount && this.wantedAccount !== this.accountId) {
-      await this.request('PUT', '/session', { body: { accountId: this.wantedAccount, defaultAccount: false } });
+      const { headers: h } = await this.request('PUT', '/session', { body: { accountId: this.wantedAccount, defaultAccount: false } });
+      // IG issues a new security token for the switched account; the old one is rejected.
+      this.tokens = { cst: h.get('CST') ?? this.tokens.cst, xst: h.get('X-SECURITY-TOKEN') ?? this.tokens.xst };
       this.accountId = this.wantedAccount;
       data.currentAccountId = this.wantedAccount;
     }

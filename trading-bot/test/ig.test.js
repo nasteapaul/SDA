@@ -41,9 +41,15 @@ test('login stores tokens and sends them afterwards', async () => {
 });
 
 test('login switches to the requested account', async () => {
-  const f = fakeFetch({ 'POST /session': login, 'PUT /session': { body: {} } });
+  const f = fakeFetch({
+    'POST /session': login,
+    'PUT /session': { headers: { 'X-SECURITY-TOKEN': 'x2' }, body: {} },
+    'GET /accounts': { body: { accounts: [{ accountId: 'B2', balance: { balance: 1, profitLoss: 0 } }] } },
+  });
   const c = new IgClient({ ...creds, accountId: 'B2', fetchImpl: f });
   const data = await c.login();
+  await c.equity();
+  assert.equal(f.calls[2].headers['X-SECURITY-TOKEN'], 'x2');
   assert.equal(c.accountId, 'B2');
   assert.equal(data.currentAccountId, 'B2');
   assert.equal(f.calls[1].method, 'PUT');
