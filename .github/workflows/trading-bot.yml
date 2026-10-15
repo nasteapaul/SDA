@@ -1,5 +1,5 @@
 # IG DEMO day-trading bots in the cloud, no PC needed.
-# multi (default, also every scheduled run): opening range breakout on EUR/USD and GBP/USD
+# multi (default): opening range breakout on EUR/USD and GBP/USD
 #   at the London open and Australia 200 at the Sydney open. Each run trades the sessions
 #   opening in the next hours, closes positions whose session is over, then exits. Safe to
 #   start any number of times: one trade per market per day, kept in the state file.
@@ -8,12 +8,8 @@
 name: trading-bot
 
 on:
-  schedule:
-    # GitHub often delays or drops scheduled runs; Claude routines also start the job.
-    - cron: '30 22 * * 0-4'               # before the Sydney open (23:00 / 00:00 UTC)
-    - cron: '35 6 * * 1-5'                # before the London open (07:00 / 08:00 UTC)
-    - cron: '5 15 * * 1-5'                # after the London close: close leftovers (summer)
-    - cron: '5 16 * * 1-5'                # (winter)
+  # No cron: GitHub ran scheduled starts hours late, after the opening range was gone.
+  # Claude routines start the job at each open and for the evening close.
   workflow_dispatch:
     inputs:
       job:
@@ -58,8 +54,7 @@ jobs:
       BOT_RISK_PCT: '0.5'
       BOT_MAX_DAILY_LOSS_PCT: '1.5'
       JOB: ${{ github.event.inputs.job || 'multi' }}
-      # The bot trades only the Demo-CFD account; scheduled runs have no inputs, so they
-      # would otherwise land on the login's preferred (spread-bet) account.
+      # The bot trades only the Demo-CFD account, not the login's preferred spread-bet one.
       IG_ACCOUNT_ID: ${{ github.event.inputs.account || 'XR5HB' }}
     steps:
       - uses: actions/checkout@v4
