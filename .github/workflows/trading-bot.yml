@@ -34,8 +34,9 @@ permissions:
   contents: write   # daily-loss state on the trading-bot-data branch
 
 concurrency:
-  # Runs on different IG accounts may overlap; each account keeps its own state file.
-  group: trading-bot-${{ github.event.inputs.account || 'default' }}
+  # One run at a time: all accounts share one IG login, and switching account in one run
+  # logs the other run's session out.
+  group: trading-bot
   cancel-in-progress: false
 
 jobs:
@@ -47,7 +48,8 @@ jobs:
       IG_API_KEY: ${{ secrets.IG_API_KEY }}
       IG_USERNAME: ${{ secrets.IG_USERNAME }}
       IG_PASSWORD: ${{ secrets.IG_PASSWORD }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      # Its own Telegram bot when TRADING_TELEGRAM_BOT_TOKEN is set; otherwise the signals bot.
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TRADING_TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       BOT_STATE: ${{ github.workspace }}/state/trading-state.json
       BOT_EXIT_AT: '12:05'
