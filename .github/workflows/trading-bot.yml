@@ -2,7 +2,7 @@
 # multi (default): opening range breakout on EUR/USD and GBP/USD
 #   at the London open and Australia 200 at the Sydney open. Each run trades the sessions
 #   opening in the next hours, closes positions whose session is over, then exits. Safe to
-#   start any number of times: one trade per market per day, kept in the state file.
+#   start any number of times: up to 3 losing trades per market per day, kept in the state file.
 # run / flatten: the older single-market DAX bot (no edge in the research), manual only.
 # Does nothing until the IG_API_KEY secret exists. The bot refuses any non-demo account.
 name: trading-bot
