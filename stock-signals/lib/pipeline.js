@@ -20,6 +20,7 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     ['SEC 8-K', () => secEvents(state, config, io, events)],
     ['SEC Form 4', () => insiderEvents(state, config, io, events, now)],
     ['SEC 13D', () => stakeEvents(state, config, io, events)],
+    ['Reddit', () => buzzEvents(state, config, io, events, now)],
     ...feeds.map((f) => [f.name, () => (f.kind === 'ripple' ? queueHeadlines(state, f, io, now) : newsEvents(state, f, io, events))]),
   ];
   let ok = 0;
@@ -87,6 +88,15 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
       }
     }
     if (ev.score >= config.alertScore) alerts.push(ev);
+  }
+
+  // Second-order: a strong event at one company often moves its suppliers, customers or
+  // rivals later. Queue it for the knock-on AI.
+  for (const ev of events) {
+    if (ev.score < config.alertScore || ev.source === 'Efect în lanț' || ev.source === 'Reddit') continue;
+    state.ripple ??= { queue: [], last: 0 };
+    state.ripple.queue.push({ feed: `eveniment puternic la ${ev.company}`, title: ev.title.slice(0, 200), summary: ev.reasons.join('; ').slice(0, 200), link: ev.link });
+    state.ripple.queue = state.ripple.queue.slice(-60);
   }
 
   for (const ev of alerts) {
@@ -178,6 +188,7 @@ async function insiderEvents(state, config, io, events, now) {
       const cik = form.issuer.cik;
       (state.insiders[cik] ??= []).push({
         owner: form.owner.name, title: form.owner.title, value: form.bought, time: now,
+        shares: form.shares, after: form.after, tenPctOnly: form.owner.tenPct && !form.owner.officer && !form.owner.director,
         ticker: form.issuer.ticker, company: form.issuer.name, link: f.link,
       });
       touched.add(cik);
@@ -261,6 +272,30 @@ async function rippleEvents(state, config, io, events, now) {
   }
 }
 
+// Reddit (WallStreetBets and other stock forums), counted by apewisdom.io. What matters is a
+// sudden jump in mentions against the day before, not the mood of the posts.
+const FUND = /\b(ETF|Trust|Shares|Fund|Index)\b/;
+async function buzzEvents(state, config, io, events, now) {
+  if (!io.buzz) return;
+  state.buzz ??= { last: 0 };
+  if (now - state.buzz.last < config.buzzEveryMin * 60e3) return;
+  state.buzz.last = now;
+  const known = new Set((await io.tickers()).values());
+  const day = new Date(now).toISOString().slice(0, 10);
+  for (const r of await io.buzz()) {
+    const before = Number(r.mentions_24h_ago) || 0;
+    const ratio = r.mentions / Math.max(before, 5);
+    if (r.mentions < config.buzzMinMentions || ratio < 3 || FUND.test(r.name ?? '')) continue;
+    if (!known.has(r.ticker) || !isNew(state, `buzz:${r.ticker}:${day}`, now)) continue;
+    const title = `${r.name} e brusc în discuție pe Reddit: ${r.mentions} mențiuni în 24 de ore, față de ${before} cu o zi înainte`;
+    events.push({
+      source: 'Reddit', company: r.name, title, text: title,
+      link: `https://apewisdom.io/stocks/${encodeURIComponent(r.ticker)}/`, listing: usListing(r.ticker),
+      score: ratio >= 6 ? 4 : 3, reasons: [`mențiuni pe Reddit de ${Math.round(ratio)}× mai multe ca ieri`],
+    });
+  }
+}
+
 async function newsEvents(state, feed, io, events) {
   const items = parseFeed(await io.news(feed.url));
   for (const it of items) {
@@ -311,6 +346,7 @@ export function makeIo({ secAgent, githubToken, telegram, dryRun, log = console.
     assess: (ev) => assess(ev, { token: githubToken }),
     ripple: (items) => ripple(items, { token: githubToken }),
     xtb: (listing) => onXtb(listing),
+    buzz: async () => (await get('https://apewisdom.io/api/v1.0/filter/all-stocks/page/1', { json: true, headers: { 'User-Agent': 'Mozilla/5.0 (stock-signals)' } }))?.results ?? [],
     alert: telegram.alert,
     notify: telegram.notify,
     dryRun,

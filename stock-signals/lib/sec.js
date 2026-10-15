@@ -40,19 +40,28 @@ export function parseForm4(xml) {
     title: tag(xml, 'officerTitle'),
     director: flag(tag(xml, 'isDirector')),
     officer: flag(tag(xml, 'isOfficer')),
+    tenPct: flag(tag(xml, 'isTenPercentOwner')),
   };
   let bought = 0;
+  let shares = 0;
+  let after = 0;
   for (const [block] of xml.matchAll(/<nonDerivativeTransaction>[\s\S]*?<\/nonDerivativeTransaction>/g)) {
     const code = tag(tag(block, 'transactionCoding'), 'transactionCode');
     const ad = val(block, 'transactionAcquiredDisposedCode');
-    const shares = Number(val(block, 'transactionShares'));
     const price = Number(val(block, 'transactionPricePerShare'));
-    if (code === 'P' && ad === 'A' && shares > 0 && price > 0) bought += shares * price;
+    const n = Number(val(block, 'transactionShares'));
+    if (code === 'P' && ad === 'A' && n > 0 && price > 0) {
+      bought += n * price;
+      shares += n;
+      after = Number(val(block, 'sharesOwnedFollowingTransaction')) || after;
+    }
   }
   return {
     issuer: { cik: String(Number(tag(xml, 'issuerCik'))), name: tag(xml, 'issuerName'), ticker: tag(xml, 'issuerTradingSymbol').toUpperCase() },
     owner,
     bought: Math.round(bought),
+    shares,
+    after, // shares held after the last purchase in this filing
   };
 }
 
