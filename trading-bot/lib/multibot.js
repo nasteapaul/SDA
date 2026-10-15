@@ -5,12 +5,16 @@ import { localClock } from './session.js';
 const MIN = 60e3;
 const ENTRY_HOURS = 3; // entries allowed for 3 hours after the session open
 const WAKE_AHEAD_MIN = 240; // a run waits at most this long for a session to open
+const MAX_LOSSES = 3; // per market and day; a later breakout of the range trades again until then
+const MAX_TRADES = 6; // per market and day, a safety cap
 
 // Opening range breakout on several IG markets, each in its own session (lib/markets.js,
 // field `live`). Per market and local day: the high/low of the first `rangeMin` minutes
-// after the open, then the first 1-minute close beyond it enters, with the stop at the
-// other side of the range and an optional target in R, both placed at IG. One trade per
-// market per day; positions are closed once the market's session is over. Each trade risks
+// after the open, then a 1-minute close beyond it enters, with the stop at the other side
+// of the range and an optional target in R, both placed at IG. After a trade closes, the
+// price must come back inside the range before the next breakout trades again (research:
+// more R than one trade a day on EUR/USD, about the same elsewhere), until MAX_LOSSES
+// losing trades on that market that day. Positions are closed once the session is over. Each trade risks
 // `riskPct` % of the equity at the start of the day, or a fixed `riskPerTrade` (account
 // currency). A shared daily loss limit (`maxDailyLossPct` % or a fixed `maxDailyLoss`)
 // stops everything. A trade whose margin the account cannot cover is skipped.
@@ -121,7 +125,15 @@ export class MultiBot {
     const rangeEnd = m.open + live.rangeMin;
     const lastEntry = m.open + ENTRY_HOURS * 60;
     if (mod < rangeEnd) return;
-    if (mod >= lastEntry) return this.finish(st, m, `fereastra de intrare s-a încheiat fără semnal.`);
+    if (st.open) {
+      if (positions.length) return; // the trade is still running
+      await this.closed(m, st);
+      if (st.done) return;
+    }
+    if (mod >= lastEntry) {
+      if (st.trades) { st.done = true; this.state.save(this.risk); return; }
+      return this.finish(st, m, `fereastra de intrare s-a încheiat fără semnal.`);
+    }
 
     if (!st.range) {
       // The range comes from IG's 1-minute candles (more exact than polled prices).
@@ -160,9 +172,34 @@ export class MultiBot {
     const closed = b.closed.splice(0).filter((c) => c.time >= b.skipBefore && now - c.time <= 3 * MIN);
     for (const c of closed) {
       const side = c.close > st.range.hi ? 'BUY' : c.close < st.range.lo ? 'SELL' : null;
-      if (!side) continue;
+      if (!side) {
+        st.armed = true; // back inside the range: the next breakout counts
+        continue;
+      }
+      if (st.trades && !st.armed) continue;
       await this.enter(m, st, side, q);
       return;
+    }
+  }
+
+  // A position the bot opened is gone (stop, target or closed by hand). IG does not say
+  // which here, so a trade counts as lost when the price is on the losing side of the entry.
+  async closed(m, st) {
+    const q = await this.client.market(this.epics[m.key]);
+    const mid = (q.bid + q.offer) / 2;
+    const lost = !Number.isFinite(mid) || (mid - st.open.level) * (st.open.side === 'BUY' ? 1 : -1) <= 0;
+    if (lost) st.losses = (st.losses ?? 0) + 1;
+    st.open = null;
+    st.armed = false;
+    this.state.save(this.risk);
+    if (st.losses >= MAX_LOSSES) {
+      st.done = true;
+      this.state.save(this.risk);
+      this.log(`${m.name}: ${MAX_LOSSES} pierderi azi, mă opresc pe această piață până mâine.`);
+    } else if (st.trades >= MAX_TRADES) {
+      st.done = true;
+      this.state.save(this.risk);
+      this.log(`${m.name}: ${MAX_TRADES} tranzacții azi, mă opresc pe această piață până mâine.`);
     }
   }
 
@@ -197,7 +234,9 @@ export class MultiBot {
       const free = await this.client.available();
       if (need > free) return this.finish(st, m, `marjă insuficientă (trebuie ≈ ${need.toFixed(0)}, disponibil ${free.toFixed(0)}).`);
     }
-    st.done = true; // set before sending, so a crash never sends a second order today
+    // Saved before sending: after a crash the bot treats the order as placed, never sends it twice.
+    st.open = { side, level: entry };
+    st.trades = (st.trades ?? 0) + 1;
     this.state.save(this.risk);
     let res;
     try {
@@ -209,6 +248,7 @@ export class MultiBot {
       throw e;
     }
     st.traded = true;
+    st.open.level = res.level ?? entry;
     this.state.save(this.risk);
     this.log(`Deschis ${m.name} ${side} ${size} la ${res.level}, stop ${stopDistance}, țintă ${limitDistance ?? 'fără (închid la sfârșitul sesiunii)'}. Risc ≈ ${(size * stopDistance * perPoint).toFixed(2)}.`);
   }

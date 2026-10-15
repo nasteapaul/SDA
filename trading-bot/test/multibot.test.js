@@ -189,3 +189,38 @@ test('on a CFD account sizes in contracts from the point value in account curren
   assert.equal(o.stopDistance, 25.5);
   assert.equal(o.size, 0.39); // 50 / (25.5 points × 10 × 0.5)
 });
+
+test('after a stop it trades the next breakout once the price is back inside the range, until 3 losses', async () => {
+  const client = fakeClient();
+  const notes = [];
+  const bot = makeBot(client, OPEN + 60 * MIN, { log: (n) => notes.push(n) });
+  await bot.start();
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  // Each cycle: break above (125) for 3 min, then the stop takes the position out and the
+  // price falls back inside (95 = losing side), then back at 110 inside the range.
+  for (let k = 0; k < 4; k++) {
+    await run(bot, client, 3, () => 125);
+    client.positions = [];
+    await run(bot, client, 2, () => 95);
+    await run(bot, client, 3, () => 110);
+  }
+  assert.equal(client.orders.length, 3, 'stops after the third loss');
+  assert.equal(bot.risk.markets.GBPUSD.losses, 3);
+  assert.equal(bot.risk.markets.GBPUSD.done, true);
+  assert.ok(notes.some((n) => /3 pierderi azi/.test(n)));
+});
+
+test('a winning trade does not count as a loss and needs a new breakout to trade again', async () => {
+  const client = fakeClient();
+  const bot = makeBot(client, OPEN + 60 * MIN);
+  await bot.start();
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 3, () => 125);
+  client.positions = []; // target hit
+  await run(bot, client, 5, () => 150); // still outside the range: no new trade
+  assert.equal(client.orders.length, 1);
+  assert.equal(bot.risk.markets.GBPUSD.losses ?? 0, 0);
+  await run(bot, client, 3, () => 110);
+  await run(bot, client, 3, () => 125);
+  assert.equal(client.orders.length, 2);
+});
