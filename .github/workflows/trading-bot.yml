@@ -22,7 +22,7 @@ on:
         type: choice
         options: [multi, run, flatten, check]
       account:
-        description: 'IG account id to use instead of the default one (e.g. the demo CFD account)'
+        description: 'IG account id (default XR5HB, the demo CFD account)'
         required: false
         default: ''
       epics:
@@ -58,7 +58,9 @@ jobs:
       BOT_RISK_PCT: '0.5'
       BOT_MAX_DAILY_LOSS_PCT: '1.5'
       JOB: ${{ github.event.inputs.job || 'multi' }}
-      IG_ACCOUNT_ID: ${{ github.event.inputs.account }}
+      # The bot trades only the Demo-CFD account; scheduled runs have no inputs, so they
+      # would otherwise land on the login's preferred (spread-bet) account.
+      IG_ACCOUNT_ID: ${{ github.event.inputs.account || 'XR5HB' }}
     steps:
       - uses: actions/checkout@v4
         if: env.HAS_IG == 'true'
