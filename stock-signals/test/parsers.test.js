@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseFeed, stripTags } from '../lib/feed.js';
 import { parseCurrentEntry, parseForm4, pickDocument, tickerMap } from '../lib/sec.js';
 import { extractListings } from '../lib/tickers.js';
-import { scoreText, scoreInsiders } from '../lib/rules.js';
+import { scoreText, scoreInsiders, score13D } from '../lib/rules.js';
 import { summarize } from '../lib/market.js';
 import { parseAssessment } from '../lib/ai.js';
 import { forwardReturns, journalStats } from '../lib/journal.js';
@@ -100,4 +100,19 @@ test('journal returns start at the first close after the alert', () => {
   const stats = journalStats([{ returns: r, bench: { 5: 0.01 } }]);
   assert.equal(stats[0].n, 1);
   assert.ok(Math.abs(stats[0].excess - (107 / 102 - 1 - 0.01)) < 1e-12);
+});
+
+test('takeover rules: early signs score, a signed deal does not', () => {
+  assert.equal(scoreText('Acme Board initiates review of strategic alternatives, including a potential sale').score, 4);
+  assert.equal(scoreText('Acme confirms receipt of unsolicited non-binding proposal').score, 4);
+  assert.equal(scoreText('Acme exploring sale, people familiar say').score, 3);
+  assert.ok(scoreText('CCC Intelligent Solutions to be acquired by GTCR for $7.75 per share').score < 0);
+  assert.ok(scoreText('Acme enters into definitive agreement to be acquired by Beta').score < 0);
+});
+
+test('13D: activists and a stated sale or board push score higher', () => {
+  assert.equal(score13D('John Smith', 'Item 4. Purpose: investment purposes').score, 3);
+  const s = score13D('ELLIOTT INVESTMENT MANAGEMENT L.P.', 'Item 4. The Reporting Persons may seek board representation');
+  assert.equal(s.score, 7);
+  assert.match(s.reasons.join(' '), /ELLIOTT/);
 });

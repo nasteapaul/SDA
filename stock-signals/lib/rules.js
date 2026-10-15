@@ -10,7 +10,12 @@ export const GIANTS = [
 const giantRe = new RegExp(`\\b(${GIANTS.map((g) => g.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&')).join('|')})\\b`);
 
 const RULES = [
-  [4, /\b(to be acquired by|definitive (merger )?agreement to be acquired|agreed to be acquired|tender offer for all)\b/i, 'urmează să fie cumpărată (preluare)'],
+  // Before a takeover: the price usually jumps on these, well before a deal is signed.
+  [4, /\b(explor\w*|evaluat\w*|review\w*|initiat\w*|commenc\w*|launch\w*|conduct\w*) (of )?(a (broad |formal |comprehensive )?(range of |process to (explore|evaluate|review) )?)?(potential |possible )?(strategic (alternatives|options)|(a )?(potential |possible )?sale of the company)\b|\bformal sale process\b/i, 'își caută cumpărător (alternative strategice)'],
+  [4, /\b(unsolicited|non-binding|nonbinding|indicative) (and non-binding )?(acquisition |takeover |buyout |merger )?(proposal|offer|indication of interest)\b|\breceived (an? )?(\w+ )?(proposal|offer) to acquire\b/i, 'a primit o ofertă de cumpărare, încă nesemnată'],
+  [3, /\b(in (advanced |early |exclusive )?talks to (be acquired|sell itself|merge)|(explores?|exploring|weighs?|weighing|considers?|considering) (a )?(potential )?sale\b|attract\w* takeover interest)/i, 'zvon de vânzare a firmei'],
+  // After a signed deal the price is pinned to the offer: nothing left to gain.
+  [-6, /\b(to be acquired by|definitive (merger )?agreement (to be acquired|under which .{0,80} will acquire)|agreed to be acquired|enter(s|ed)? into (a )?definitive (merger )?agreement|tender offer for all)\b/i, 'preluare deja semnată: prețul e fixat de ofertă'],
   [3, /\b(raises?|raising|increases?|lifts?) (its )?(full[- ]year |annual |fiscal( year)? \d{0,4} ?)?(guidance|outlook|forecast)\b/i, 'își ridică estimările'],
   [3, /\bFDA (approval|approves|approved|grants? (accelerated )?approval)\b|\b(EMA|CHMP) (positive opinion|recommends approval)\b/i, 'aprobare de medicament'],
   [2, /\b(awarded|wins?|won|secures?|secured|selected for) (a |an )?(\$?[\d.,]+ ?(million|billion|mn|bn|m|b) )?(multi-year )?(contract|order|award|deal)\b/i, 'contract nou'],
@@ -44,7 +49,7 @@ export function scoreText(text, items = []) {
   }
   const giant = giantRe.exec(text)?.[1];
   // A giant counts only alongside a deal word; just being mentioned means nothing.
-  if (giant && reasons.some((r) => /contract|parteneriat|preluare/.test(r))) {
+  if (giant && reasons.some((r) => /contract|parteneriat/.test(r))) {
     score += 2;
     reasons.push(`partener mare: ${giant}`);
   }
@@ -66,4 +71,24 @@ export function scoreInsiders(buys) {
   if (boss) { score += 2; reasons.push('CEO/CFO a cumpărat peste 250.000 $'); }
   if (total >= 1e6) { score += 1; reasons.push('cumpărări de insideri peste 1 mil. $'); }
   return { score, reasons, total, owners: owners.size };
+}
+
+// Schedule 13D: someone bought more than 5% and means to influence the company (passive
+// holders file 13G instead). Known activists often push for a sale.
+export const ACTIVISTS = [
+  'Elliott', 'Starboard', 'Icahn', 'Trian', 'JANA', 'ValueAct', 'Third Point', 'Pershing Square', 'Engaged Capital',
+  'Land & Buildings', 'Ancora', 'Legion Partners', 'Sachem Head', 'Corvex', 'Mantle Ridge', 'Politan', 'Irenic',
+  'Barington', 'Impactive', 'Cevian', 'Blackwells', 'Kingstown', 'D. E. Shaw', 'Carlson Capital', 'Anson',
+];
+const activistRe = new RegExp(`\\b(${ACTIVISTS.map((a) => a.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&')).join('|')})`, 'i');
+const SALE_INTENT = /\b(sale of the (company|issuer)|strategic alternatives|(merger|acquisition|business combination) (of|with|involving) the issuer|acquire (all|the remaining)|take the (company|issuer) private|going[- ]private|board (representation|seats?|nominees?)|nominate)/i;
+
+export function score13D(filer, text) {
+  let score = 3;
+  const reasons = ['a cumpărat peste 5% ca să influențeze firma (SEC 13D)'];
+  const activist = activistRe.exec(`${filer} ${text.slice(0, 3000)}`)?.[1];
+  if (activist) { score += 2; reasons.push(`investitor activist cunoscut: ${activist}`); }
+  const intent = SALE_INTENT.exec(text)?.[1];
+  if (intent) { score += 2; reasons.push(`scopul declarat: ${intent.toLowerCase()}`); }
+  return { score, reasons };
 }

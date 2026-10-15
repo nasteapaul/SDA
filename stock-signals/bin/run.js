@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Runs once and exits; GitHub Actions calls it every 30 minutes.
+// Runs once and exits, or with LOOP_MINUTES checks again every INTERVAL_SECONDS until
+// that time is up (GitHub Actions keeps one such run going all day).
 //   STATE_DIR          folder for state.json (kept on the signals-data branch)
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   where alerts go (secrets)
 //   SEC_CONTACT        your e-mail; SEC requires a contact in the User-Agent (secret)
 //   GITHUB_TOKEN       given by Actions; used for the free AI summary (GitHub Models)
 //   DRY_RUN=1          print alerts instead of sending them
+//   LOOP_MINUTES, INTERVAL_SECONDS   keep checking (default: once)
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONFIG } from '../config.js';
@@ -30,13 +32,32 @@ const io = makeIo({
 const statePath = join(env.STATE_DIR ?? 'data', 'state.json');
 const { feeds } = JSON.parse(readFileSync(new URL('../feeds.json', import.meta.url), 'utf8'));
 const state = loadState(statePath);
-const firstRun = !state.warm;
-const now = Date.now();
-try {
-  await runOnce({ state, config: CONFIG, feeds, io, now });
-  if (firstRun && state.warm) await notify('✅ Bot-ul de semnale e pornit. Îți scriu doar când apare ceva important.');
-  await updateJournal(state, io, now);
-  if (reportDue(state, now)) await notify(weeklyReport(state, now));
-} finally {
-  saveState(statePath, state);
+const loopMs = (Number(env.LOOP_MINUTES) || 0) * 60e3;
+const intervalMs = Math.max(30, Number(env.INTERVAL_SECONDS) || 120) * 1e3;
+const end = Date.now() + loopMs;
+
+async function check() {
+  const firstRun = !state.warm;
+  const now = Date.now();
+  try {
+    await runOnce({ state, config: CONFIG, feeds, io, now });
+    if (firstRun && state.warm) await notify('✅ Bot-ul de semnale e pornit. Îți scriu doar când apare ceva important.');
+    await updateJournal(state, io, now);
+    if (reportDue(state, now)) await notify(weeklyReport(state, now));
+  } finally {
+    saveState(statePath, state);
+  }
+}
+
+for (;;) {
+  const started = Date.now();
+  try {
+    await check();
+  } catch (e) {
+    if (!loopMs) throw e;
+    console.log(`Verificare eșuată: ${e.message}`); // try again next round
+  }
+  const wait = intervalMs - (Date.now() - started);
+  if (Date.now() + Math.max(wait, 0) >= end) break;
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 }

@@ -81,3 +81,26 @@ test('journal is filled once a day and the Sunday report summarises it', async (
   assert.equal(reportDue(state, sunday + 3600e3), false);
   assert.match(weeklyReport(state, sunday), /După 5 zile \(1 alerte\): medie \+5\.0%/);
 });
+
+test('a new 13D by an activist becomes an alert for the target company', async () => {
+  const state = { ...loadState('/nonexistent'), warm: true };
+  const entry = (role, name, cik) => `<entry><title>SCHEDULE 13D - ${name} (${cik}) (${role})</title>
+    <link href="https://www.sec.gov/Archives/edgar/data/1/000000000126000001/0000000001-26-000001-index.htm"/>
+    <summary type="html">Filed: 2026-10-15</summary><updated>2026-10-15T10:00:00-04:00</updated>
+    <id>urn:tag:sec.gov,2008:accession-number=0000000001-26-000001</id></entry>`;
+  const atom13d = `<feed>${entry('Subject', 'TARGET INC', '0000000777')}${entry('Filed by', 'Starboard Value LP', '0000000999')}</feed>`;
+  const io = fakeIo(() => rss([]));
+  io.sec = async (url) => {
+    if (url.includes('type=SCHEDULE%2013D')) return atom13d;
+    if (url.endsWith('index.json')) return JSON.stringify({ directory: { item: [{ name: 'primary_doc.xml' }] } });
+    if (url.endsWith('primary_doc.xml')) return '<item4>The Reporting Persons intend to discuss strategic alternatives with the Issuer</item4>';
+    return emptyAtom;
+  };
+  io.tickers = async () => new Map([['777', 'TGT']]);
+  const alerts = await runOnce({ state, config: CONFIG, feeds: [], io });
+  assert.deepEqual(alerts.map((a) => a.listing.xtb), ['TGT.US']);
+  assert.match(alerts[0].title, /Starboard Value LP a cumpărat peste 5% din TARGET INC/);
+  assert.equal(alerts[0].score, 8); // 13D 3 + activist 2 + sale intent 2 + AI 1
+  // Seen once: the next check does not alert again.
+  assert.equal((await runOnce({ state, config: CONFIG, feeds: [], io })).length, 0);
+});

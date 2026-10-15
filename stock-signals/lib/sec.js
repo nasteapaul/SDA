@@ -9,7 +9,7 @@ export const currentFeedUrl = (form, start = 0) =>
 
 // "8-K - Acme Corp (0000123456) (Filer)" plus "Item 1.01: ..." lines in the summary.
 export function parseCurrentEntry(e) {
-  const m = /^(\S+) - (.+?) \((\d{10})\) \((\w+)\)/.exec(e.title);
+  const m = /^(.+?) - (.+?) \((\d{10})\) \(([\w ]+)\)/.exec(e.title); // "SCHEDULE 13D", "Filed by"
   if (!m) return null;
   const acc = /accession-number=([\d-]+)/.exec(e.id)?.[1] ?? /(\d{10}-\d{2}-\d{6})/.exec(e.link)?.[1];
   if (!acc) return null;
@@ -23,6 +23,9 @@ export const folderUrl = (cik, acc) => `${SEC}/Archives/edgar/data/${cik}/${acc.
 export function pickDocument(index, kind) {
   const names = (index?.directory?.item ?? []).map((i) => i.name);
   if (kind === 'form4') return names.find((n) => /\.xml$/i.test(n) && !/^FilingSummary/i.test(n));
+  // Since Dec 2024 a 13D is structured XML (primary_doc.xml); older ones are HTML or text.
+  if (kind === '13d') return names.find((n) => /^primary_doc\.xml$/i.test(n))
+    ?? names.find((n) => /\.(html?|txt)$/i.test(n) && !/index/i.test(n));
   return names.find((n) => /ex-?99/i.test(n) && /\.html?$/i.test(n))
     ?? names.find((n) => /\.html?$/i.test(n) && !/index/i.test(n));
 }
