@@ -45,9 +45,9 @@ const runs = accountIds.map((id) => ({
   }),
 }));
 
-// Each poll makes 2 requests plus 1 per market in its entry window, plus an account switch
-// when several accounts share the run; IG allows about 60 per minute.
-const pollMs = Math.max(5000, num('BOT_POLL_MS', 10000 * runs.length));
+// Each poll makes 2 requests plus 1 per market in its entry window; IG allows about 60 per
+// minute. With several accounts every poll also logs in again per account, so poll slower.
+const pollMs = Math.max(5000, num('BOT_POLL_MS', runs.length > 1 ? 30000 : 10000));
 const deadline = Date.now() + num('BOT_MAX_MINUTES', 340) * 60e3;
 let stopping = false;
 let fatal = false;
@@ -76,6 +76,11 @@ for (const run of runs) {
       break;
     } catch (e) {
       failures++;
+      // With several accounts, one that will not start must not hold up the others all day.
+      if (several && failures >= 5) {
+        run.bot.log(`Nu pot porni: ${e.message}. Renunț la acest cont în rularea asta.`);
+        break;
+      }
       const wait = backoff(e, failures);
       run.bot.log(`Nu pot porni: ${e.message}. Reîncerc în ${Math.round(wait / 1000)} s.`);
       await sleep(wait);

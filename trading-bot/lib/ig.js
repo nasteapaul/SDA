@@ -112,12 +112,13 @@ export class IgClient {
     this.accountType = this.accountTypes?.[accountId];
   }
 
-  // One client can serve several accounts of the same login, one at a time.
+  // One client can serve several accounts of the same login, one at a time. IG refuses a
+  // second switch on a session that already switched (401 account-token-invalid), so a
+  // change of account is a fresh login, which switches once.
   async use(accountId) {
     this.wantedAccount = accountId || null;
-    if (!this.tokens) return this.login();
-    const wanted = this.wantedAccount || this.defaultAccount;
-    if (wanted !== this.accountId) await this.switchTo(wanted);
+    if (this.tokens && (this.wantedAccount || this.defaultAccount) === this.accountId) return;
+    await this.login();
   }
 
   async accounts() {

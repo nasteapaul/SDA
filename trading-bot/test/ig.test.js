@@ -161,7 +161,7 @@ test('login returns to the preferred account when another run switched it', asyn
   assert.deepEqual(f.calls[1].body, { accountId: 'SB1', defaultAccount: false });
 });
 
-test('use() switches between accounts of one login only when needed', async () => {
+test('use() changes account through a fresh login, only when needed', async () => {
   const f = fakeFetch({
     'POST /session': { headers: { CST: 'c', 'X-SECURITY-TOKEN': 'x' }, body: { currentAccountId: 'SB1', accounts: [
       { accountId: 'SB1', accountType: 'SPREADBET', preferred: true }, { accountId: 'CFD1', accountType: 'CFD' }] } },
@@ -174,5 +174,5 @@ test('use() switches between accounts of one login only when needed', async () =
   await c.use('CFD1');
   await c.use('');
   assert.equal(c.accountId, 'SB1');
-  assert.deepEqual(f.calls.map((x) => x.method), ['POST', 'PUT', 'PUT']);
+  assert.deepEqual(f.calls.map((x) => x.method), ['POST', 'POST', 'PUT', 'POST']);
 });
