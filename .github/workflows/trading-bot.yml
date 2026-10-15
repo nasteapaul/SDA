@@ -22,7 +22,7 @@ on:
         type: choice
         options: [multi, run, flatten, check]
       account:
-        description: 'IG account id(s) instead of the default one, comma-separated; "default" = the login''s own (e.g. default,XR5HB)'
+        description: 'IG account id to use instead of the default one (e.g. the demo CFD account)'
         required: false
         default: ''
       epics:
@@ -35,7 +35,7 @@ permissions:
 
 concurrency:
   # One run at a time: all accounts share one IG login, and switching account in one run
-  # logs the other run's session out. Several accounts go in one run instead.
+  # logs the other run's session out.
   group: trading-bot
   cancel-in-progress: false
 
@@ -80,8 +80,8 @@ jobs:
 
       - name: Run multi-market bot
         if: env.HAS_IG == 'true' && env.JOB == 'multi'
-        # The bot keeps one state file per account next to this one.
-        run: BOT_STATE="$MULTI_STATE" node trading-bot/bin/multibot.js
+        # One state file per account: each has its own day start equity and trades.
+        run: BOT_STATE="${MULTI_STATE%.json}${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/multibot.js
 
       - name: Run DAX bot
         if: env.HAS_IG == 'true' && env.JOB == 'run'

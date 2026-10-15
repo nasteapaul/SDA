@@ -5,10 +5,8 @@
 import { IgClient } from '../lib/ig.js';
 
 const env = process.env;
-// With a list ("default,XR5HB"), check the first explicit account.
-const accountId = (env.IG_ACCOUNT_ID ?? '').split(',').map((s) => s.trim()).find((s) => s && s !== 'default');
-const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId });
-if (accountId) {
+const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
+if (env.IG_ACCOUNT_ID) {
   // Diagnostics for switching accounts: what the login offers before any switch.
   const probe = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
   try {

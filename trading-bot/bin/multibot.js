@@ -13,11 +13,7 @@ import { telegramNotifier } from '../lib/notify.js';
 
 const env = process.env;
 const num = (k, d) => (env[k] === undefined || env[k] === '' ? d : Number(env[k]));
-// IG_ACCOUNT_ID may list several accounts of the same login ("default" = its preferred one).
-// They must share one process: switching account in one run logs the other run's session out.
-const accountIds = [...new Set((env.IG_ACCOUNT_ID ?? '').split(',').map((s) => s.trim()).map((s) => (s === 'default' ? '' : s)))];
-const several = accountIds.length > 1;
-const notify = telegramNotifier({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID, label: `Bot multi-piață demo${!several && accountIds[0] ? ` ${accountIds[0]}` : ''}` });
+const notify = telegramNotifier({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID, label: `Bot multi-piață demo${env.IG_ACCOUNT_ID ? ` ${env.IG_ACCOUNT_ID}` : ''}` });
 const pendingNotes = [];
 const log = (m) => {
   console.log(`${new Date().toISOString()} ${m}`);
@@ -27,27 +23,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const keys = env.BOT_MARKETS ? env.BOT_MARKETS.split(',').map((s) => s.trim()) : null;
 const markets = liveMarkets().filter((m) => !keys || keys.includes(m.key));
-const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD });
-// One state file per account: each has its own day start equity and trades.
-const statePath = env.BOT_STATE ?? fileURLToPath(new URL('../data/multi-state.json', import.meta.url));
-const runs = accountIds.map((id) => ({
-  id,
-  bot: new MultiBot({
-    client,
-    markets,
-    riskPerTrade: num('BOT_RISK_PER_TRADE', 50),
-    maxDailyLoss: num('BOT_MAX_DAILY_LOSS', 150),
-    // Percentages of the account win over the fixed amounts when set.
-    riskPct: num('BOT_RISK_PCT', undefined),
-    maxDailyLossPct: num('BOT_MAX_DAILY_LOSS_PCT', undefined),
-    state: new StateStore(id ? statePath.replace(/\.json$/, `-${id}.json`) : statePath),
-    log: several ? (m) => log(`[${id || 'cont implicit'}] ${m}`) : log,
-  }),
-}));
+const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
+const bot = new MultiBot({
+  client,
+  markets,
+  riskPerTrade: num('BOT_RISK_PER_TRADE', 50),
+  maxDailyLoss: num('BOT_MAX_DAILY_LOSS', 150),
+  // Percentages of the account win over the fixed amounts when set.
+  riskPct: num('BOT_RISK_PCT', undefined),
+  maxDailyLossPct: num('BOT_MAX_DAILY_LOSS_PCT', undefined),
+  state: new StateStore(env.BOT_STATE ?? fileURLToPath(new URL('../data/multi-state.json', import.meta.url))),
+  log,
+});
 
-// Each poll makes 2 requests plus 1 per market in its entry window; IG allows about 60 per
-// minute. With several accounts every poll also logs in again per account, so poll slower.
-const pollMs = Math.max(5000, num('BOT_POLL_MS', runs.length > 1 ? 30000 : 10000));
+// Each poll makes 2 requests plus 1 per market in its entry window; IG allows about 60 per minute.
+const pollMs = Math.max(5000, num('BOT_POLL_MS', 10000));
 const deadline = Date.now() + num('BOT_MAX_MINUTES', 340) * 60e3;
 let stopping = false;
 let fatal = false;
@@ -66,51 +56,37 @@ function backoff(e, failures) {
   return Math.min(5 * 60e3, 5000 * 2 ** (failures - 1));
 }
 
-for (const run of runs) {
-  let failures = 0;
-  while (!stopping && Date.now() < deadline) {
-    try {
-      await client.use(run.id);
-      await run.bot.start();
-      run.started = true;
-      break;
-    } catch (e) {
-      failures++;
-      // With several accounts, one that will not start must not hold up the others all day.
-      if (several && failures >= 5) {
-        run.bot.log(`Nu pot porni: ${e.message}. Renunț la acest cont în rularea asta.`);
-        break;
-      }
-      const wait = backoff(e, failures);
-      run.bot.log(`Nu pot porni: ${e.message}. Reîncerc în ${Math.round(wait / 1000)} s.`);
-      await sleep(wait);
-    }
+let failures = 0;
+while (!stopping && Date.now() < deadline) {
+  try {
+    await bot.start();
+    failures = 0;
+    break;
+  } catch (e) {
+    failures++;
+    const wait = backoff(e, failures);
+    log(`Nu pot porni: ${e.message}. Reîncerc în ${Math.round(wait / 1000)} s.`);
+    await sleep(wait);
   }
 }
 
-const active = runs.filter((r) => r.started);
 let first = true;
-let failures = 0;
-while (!stopping && (first || active.some((r) => r.bot.hasWork()))) {
+while (!stopping && (first || bot.hasWork())) {
   if (Date.now() >= deadline) {
     log('Program încheiat (limita de timp a rulării). Pozițiile deschise rămân cu stop și țintă la IG.');
     break;
   }
   let wait = pollMs;
-  for (const run of active) {
-    if (stopping || (!first && !run.bot.hasWork())) continue;
-    try {
-      await client.use(run.id);
-      await run.bot.tick();
-      failures = 0;
-    } catch (e) {
-      failures++;
-      wait = Math.max(wait, backoff(e, failures));
-      run.bot.log(`Eroare: ${e.message}. Reîncerc în ${Math.round(wait / 1000)} s.`);
-    }
+  try {
+    await bot.tick();
+    first = false;
+    failures = 0;
+  } catch (e) {
+    failures++;
+    wait = Math.max(pollMs, backoff(e, failures));
+    log(`Eroare: ${e.message}. Reîncerc în ${Math.round(wait / 1000)} s.`);
   }
-  first = false;
-  if (!stopping && active.some((r) => r.bot.hasWork())) await sleep(wait);
+  if (!stopping && bot.hasWork()) await sleep(wait);
 }
 console.log(`${new Date().toISOString()} Nimic de făcut în următoarele ore; ies.`);
 

@@ -160,19 +160,3 @@ test('login returns to the preferred account when another run switched it', asyn
   assert.deepEqual([c.accountId, c.accountType], ['SB1', 'SPREADBET']);
   assert.deepEqual(f.calls[1].body, { accountId: 'SB1', defaultAccount: false });
 });
-
-test('use() changes account through a fresh login, only when needed', async () => {
-  const f = fakeFetch({
-    'POST /session': { headers: { CST: 'c', 'X-SECURITY-TOKEN': 'x' }, body: { currentAccountId: 'SB1', accounts: [
-      { accountId: 'SB1', accountType: 'SPREADBET', preferred: true }, { accountId: 'CFD1', accountType: 'CFD' }] } },
-    'PUT /session': { headers: { 'X-SECURITY-TOKEN': 'x2' }, body: {} },
-  });
-  const c = new IgClient({ ...creds, fetchImpl: f });
-  await c.use('');
-  await c.use('CFD1');
-  assert.equal(c.accountType, 'CFD');
-  await c.use('CFD1');
-  await c.use('');
-  assert.equal(c.accountId, 'SB1');
-  assert.deepEqual(f.calls.map((x) => x.method), ['POST', 'POST', 'PUT', 'POST']);
-});
