@@ -140,7 +140,8 @@ test('JSON and static files are gzipped when accepted, with ETags and 304s', asy
   if (png.status === 200) assert.equal(png.headers['content-encoding'], undefined, 'images are not re-compressed');
 });
 
-test('SIGTERM ends live-update streams and exits promptly', async (t) => {
+// Windows has no SIGTERM: kill() ends the process at once, so there is no clean shutdown to check.
+test('SIGTERM ends live-update streams and exits promptly', { skip: process.platform === 'win32' && 'no SIGTERM on Windows' }, async (t) => {
   const port = PORT + 1;
   const dir = await mkdtemp(path.join(tmpdir(), 'bp-sig-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
