@@ -32,6 +32,7 @@ export function formatPlan(m) {
 
 // Why the event matters, in plain words.
 export function explain(s) {
+  if (s.why) return s.why;
   if (s.source === 'SEC 13D') {
     const activist = s.reasons.some((r) => /activist/.test(r));
     const sale = s.reasons.some((r) => /scopul declarat/.test(r));

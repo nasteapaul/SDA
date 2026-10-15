@@ -4,7 +4,7 @@ import { currentFeedUrl, parseCurrentEntry, folderUrl, pickDocument, parseForm4,
 import { scoreText, scoreInsiders, score13D } from './rules.js';
 import { extractListings, usListing } from './tickers.js';
 import { chart, summarize } from './market.js';
-import { assess } from './ai.js';
+import { assess, ripple } from './ai.js';
 import { record, prune, forwardReturns, pending } from './journal.js';
 
 const DAY = 86400e3;
@@ -19,7 +19,7 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     ['SEC 8-K', () => secEvents(state, config, io, events)],
     ['SEC Form 4', () => insiderEvents(state, config, io, events, now)],
     ['SEC 13D', () => stakeEvents(state, config, io, events)],
-    ...feeds.map((f) => [f.name, () => newsEvents(state, f, io, events)]),
+    ...feeds.map((f) => [f.name, () => (f.kind === 'ripple' ? queueHeadlines(state, f, io, now) : newsEvents(state, f, io, events))]),
   ];
   let ok = 0;
   for (const [name, fn] of sources) {
@@ -42,6 +42,8 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     log(`Prima rulare: am memorat ${events.length} evenimente vechi, fără alerte.`);
     return [];
   }
+
+  await rippleEvents(state, config, io, events, now);
 
   const candidates = [];
   for (const ev of events) {
@@ -69,7 +71,7 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     // GitHub Models' free tier allows about 150 calls a day; the bot now runs all day.
     const day = new Date(now).toISOString().slice(0, 10);
     if (state.ai?.day !== day) state.ai = { day, n: 0 };
-    if (aiCalls < config.maxAiCalls && state.ai.n < config.maxAiPerDay) {
+    if (!ev.why && aiCalls < config.maxAiCalls && state.ai.n < config.maxAiPerDay) {
       aiCalls++;
       state.ai.n++;
       const a = await io.assess(ev);
@@ -200,6 +202,41 @@ async function stakeEvents(state, config, io, events) {
   }
 }
 
+// Headlines from general and specialist sites rarely name a listing; they wait in a queue
+// and every few minutes the AI reads the batch for companies that gain from them.
+async function queueHeadlines(state, feed, io, now) {
+  state.ripple ??= { queue: [], last: 0 };
+  for (const it of parseFeed(await io.news(feed.url))) {
+    if (!isNew(state, `news:${it.id || it.link}`)) continue;
+    if (it.time && now - it.time > DAY) continue; // old news is already in the price
+    state.ripple.queue.push({ feed: feed.name, title: it.title.slice(0, 200), summary: stripTags(it.summary).slice(0, 200), link: it.link });
+  }
+  state.ripple.queue = state.ripple.queue.slice(-60);
+}
+
+async function rippleEvents(state, config, io, events, now) {
+  const r = state.ripple;
+  if (!r?.queue.length || now - r.last < config.rippleEveryMin * 60e3) return;
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (state.ai?.day !== day) state.ai = { day, n: 0 };
+  if (state.ai.n >= config.maxAiPerDay) return;
+  state.ai.n++;
+  r.last = now;
+  const items = r.queue.splice(0, config.rippleBatch);
+  const ideas = (await io.ripple(items)) ?? [];
+  const known = new Set((await io.tickers()).values());
+  for (const idea of ideas) {
+    const listing = known.has(idea.ticker) ? usListing(idea.ticker) : null;
+    if (!listing) continue; // the AI named something that is not a US listing
+    const src = items[idea.item];
+    events.push({
+      source: 'Efect în lanț', company: idea.company || idea.ticker, title: src.title, text: src.title,
+      link: src.link, listing, why: idea.why, score: config.alertScore - 2 + idea.confidence,
+      reasons: [`AI, încredere ${idea.confidence}/3`, `știre din ${src.feed}`],
+    });
+  }
+}
+
 async function newsEvents(state, feed, io, events) {
   const items = parseFeed(await io.news(feed.url));
   for (const it of items) {
@@ -248,6 +285,7 @@ export function makeIo({ secAgent, githubToken, telegram, dryRun, log = console.
     tickers: async () => (tickers ??= tickerMap(await get(`${SEC}/files/company_tickers.json`, { json: true, headers: secHeaders }))),
     chart: (sym, range) => chart(sym, { range }),
     assess: (ev) => assess(ev, { token: githubToken }),
+    ripple: (items) => ripple(items, { token: githubToken }),
     alert: telegram.alert,
     notify: telegram.notify,
     dryRun,

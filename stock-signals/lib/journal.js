@@ -37,6 +37,7 @@ export function record(state, s, now) {
     time: now,
     company: s.company,
     xtb: s.listing.xtb,
+    source: s.source,
     yahoo: s.listing.yahoo,
     benchmark: benchmarkFor(s.listing),
     score: s.score,
