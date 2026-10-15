@@ -11,19 +11,25 @@ const WAKE_AHEAD_MIN = 240; // a run waits at most this long for a session to op
 // after the open, then the first 1-minute close beyond it enters, with the stop at the
 // other side of the range and an optional target in R, both placed at IG. One trade per
 // market per day; positions are closed once the market's session is over. Each trade risks
-// `riskPerTrade` (account currency). A shared daily loss limit stops everything.
+// `riskPct` % of the equity at the start of the day, or a fixed `riskPerTrade` (account
+// currency). A shared daily loss limit (`maxDailyLossPct` % or a fixed `maxDailyLoss`)
+// stops everything. A trade whose margin the account cannot cover is skipped.
 export class MultiBot {
   constructor({
-    client, markets, riskPerTrade, maxDailyLoss, state = new StateStore(null),
+    client, markets, riskPerTrade, maxDailyLoss, riskPct, maxDailyLossPct, state = new StateStore(null),
     log = console.log, now = Date.now, heartbeatMs = 30 * MIN,
   }) {
     if (!markets?.length) throw new Error('No markets to trade');
-    if (!(riskPerTrade > 0)) throw new Error('BOT_RISK_PER_TRADE must be > 0');
-    if (!(maxDailyLoss > 0)) throw new Error('BOT_MAX_DAILY_LOSS must be > 0');
+    if (riskPct != null) {
+      if (!(riskPct > 0 && riskPct <= 2)) throw new Error('BOT_RISK_PCT must be between 0 and 2');
+    } else if (!(riskPerTrade > 0)) throw new Error('BOT_RISK_PER_TRADE must be > 0');
+    if (maxDailyLossPct != null) {
+      if (!(maxDailyLossPct > 0 && maxDailyLossPct <= 6)) throw new Error('BOT_MAX_DAILY_LOSS_PCT must be between 0 and 6');
+    } else if (!(maxDailyLoss > 0)) throw new Error('BOT_MAX_DAILY_LOSS must be > 0');
     for (const m of markets) {
       if (!m.live?.epic || !(m.live.rangeMin > 0)) throw new Error(`Market ${m.key} has no live settings`);
     }
-    Object.assign(this, { client, markets, riskPerTrade, maxDailyLoss, state, log, now, heartbeatMs });
+    Object.assign(this, { client, markets, riskPerTrade, maxDailyLoss, riskPct, maxDailyLossPct, state, log, now, heartbeatMs });
     this.info = {};
     this.builders = {};
     this.risk = { day: null, dayStartEquity: null, halted: false, markets: {}, ...state.load() };
@@ -38,7 +44,17 @@ export class MultiBot {
       this.info[m.key] = info;
     }
     await this.checkRisk();
-    this.log(`Pornit pe ${this.markets.map((m) => m.name).join(', ')}. Risc pe tranzacție ${this.riskPerTrade}, pierdere maximă pe zi ${this.maxDailyLoss}.`);
+    const pct = (p) => (p != null ? ` (${p}% din cont)` : '');
+    this.log(`Pornit pe ${this.markets.map((m) => m.name).join(', ')}. Risc pe tranzacție ${this.tradeRisk()}${pct(this.riskPct)}, pierdere maximă pe zi ${this.dailyLimit()}${pct(this.maxDailyLossPct)}.`);
+  }
+
+  // Amounts in account currency, from the equity at the start of the (Romanian) day.
+  tradeRisk() {
+    return this.riskPct != null ? Math.round(this.risk.dayStartEquity * this.riskPct) / 100 : this.riskPerTrade;
+  }
+
+  dailyLimit() {
+    return this.maxDailyLossPct != null ? Math.round(this.risk.dayStartEquity * this.maxDailyLossPct) / 100 : this.maxDailyLoss;
   }
 
   // True while some market still has a session to trade within the next few hours.
@@ -148,20 +164,34 @@ export class MultiBot {
     if (!(dist > 0)) return this.finish(st, m, `prețul a trecut deja de nivelul de stop.`);
     const stopDistance = this.round(Math.max(dist, info.minStop), info);
     const limitDistance = m.live.targetR ? this.round(Math.max(dist * m.live.targetR, info.minStop), info) : undefined;
-    let size = Math.floor((this.riskPerTrade / stopDistance) * 100) / 100;
+    const risk = this.tradeRisk();
+    let size = Math.floor((risk / stopDistance) * 100) / 100;
     if (size < info.minSize) {
       // The smallest allowed bet may risk a bit more than planned, but never over double.
-      if (info.minSize * stopDistance > 2 * this.riskPerTrade) {
+      if (info.minSize * stopDistance > 2 * risk) {
         return this.finish(st, m, `stopul e prea larg pentru riscul ales.`);
       }
       size = info.minSize;
     }
     if (await this.checkRisk()) return;
+    // Spread bets: margin = stake per point × price × margin %. Other accounts are left to
+    // IG, which refuses the order when funds are short.
+    if (info.marginPct > 0 && info.expiry !== '-' && this.client.available) {
+      const need = size * entry * info.marginPct / 100;
+      const free = await this.client.available();
+      if (need > free) return this.finish(st, m, `marjă insuficientă (trebuie ≈ ${need.toFixed(0)}, disponibil ${free.toFixed(0)}).`);
+    }
     st.done = true; // set before sending, so a crash never sends a second order today
     this.state.save(this.risk);
-    const res = await this.client.openMarket({
-      epic: m.live.epic, expiry: info.expiry, direction: side, size, currency: info.currency, stopDistance, limitDistance,
-    });
+    let res;
+    try {
+      res = await this.client.openMarket({
+        epic: m.live.epic, expiry: info.expiry, direction: side, size, currency: info.currency, stopDistance, limitDistance,
+      });
+    } catch (e) {
+      if (/INSUFFICIENT_FUNDS/.test(e.message)) return this.finish(st, m, 'IG a refuzat ordinul: fonduri insuficiente pentru marjă.');
+      throw e;
+    }
     st.traded = true;
     this.state.save(this.risk);
     this.log(`Deschis ${m.name} ${side} ${size} la ${res.level}, stop ${stopDistance}, țintă ${limitDistance ?? 'fără (închid la sfârșitul sesiunii)'}. Risc ≈ ${(size * stopDistance).toFixed(2)}.`);
@@ -188,10 +218,11 @@ export class MultiBot {
       this.risk = { day: today, dayStartEquity: equity, halted: false, markets: this.risk.markets ?? {} };
       this.state.save(this.risk);
     }
-    if (!this.risk.halted && this.risk.dayStartEquity - equity >= this.maxDailyLoss) {
+    const limit = this.dailyLimit();
+    if (!this.risk.halted && this.risk.dayStartEquity - equity >= limit) {
       this.risk.halted = true;
       this.state.save(this.risk);
-      this.log(`Pierderea zilei a atins ${this.maxDailyLoss}. Închid pozițiile și nu mai tranzacționez azi.`);
+      this.log(`Pierderea zilei a atins ${limit}. Închid pozițiile și nu mai tranzacționez azi.`);
       const epics = new Set(this.markets.map((m) => m.live.epic));
       for (const p of await this.client.openPositions()) if (epics.has(p.epic)) await this.client.closePosition(p);
     }

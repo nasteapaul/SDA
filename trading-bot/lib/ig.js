@@ -106,6 +106,8 @@ export class IgClient {
       decimals: decimalsOf(data.snapshot?.decimalPlacesFactor),
       // Spread-bet accounts must send the market's expiry (e.g. DFB); '-' is CFD only.
       expiry: data.instrument?.expiry ?? '-',
+      // Deposit IG holds while a position is open, as % of its value (null if quoted otherwise).
+      marginPct: data.instrument?.marginFactorUnit === 'PERCENTAGE' ? Number(data.instrument.marginFactor) : null,
     };
   }
 
@@ -128,12 +130,22 @@ export class IgClient {
     return (data.markets ?? []).map((m) => ({ epic: m.epic, name: m.instrumentName, type: m.instrumentType, expiry: m.expiry, status: m.marketStatus }));
   }
 
-  // Balance plus open profit/loss of the current account.
-  async equity() {
+  async account() {
     const { data } = await this.request('GET', '/accounts');
     const acc = data.accounts?.find((a) => a.accountId === this.accountId) ?? data.accounts?.find((a) => a.preferred);
     if (!acc) throw new Error('IG account not found');
-    return acc.balance.balance + acc.balance.profitLoss;
+    return acc.balance;
+  }
+
+  // Balance plus open profit/loss of the current account.
+  async equity() {
+    const b = await this.account();
+    return b.balance + b.profitLoss;
+  }
+
+  // Funds free for new margin.
+  async available() {
+    return (await this.account()).available;
   }
 
   async openPositions(epic) {

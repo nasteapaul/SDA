@@ -12,7 +12,7 @@ import { liveMarkets } from '../lib/markets.js';
 import { telegramNotifier } from '../lib/notify.js';
 
 const env = process.env;
-const num = (k, d) => (env[k] === undefined ? d : Number(env[k]));
+const num = (k, d) => (env[k] === undefined || env[k] === '' ? d : Number(env[k]));
 const notify = telegramNotifier({ token: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID, label: 'Bot multi-piață demo' });
 const pendingNotes = [];
 const log = (m) => {
@@ -29,6 +29,9 @@ const bot = new MultiBot({
   markets,
   riskPerTrade: num('BOT_RISK_PER_TRADE', 50),
   maxDailyLoss: num('BOT_MAX_DAILY_LOSS', 150),
+  // Percentages of the account win over the fixed amounts when set.
+  riskPct: num('BOT_RISK_PCT', undefined),
+  maxDailyLossPct: num('BOT_MAX_DAILY_LOSS_PCT', undefined),
   state: new StateStore(env.BOT_STATE ?? fileURLToPath(new URL('../data/multi-state.json', import.meta.url))),
   log,
 });

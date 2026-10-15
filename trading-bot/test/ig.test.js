@@ -31,10 +31,11 @@ test('refuses any endpoint other than demo', () => {
 });
 
 test('login stores tokens and sends them afterwards', async () => {
-  const f = fakeFetch({ 'POST /session': login, 'GET /accounts': { body: { accounts: [{ accountId: 'A1', balance: { balance: 1000, profitLoss: -25 } }] } } });
+  const f = fakeFetch({ 'POST /session': login, 'GET /accounts': { body: { accounts: [{ accountId: 'A1', balance: { balance: 1000, profitLoss: -25, available: 700 } }] } } });
   const c = new IgClient({ ...creds, fetchImpl: f });
   await c.login();
   assert.equal(await c.equity(), 975);
+  assert.equal(await c.available(), 700);
   assert.equal(f.calls[1].headers.CST, 'c');
   assert.equal(f.calls[0].headers.Version, '2');
 });
