@@ -52,7 +52,7 @@ jobs:
       BOT_EXIT_AT: '12:05'
       MULTI_STATE: ${{ github.workspace }}/state/multi-state.json
       BOT_RISK_PCT: '1'
-      BOT_MAX_DAILY_LOSS_PCT: '1.5'
+      BOT_MAX_DAILY_LOSS_PCT: '3'
       JOB: ${{ github.event.inputs.job || 'multi' }}
       # The bot trades only the Demo-CFD account, not the login's preferred spread-bet one.
       IG_ACCOUNT_ID: ${{ github.event.inputs.account || 'XR5HB' }}
