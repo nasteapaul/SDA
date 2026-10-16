@@ -3,6 +3,8 @@
 #   at the London open and Australia 200 at the Sydney open. Each run trades the sessions
 #   opening in the next hours, closes positions whose session is over, then exits. Safe to
 #   start any number of times: up to 3 losing trades per market per day, kept in the state file.
+# report: the day's trades and the week's summary on Telegram (also sent after the evening
+#   multi run on its own).
 # run / flatten: the older single-market DAX bot (no edge in the research), manual only.
 # Does nothing until the IG_API_KEY secret exists. The bot refuses any non-demo account.
 name: trading-bot
@@ -13,10 +15,10 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'multi = multi-market bot, run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
+        description: 'multi = multi-market bot, report = send today''s and this week''s trade report now, run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
         default: multi
         type: choice
-        options: [multi, run, flatten, check]
+        options: [multi, report, run, flatten, check]
       account:
         description: 'IG account id (default XR5HB, the demo CFD account)'
         required: false
@@ -80,6 +82,14 @@ jobs:
         if: env.HAS_IG == 'true' && env.JOB == 'multi'
         # One state file per account: each has its own day start equity and trades.
         run: BOT_STATE="${MULTI_STATE%.json}${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/multibot.js
+
+      # After a multi run in the evening (the 18:04 close): the day's trades on Telegram,
+      # plus the week's summary on Friday. Sent once a day; job=report sends both now.
+      - name: Trade report
+        if: always() && env.HAS_IG == 'true' && (env.JOB == 'multi' || env.JOB == 'report')
+        env:
+          REPORT_FORCE: ${{ env.JOB == 'report' && '1' || '' }}
+        run: REPORT_STATE="state/report${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/report.js
 
       - name: Run DAX bot
         if: env.HAS_IG == 'true' && env.JOB == 'run'
