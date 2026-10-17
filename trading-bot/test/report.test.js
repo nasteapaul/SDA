@@ -30,7 +30,7 @@ test('daily report lists each trade of the Romanian day and the total', () => {
   assert.match(r, /1\. GBP\/USD Mini: -165\.76 EUR/);
   assert.match(r, /3\. GBP\/USD Mini: \+134\.68 EUR/);
   assert.match(r, /Total zi: \+139\.02 EUR/);
-  assert.doesNotMatch(r, /99/);
+  assert.doesNotMatch(r, /99|intrare/);
 });
 
 test('daily report says so when there was no trade', () => {

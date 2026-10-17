@@ -18,11 +18,11 @@ function utc(s) {
   return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
 }
 
-// Closed trades: { time, name, open, close, pnl }, oldest first.
+// Closed trades: { time, name, pnl }, oldest first.
 export function closedTrades(transactions) {
   return (transactions ?? [])
     .filter((t) => t.transactionType === 'DEAL' || t.transactionType === 'TRADE')
-    .map((t) => ({ time: utc(t.dateUtc ?? t.date), name: t.instrumentName, open: t.openLevel, close: t.closeLevel, pnl: parsePnl(t.profitAndLoss) }))
+    .map((t) => ({ time: utc(t.dateUtc ?? t.date), name: t.instrumentName, pnl: parsePnl(t.profitAndLoss) }))
     .filter((t) => Number.isFinite(t.time) && Number.isFinite(t.pnl))
     .sort((a, b) => a.time - b.time);
 }
@@ -43,7 +43,7 @@ export function dailyReport(trades, now, ccy = 'EUR') {
   const day = tradingDay(now, TZ);
   const today = trades.filter((t) => tradingDay(t.time, TZ) === day);
   if (!today.length) return `📊 Raport ${day}: nicio tranzacție azi.`;
-  const lines = today.map((t, i) => `${i + 1}. ${t.name}: ${money(t.pnl, ccy)}${t.open != null && t.close != null ? ` (intrare ${t.open}, ieșire ${t.close})` : ''}`);
+  const lines = today.map((t, i) => `${i + 1}. ${t.name}: ${money(t.pnl, ccy)}`);
   return [`📊 Raport ${day}: ${today.length} ${today.length === 1 ? 'tranzacție' : 'tranzacții'}`, ...lines, `Total zi: ${money(sum(today), ccy)}`].join('\n');
 }
 
