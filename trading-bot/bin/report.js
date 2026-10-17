@@ -8,6 +8,7 @@ import { StateStore, tradingDay } from '../lib/state.js';
 import { localClock } from '../lib/session.js';
 import { TZ, closedTrades, dailyReport, weeklyReport, isFriday } from '../lib/report.js';
 import { sendTelegram } from '../lib/notify.js';
+import { liveMarkets } from '../lib/markets.js';
 
 const env = process.env;
 const now = Date.now();
@@ -26,10 +27,15 @@ if (!force && (!weekday || mod < 17 * 60 || sent.daily === today)) {
 try {
   const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
   const session = await client.login();
-  const ccy = session.currencyIsoCode ?? 'EUR';
-  const trades = closedTrades(await client.transactions(now - 8 * 86400e3, now + 3600e3));
-  const messages = [dailyReport(trades, now, ccy)];
-  if (force || isFriday(now)) messages.push(weeklyReport(trades, now, ccy));
+  const ccy = (await client.accounts()).find((a) => a.id === client.accountId)?.currency ?? session.currencyIsoCode ?? '';
+  // Only the bot's markets: the account may also hold trades made by hand.
+  const markets = liveMarkets().map((m) => m.name);
+  const trades = closedTrades(await client.transactions(now - 8 * 86400e3, now + 3600e3), markets);
+  // On a weekend, a forced report covers the last weekday.
+  let at = now;
+  while (['Sat', 'Sun'].includes(new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' }).format(at))) at -= 86400e3;
+  const messages = [dailyReport(trades, at, ccy)];
+  if (force || isFriday(at)) messages.push(weeklyReport(trades, at, ccy));
   for (const text of messages) {
     console.log(text);
     if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) await sendTelegram(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, text);

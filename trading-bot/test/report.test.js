@@ -18,6 +18,11 @@ test('closedTrades keeps deals only, oldest first', () => {
   assert.deepEqual(t.map((x) => x.pnl), [-5, 10]);
 });
 
+test('closedTrades drops the conversion note and other markets', () => {
+  const t = closedTrades([tx('2026-10-16T08:39:00', 'E-5', 'GBP/USD Mini converted at 0.754'), tx('2026-10-16T09:00:00', 'E5585', 'US Tech 100')], ['EUR/USD', 'GBP/USD']);
+  assert.deepEqual(t.map((x) => x.name), ['GBP/USD Mini']);
+});
+
 test('daily report lists each trade of the Romanian day and the total', () => {
   const trades = closedTrades([
     tx('2026-10-15T15:05:00', 'E99'), // yesterday

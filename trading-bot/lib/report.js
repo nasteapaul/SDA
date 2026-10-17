@@ -18,11 +18,14 @@ function utc(s) {
   return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
 }
 
-// Closed trades: { time, name, pnl }, oldest first.
-export function closedTrades(transactions) {
+// Closed trades: { time, name, pnl }, oldest first. With `markets` (names such as
+// 'EUR/USD'), only those markets count, so trades made by hand elsewhere stay out.
+export function closedTrades(transactions, markets) {
   return (transactions ?? [])
     .filter((t) => t.transactionType === 'DEAL' || t.transactionType === 'TRADE')
-    .map((t) => ({ time: utc(t.dateUtc ?? t.date), name: t.instrumentName, pnl: parsePnl(t.profitAndLoss) }))
+    // IG appends the conversion rate to the name on accounts in another currency.
+    .map((t) => ({ time: utc(t.dateUtc ?? t.date), name: String(t.instrumentName ?? '').replace(/\s+converted at .*$/i, ''), pnl: parsePnl(t.profitAndLoss) }))
+    .filter((t) => !markets || markets.some((m) => t.name.startsWith(m)))
     .filter((t) => Number.isFinite(t.time) && Number.isFinite(t.pnl))
     .sort((a, b) => a.time - b.time);
 }
