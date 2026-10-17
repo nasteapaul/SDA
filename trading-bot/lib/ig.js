@@ -188,6 +188,14 @@ export class IgClient {
       .map((p) => ({ dealId: p.position.dealId, direction: p.position.direction, size: p.position.size, epic: p.market?.epic }));
   }
 
+  // Closed deals of the current account between two times (UTC), for the reports.
+  async transactions(from, to) {
+    const fmt = (t) => new Date(t).toISOString().slice(0, 19);
+    const q = new URLSearchParams({ type: 'ALL_DEAL', from: fmt(from), to: fmt(to), pageSize: '0' });
+    const { data } = await this.request('GET', `/history/transactions?${q}`, { version: 2 });
+    return data.transactions ?? [];
+  }
+
   // Market order with a mandatory stop. Distances are in the market's points.
   async openMarket({ epic, expiry = '-', direction, size, currency, stopDistance, limitDistance }) {
     if (!(stopDistance > 0)) throw new Error('A stop distance is required for every order');

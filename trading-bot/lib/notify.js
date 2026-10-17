@@ -6,15 +6,19 @@ export function telegramNotifier({ token, chatId, label = 'DAX demo', fetchImpl 
   if (!token || !chatId) return null;
   return async (message) => {
     if (!IMPORTANT.test(message)) return;
-    try {
-      await fetchImpl(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: `🤖 ${label}: ${message}`.slice(0, 4000) }),
-        signal: AbortSignal.timeout(10000),
-      });
-    } catch {
-      // A missed notification must never stop trading logic.
-    }
+    await sendTelegram(token, chatId, `🤖 ${label}: ${message}`, fetchImpl);
   };
+}
+
+export async function sendTelegram(token, chatId, text, fetchImpl = fetch) {
+  try {
+    await fetchImpl(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4000) }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    // A missed notification must never stop trading logic.
+  }
 }
