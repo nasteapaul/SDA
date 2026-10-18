@@ -1,10 +1,10 @@
-# Render Blueprint: deploys the Farul game server (free plan, HTTPS + WebSockets).
+# Render Blueprint: deploys the Magistrala game server (free plan, HTTPS + WebSockets).
 services:
   - type: web
-    name: farul
+    name: magistrala
     runtime: node
     plan: free
-    rootDir: farul
+    rootDir: magistrala
     buildCommand: "echo no build needed"
     startCommand: node server.js
     healthCheckPath: /healthz
