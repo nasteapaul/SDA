@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Telegram trade reports from the IG DEMO account: every evening (after 17:00 Romania time)
 // the day's closed trades and the day's total, and on Friday a summary of the week.
-// Sent once a day (REPORT_STATE remembers it); REPORT_FORCE=1 sends both now.
+// Sent once a day (REPORT_STATE remembers it); REPORT_FORCE=1 sends the daily one now.
 // Usage: node --env-file=.env bin/report.js
 import { IgClient } from '../lib/ig.js';
 import { StateStore, tradingDay } from '../lib/state.js';
@@ -49,7 +49,7 @@ try {
   let at = now;
   while (['Sat', 'Sun'].includes(new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' }).format(at))) at -= 86400e3;
   const messages = [dailyReport(trades, at, ccy)];
-  if (force || isFriday(at)) messages.push(weeklyReport(trades, at, ccy));
+  if (isFriday(at)) messages.push(weeklyReport(trades, at, ccy));
   for (const text of messages) {
     console.log(text);
     if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) await sendTelegram(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, text);
