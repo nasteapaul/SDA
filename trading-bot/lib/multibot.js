@@ -11,6 +11,8 @@ const MAX_TRADES = 6; // per market and day, a safety cap
 // Holiday pause (Paul's choice, 2026-10-19): no new trades from 24 December to 2 January,
 // when thin markets give false breakouts and wider spreads. Uses the market's local date.
 export const isHolidayPause = (day) => day.slice(5) >= '12-24' || day.slice(5) <= '01-02';
+// Days a single market sits out (lib/markets.js `live.skipDays`, e.g. ECB days for EUR/USD).
+const skipsDay = (m, day) => m.live?.skipDays?.includes(day) ?? false;
 
 // Opening range breakout on several IG markets, each in its own session (lib/markets.js,
 // field `live`). Per market and local day: the high/low of the first `rangeMin` minutes
@@ -81,7 +83,7 @@ export class MultiBot {
     return this.markets.some((m) => {
       const { day, mod } = localClock(now, m.tz);
       const st = this.risk.markets[m.key];
-      if ((st?.day === day && st.done) || isHolidayPause(day)) return false;
+      if ((st?.day === day && st.done) || isHolidayPause(day) || skipsDay(m, day)) return false;
       const lastEntry = m.open + ENTRY_HOURS * 60;
       return mod < lastEntry && m.open - mod <= WAKE_AHEAD_MIN;
     });
@@ -127,6 +129,7 @@ export class MultiBot {
     }
     if (st.done || this.risk.halted || this.stopped) return;
     if (!st.open && !positions.length && isHolidayPause(day)) return this.finish(st, m, 'pauză de sărbători (24 decembrie – 2 ianuarie).');
+    if (!st.open && !positions.length && skipsDay(m, day)) return this.finish(st, m, `${live.skipWhy ?? 'zi exclusă'}, fără tranzacții azi.`);
     const rangeEnd = m.open + live.rangeMin;
     const lastEntry = m.open + ENTRY_HOURS * 60;
     if (mod < rangeEnd) return;
