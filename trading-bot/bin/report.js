@@ -24,9 +24,23 @@ if (!force && (!weekday || mod < 17 * 60 || sent.daily === today)) {
   process.exit(0);
 }
 
+// Right after the trading run, IG can reject the account switch of a fresh login (401
+// account-token-invalid) for a few seconds, so log in again after a pause.
+async function login(attempts = 4) {
+  for (let i = 1; ; i++) {
+    const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
+    try {
+      return { client, session: await client.login() };
+    } catch (e) {
+      if (i >= attempts || e.fatal || e.status !== 401) throw e;
+      console.log(`Raport: login respins (${e.message}), reîncerc.`);
+      await new Promise((r) => setTimeout(r, 15000 * i));
+    }
+  }
+}
+
 try {
-  const client = new IgClient({ apiKey: env.IG_API_KEY, identifier: env.IG_USERNAME, password: env.IG_PASSWORD, accountId: env.IG_ACCOUNT_ID });
-  const session = await client.login();
+  const { client, session } = await login();
   const ccy = (await client.accounts()).find((a) => a.id === client.accountId)?.currency ?? session.currencyIsoCode ?? '';
   // Only the bot's markets: the account may also hold trades made by hand.
   const markets = liveMarkets().map((m) => m.name);
