@@ -1,46 +1,30 @@
 {
-  "day": "2026-10-16",
-  "dayStartEquity": 33025.62,
+  "day": "2026-10-19",
+  "dayStartEquity": 33163.14,
   "halted": false,
   "markets": {
     "AU200": {
-      "day": "2026-10-16",
+      "day": "2026-10-19",
       "done": false,
       "range": {
-        "hi": 8812.6,
-        "lo": 8766.9
-      }
-    },
-    "EURUSD": {
-      "day": "2026-10-16",
-      "done": false,
-      "range": {
-        "hi": 1.12492,
-        "lo": 1.12342
+        "hi": 8836.9,
+        "lo": 8808.15
       },
       "armed": true,
       "open": {
-        "side": "BUY",
-        "level": 1.12503
+        "side": "SELL",
+        "level": 8806.1
       },
       "trades": 1,
       "traded": true
     },
+    "EURUSD": {
+      "day": "2026-10-19",
+      "done": false
+    },
     "GBPUSD": {
-      "day": "2026-10-16",
-      "done": false,
-      "range": {
-        "hi": 1.332425,
-        "lo": 1.3310149999999998
-      },
-      "armed": true,
-      "open": {
-        "side": "BUY",
-        "level": 1.33267
-      },
-      "trades": 2,
-      "traded": true,
-      "losses": 1
+      "day": "2026-10-19",
+      "done": false
     }
   }
 }
