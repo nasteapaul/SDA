@@ -1,0 +1,15 @@
+name: etf-research
+# Backtest of slow ETF strategies (trading-bot/bin/etf-research.js). It needs Yahoo/Stooq
+# prices, which the runner can reach; results are printed in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/etf-research.js', '.github/workflows/etf-research.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node trading-bot/bin/etf-research.js --cost 0.1
