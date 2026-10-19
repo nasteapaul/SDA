@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MultiBot, isHolidayPause } from '../lib/multibot.js';
+import { MARKETS, ECB_DECISION_DAYS } from '../lib/markets.js';
 
 const MIN = 60e3;
 const OPEN = Date.parse('2026-10-13T07:00:00Z'); // 08:00 in London (BST)
@@ -236,4 +237,23 @@ test('holiday pause: no trades from 24 December to 2 January', async () => {
   await run(bot, client, 10, () => 130);
   assert.equal(client.orders.length, 0);
   assert.equal(bot.risk.markets.GBPUSD.done, true);
+});
+
+test('a market sits out its skip days (ECB days for EUR/USD), other days trade as usual', async () => {
+  const client = fakeClient();
+  const skipping = { ...GBP, live: { ...GBP.live, skipDays: ['2026-10-13'], skipWhy: 'test' } };
+  const bot = makeBot(client, OPEN + 60 * MIN, { markets: [skipping] });
+  await bot.start();
+  assert.equal(bot.hasWork(), false);
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 10, () => 130);
+  assert.equal(client.orders.length, 0);
+  assert.equal(bot.risk.markets.GBPUSD.done, true);
+});
+
+test('EUR/USD skips ECB decision days and the list still covers the coming months', () => {
+  const eur = MARKETS.find((m) => m.key === 'EURUSD');
+  assert.ok(eur.live.skipDays.includes('2026-10-29'));
+  const ahead = new Date(Date.now() + 90 * 86400e3).toISOString().slice(0, 10);
+  assert.ok(ECB_DECISION_DAYS.some((d) => d >= ahead), 'add the next ECB meeting dates to lib/markets.js');
 });

@@ -8,6 +8,14 @@
 // account, and the opening-range settings. Chosen in the 2005-2020 research as the only ones positive
 // both before and after 2013; the edge is small, so they run on demo as a forward test.
 
+// ECB rate decision days (ecb.europa.eu, Governing Council monetary policy meetings). EUR/USD
+// lost on these days in both 2005–2012 and 2013–2020 (bin/news-research.js), so it sits them
+// out (Paul's choice, 2026-10-19). Extend the list when the ECB publishes the next calendar.
+export const ECB_DECISION_DAYS = [
+  '2026-10-29', '2026-12-17',
+  '2027-02-04', '2027-03-18', '2027-04-29', '2027-06-10', '2027-07-22', '2027-09-09', '2027-10-28', '2027-12-16',
+];
+
 export const MARKETS = Object.freeze([
   { key: 'US500', name: 'US 500', history: 'oanda/SPX500_USD', tz: 'America/New_York', open: 570, close: 960, spread: 0.4 },
   { key: 'USTECH', name: 'US Tech 100', history: 'oanda/NAS100_USD', tz: 'America/New_York', open: 570, close: 960, spread: 1.0 },
@@ -21,7 +29,7 @@ export const MARKETS = Object.freeze([
   { key: 'GOLD', name: 'Spot Gold', history: 'oanda/XAU_USD', tz: 'America/New_York', open: 500, close: 960, spread: 0.3 },
   { key: 'OIL', name: 'US Crude', history: 'oanda/WTICO_USD', tz: 'America/New_York', open: 540, close: 870, spread: 0.028 },
   { key: 'NATGAS', name: 'Natural Gas', history: 'oanda/NATGAS_USD', tz: 'America/New_York', open: 540, close: 870, spread: 0.006 },
-  { key: 'EURUSD', name: 'EUR/USD', history: 'oanda/EUR_USD', tz: 'Europe/London', open: 480, close: 960, spread: 0.00006, live: { epic: 'CS.D.EURUSD.TODAY.IP', cfdEpics: ['CS.D.EURUSD.MINI.IP'], rangeMin: 30, targetR: null } },
+  { key: 'EURUSD', name: 'EUR/USD', history: 'oanda/EUR_USD', tz: 'Europe/London', open: 480, close: 960, spread: 0.00006, live: { epic: 'CS.D.EURUSD.TODAY.IP', cfdEpics: ['CS.D.EURUSD.MINI.IP'], rangeMin: 30, targetR: null, skipDays: ECB_DECISION_DAYS, skipWhy: 'zi cu decizie de dobândă ECB' } },
   { key: 'GBPUSD', name: 'GBP/USD', history: 'oanda/GBP_USD', tz: 'Europe/London', open: 480, close: 960, spread: 0.00009, live: { epic: 'CS.D.GBPUSD.TODAY.IP', cfdEpics: ['CS.D.GBPUSD.MINI.IP'], rangeMin: 30, targetR: null } },
   { key: 'EURJPY', name: 'EUR/JPY', history: 'oanda/EUR_JPY', tz: 'Europe/London', open: 480, close: 960, spread: 0.015 },
   { key: 'AUDUSD', name: 'AUD/USD', history: 'oanda/AUD_USD', tz: 'Asia/Tokyo', open: 540, close: 900, spread: 0.00006 },
