@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MultiBot } from '../lib/multibot.js';
+import { MultiBot, isHolidayPause } from '../lib/multibot.js';
 
 const MIN = 60e3;
 const OPEN = Date.parse('2026-10-13T07:00:00Z'); // 08:00 in London (BST)
@@ -223,4 +223,17 @@ test('a winning trade does not count as a loss and needs a new breakout to trade
   await run(bot, client, 3, () => 110);
   await run(bot, client, 3, () => 125);
   assert.equal(client.orders.length, 2);
+});
+
+test('holiday pause: no trades from 24 December to 2 January', async () => {
+  assert.ok(isHolidayPause('2026-12-24') && isHolidayPause('2026-12-31') && isHolidayPause('2027-01-02'));
+  assert.ok(!isHolidayPause('2026-12-23') && !isHolidayPause('2027-01-03'));
+  const client = fakeClient();
+  const xmas = Date.parse('2026-12-28T08:00:00Z'); // 08:00 in London (GMT)
+  const bot = makeBot(client, xmas + 60 * MIN);
+  await bot.start();
+  assert.equal(bot.hasWork(), false); // a holiday run exits at once
+  await run(bot, client, 10, () => 130);
+  assert.equal(client.orders.length, 0);
+  assert.equal(bot.risk.markets.GBPUSD.done, true);
 });
