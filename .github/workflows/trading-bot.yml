@@ -15,10 +15,10 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'multi = multi-market bot, report = send today''s and this week''s trade report now, run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
+        description: 'multi = multi-market bot, report = send today''s and this week''s trade report now, pnl = print every closed trade and the totals since October (log only), run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
         default: multi
         type: choice
-        options: [multi, report, run, flatten, check]
+        options: [multi, report, pnl, run, flatten, check]
       account:
         description: 'IG account id (default XR5HB, the demo CFD account)'
         required: false
@@ -90,6 +90,10 @@ jobs:
         env:
           REPORT_FORCE: ${{ env.JOB == 'report' && '1' || '' }}
         run: REPORT_STATE="state/report${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/report.js
+
+      - name: Profit and loss so far
+        if: env.HAS_IG == 'true' && env.JOB == 'pnl'
+        run: node trading-bot/bin/pnl.js
 
       - name: Run DAX bot
         if: env.HAS_IG == 'true' && env.JOB == 'run'
