@@ -2,16 +2,21 @@
 // When should the live London ORB (re-entry until 3 losses) take its profit? Compares the
 // current exit (stop or session close) with (a) an earlier fixed close time and (b) a
 // trailing stop that starts once the trade is `start` R in profit and then follows the best
-// price at `gap` R. 2005–2012 and 2013–2020 separately, IG costs included.
+// price at `gap` R, (c) a target where the day's move (from its low for a long, its high for
+// a short) reaches `k` times the average daily range of the previous 20 days. 2005–2012 and 2013–2020 separately, IG costs included.
 //
-//   node bin/exit-research.js <MARKET_KEY> <pyfinancialdata/data>
+//   node bin/exit-research.js <MARKET_KEY> <pyfinancialdata/data> [HistData pair] [from year]
+// With a HistData pair (e.g. EURUSD, AUXAUD; see bin/histdata-download.js) the market's
+// history comes from that folder instead, and the periods are <from>–2022 and 2023–now.
 import { groupDays } from '../lib/history.js';
 import { loadMarketBars } from '../lib/marketdata.js';
 import { spreadAt } from '../lib/daytrade.js';
 import { marketByKey, costsFor } from '../lib/markets.js';
 
-const [key, root] = process.argv.slice(2);
-const m = marketByKey(key);
+const [key, root, pair, fromYear] = process.argv.slice(2);
+const m = pair ? { ...marketByKey(key), history: `histdata/${pair}` } : marketByKey(key);
+const FROM = pair ? +(fromYear ?? 2020) : 2005;
+const PERIODS = pair ? [[String(FROM), '2023'], ['2023', '2100']] : [['2005', '2013'], ['2013', '2021']];
 if (!m?.live || !root) {
   console.error('Usage: node bin/exit-research.js <MARKET_KEY> <data folder>');
   process.exit(1);
@@ -46,7 +51,7 @@ function sim(bars, { dir, entryIdx, stop, target, exitMod, trail }) {
   return { exitIdx, why, r: ((exit - entry) * dir - spreadAt(bars[entryIdx].mod, costs)) / risk };
 }
 
-function dayR(dd, exitMod, trail) {
+function dayR(dd, exitMod, trail, adrK) {
   const bars = dd.bars;
   const start = bars.findIndex((b) => b.mod >= m.open);
   if (start < 0 || bars[start].mod > m.open + 5) return null;
@@ -61,7 +66,15 @@ function dayR(dd, exitMod, trail) {
     if (!dir) continue;
     const entry = bars[i + 1].open;
     const stop = dir > 0 ? lo : hi;
-    const t = sim(bars, { dir, entryIdx: i + 1, stop, target: targetR ? entry + dir * (entry - stop) * dir * targetR : null, exitMod, trail });
+    let target = targetR ? entry + dir * (entry - stop) * dir * targetR : null;
+    if (adrK && dd.adr) {
+      let dayHi = -Infinity, dayLo = Infinity;
+      for (let j = 0; j <= i; j++) { dayHi = Math.max(dayHi, bars[j].high); dayLo = Math.min(dayLo, bars[j].low); }
+      const t2 = dir > 0 ? dayLo + adrK * dd.adr : dayHi - adrK * dd.adr;
+      // Already beyond the typical move: take a small fixed target of 0.5R instead.
+      target = (t2 - entry) * dir > 0 ? t2 : entry + dir * 0.5 * (entry - stop) * dir;
+    }
+    const t = sim(bars, { dir, entryIdx: i + 1, stop, target, exitMod, trail });
     if (!t) continue;
     total += t.r;
     i = t.exitIdx;
@@ -72,15 +85,20 @@ function dayR(dd, exitMod, trail) {
   return total;
 }
 
-const days = groupDays(loadMarketBars(m, root, 2005), m.tz).filter((d) => d.bars.length > 60);
-function line(label, exitMod, trail) {
+const days = groupDays(loadMarketBars(m, root, FROM), m.tz).filter((d) => d.bars.length > 60);
+// Average high–low range of the previous 20 days, known before the day starts.
+days.forEach((d, i) => {
+  const prev = days.slice(Math.max(0, i - 20), i).map((p) => Math.max(...p.bars.map((b) => b.high)) - Math.min(...p.bars.map((b) => b.low)));
+  d.adr = prev.length >= 10 ? prev.reduce((a, b) => a + b, 0) / prev.length : null;
+});
+function line(label, exitMod, trail, adrK) {
   const part = (a, b) => {
-    const rs = days.filter((d) => d.day >= a && d.day < b).map((d) => dayR(d, exitMod, trail)).filter((x) => x != null);
+    const rs = days.filter((d) => d.day >= a && d.day < b).map((d) => dayR(d, exitMod, trail, adrK)).filter((x) => x != null);
     let eq = 0, peak = 0, dd = 0;
     for (const r of rs) { eq += r; peak = Math.max(peak, eq); dd = Math.max(dd, peak - eq); }
     return `${eq >= 0 ? '+' : ''}${eq.toFixed(0).padStart(4)}R (DD ${dd.toFixed(0)}R)`;
   };
-  console.log(`${label.padEnd(34)} 2005–12: ${part('2005', '2013')} | 2013–20: ${part('2013', '2021')}`);
+  console.log(`${label.padEnd(34)} ${PERIODS.map(([a, b]) => `${a}–${b === '2100' ? 'azi' : +b - 1}: ${part(a, b)}`).join(' | ')}`);
 }
 
 const hhmm = (mod) => `${String(Math.floor(mod / 60)).padStart(2, '0')}:${String(mod % 60).padStart(2, '0')}`;
@@ -91,3 +109,4 @@ for (const start of [1, 1.5, 2, 3]) for (const gap of [0.5, 1, 1.5]) {
   if (gap >= start) continue;
   line(`Stop urmăritor: de la +${start}R, la ${gap}R`, m.close, { start, gap });
 }
+for (const k of [0.6, 0.8, 1, 1.2, 1.5]) line(`Țintă la ${k}× mișcarea medie zilnică`, m.close, null, k);
