@@ -7,7 +7,7 @@
 //
 //   node bin/exit-research.js <MARKET_KEY> <pyfinancialdata/data> [HistData pair] [from year]
 // With a HistData pair (e.g. EURUSD, AUXAUD; see bin/histdata-download.js) the market's
-// history comes from that folder instead, and the periods are <from>–2022 and 2023–now.
+// history comes from that folder instead, and the periods are <from>–2019, 2020–2022 and 2023–now.
 import { groupDays } from '../lib/history.js';
 import { loadMarketBars } from '../lib/marketdata.js';
 import { spreadAt } from '../lib/daytrade.js';
@@ -16,7 +16,7 @@ import { marketByKey, costsFor } from '../lib/markets.js';
 const [key, root, pair, fromYear] = process.argv.slice(2);
 const m = pair ? { ...marketByKey(key), history: `histdata/${pair}` } : marketByKey(key);
 const FROM = pair ? +(fromYear ?? 2020) : 2005;
-const PERIODS = pair ? [[String(FROM), '2023'], ['2023', '2100']] : [['2005', '2013'], ['2013', '2021']];
+const PERIODS = pair ? [[String(FROM), '2020'], ['2020', '2023'], ['2023', '2100']] : [['2005', '2013'], ['2013', '2021']];
 if (!m?.live || !root) {
   console.error('Usage: node bin/exit-research.js <MARKET_KEY> <data folder>');
   process.exit(1);
@@ -104,6 +104,11 @@ function line(label, exitMod, trail, adrK) {
 const hhmm = (mod) => `${String(Math.floor(mod / 60)).padStart(2, '0')}:${String(mod % 60).padStart(2, '0')}`;
 console.log(`\n=== ${m.name}: ieșire (ore ${m.tz}) ===`);
 line(`Acum: stop sau închidere ${hhmm(m.close)}`, m.close);
+{
+  const years = {};
+  for (const d of days) { const r = dayR(d, m.close); if (r != null) years[d.day.slice(0, 4)] = (years[d.day.slice(0, 4)] ?? 0) + r; }
+  console.log(`  pe ani: ${Object.entries(years).map(([y, r]) => `${y} ${r >= 0 ? '+' : ''}${r.toFixed(0)}R`).join(', ')}`);
+}
 for (const t of [600, 660, 720, 780, 840, 900]) line(`Închidere la ${hhmm(t)}`, t);
 for (const start of [1, 1.5, 2, 3]) for (const gap of [0.5, 1, 1.5]) {
   if (gap >= start) continue;
