@@ -1,0 +1,15 @@
+name: gap-research
+# Do US stocks that gap at the open on news keep going until the close? (trading-bot/bin/gap-research.js)
+# Needs Yahoo prices, which the runner can reach; results are in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/gap-research.js', '.github/workflows/gap-research.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node trading-bot/bin/gap-research.js
