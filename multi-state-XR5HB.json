@@ -20,11 +20,34 @@
     },
     "EURUSD": {
       "day": "2026-10-20",
-      "done": false
+      "done": false,
+      "range": {
+        "hi": 1.12344,
+        "lo": 1.12248
+      },
+      "armed": true,
+      "open": {
+        "side": "SELL",
+        "level": 1.12233
+      },
+      "trades": 1,
+      "traded": true
     },
     "GBPUSD": {
       "day": "2026-10-20",
-      "done": false
+      "done": false,
+      "range": {
+        "hi": 1.335455,
+        "lo": 1.3347250000000002
+      },
+      "open": {
+        "side": "SELL",
+        "level": 1.33472
+      },
+      "trades": 2,
+      "traded": true,
+      "losses": 1,
+      "armed": true
     }
   }
 }
