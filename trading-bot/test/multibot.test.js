@@ -276,3 +276,12 @@ test('US Tech 100 trades buys only', () => {
   assert.equal(tech.live.longOnly, true);
   assert.equal(tech.tz, 'America/New_York');
 });
+
+test('the US Tech 100 close run does not wait for the Sydney open', () => {
+  const au = MARKETS.find((m) => m.key === 'AU200');
+  const bot = makeBot(fakeClient(), Date.parse('2026-10-22T20:05:00Z'), { markets: [au] }); // 07:05 in Sydney
+  bot.risk.dayStartEquity = 10000;
+  assert.equal(bot.hasWork(), false);
+  bot.clock = Date.parse('2026-10-22T22:38:00Z'); // the Sydney start, 09:38 there
+  assert.equal(bot.hasWork(), true);
+});
