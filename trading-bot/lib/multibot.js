@@ -4,7 +4,10 @@ import { localClock } from './session.js';
 
 const MIN = 60e3;
 const ENTRY_HOURS = 3; // entries allowed for 3 hours after the session open
-const WAKE_AHEAD_MIN = 240; // a run waits at most this long for a session to open
+// A run waits at most this long for a session to open. The scheduled starts come ~20 min
+// before each open; with more, the US Tech 100 close run (16:05 New York) would wait for
+// Sydney and hold back the evening report.
+const WAKE_AHEAD_MIN = 60;
 const MAX_LOSSES = 3; // per market and day; a later breakout of the range trades again until then
 const MAX_TRADES = 6; // per market and day, a safety cap
 
