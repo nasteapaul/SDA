@@ -1,0 +1,22 @@
+name: wf-research
+# Self-tuning (monthly walk-forward) ORB vs the fixed live rules on 2015–today 1-minute data
+# from HistData.com (bin/wf-research.js); results are in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/wf-research.js', '.github/workflows/wf-research.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Download 1-minute data
+        run: node trading-bot/bin/histdata-download.js "$RUNNER_TEMP/data" EURUSD,GBPUSD,AUXAUD 2015
+      - name: EUR/USD
+        run: node trading-bot/bin/wf-research.js EURUSD "$RUNNER_TEMP/data" EURUSD 2015
+      - name: GBP/USD
+        run: node trading-bot/bin/wf-research.js GBPUSD "$RUNNER_TEMP/data" GBPUSD 2015
+      - name: Australia 200
+        run: node trading-bot/bin/wf-research.js AU200 "$RUNNER_TEMP/data" AUXAUD 2015
