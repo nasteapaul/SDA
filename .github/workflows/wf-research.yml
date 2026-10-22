@@ -4,7 +4,7 @@ name: wf-research
 on:
   workflow_dispatch:
   push:
-    paths: ['trading-bot/bin/wf-research.js', '.github/workflows/wf-research.yml']
+    paths: ['trading-bot/bin/wf-research.js', 'trading-bot/bin/overnight-research.js', '.github/workflows/wf-research.yml']
 jobs:
   research:
     runs-on: ubuntu-latest
@@ -20,3 +20,8 @@ jobs:
         run: node trading-bot/bin/wf-research.js GBPUSD "$RUNNER_TEMP/data" GBPUSD 2015
       - name: Australia 200
         run: node trading-bot/bin/wf-research.js AU200 "$RUNNER_TEMP/data" AUXAUD 2015
+      - name: Overnight hold
+        run: |
+          node trading-bot/bin/overnight-research.js EURUSD "$RUNNER_TEMP/data" EURUSD 2015
+          node trading-bot/bin/overnight-research.js GBPUSD "$RUNNER_TEMP/data" GBPUSD 2015
+          node trading-bot/bin/overnight-research.js AU200 "$RUNNER_TEMP/data" AUXAUD 2015
