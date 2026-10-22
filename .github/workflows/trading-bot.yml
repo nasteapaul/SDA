@@ -83,7 +83,7 @@ jobs:
         # One state file per account: each has its own day start equity and trades.
         run: BOT_STATE="${MULTI_STATE%.json}${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/multibot.js
 
-      # After a multi run in the evening (the 18:04 close): the day's trades on Telegram,
+      # After the evening multi run that closes US Tech 100 (16:05 New York): the day's trades on Telegram,
       # plus the week's summary on Friday. Sent once a day; job=report sends both now.
       - name: Trade report
         if: always() && env.HAS_IG == 'true' && (env.JOB == 'multi' || env.JOB == 'report')

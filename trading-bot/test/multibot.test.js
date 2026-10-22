@@ -257,3 +257,22 @@ test('EUR/USD skips ECB decision days and the list still covers the coming month
   const ahead = new Date(Date.now() + 90 * 86400e3).toISOString().slice(0, 10);
   assert.ok(ECB_DECISION_DAYS.some((d) => d >= ahead), 'add the next ECB meeting dates to lib/markets.js');
 });
+
+test('a long-only market (US Tech 100) ignores breaks below the range and still buys breaks above', async () => {
+  const client = fakeClient();
+  const longOnly = { ...GBP, live: { ...GBP.live, longOnly: true } };
+  const bot = makeBot(client, OPEN + 60 * MIN, { markets: [longOnly] });
+  await bot.start();
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 5, () => 95);
+  assert.equal(client.orders.length, 0, 'no short');
+  await run(bot, client, 5, () => 125);
+  assert.equal(client.orders.length, 1);
+  assert.equal(client.orders[0].direction, 'BUY');
+});
+
+test('US Tech 100 trades buys only', () => {
+  const tech = MARKETS.find((m) => m.key === 'USTECH');
+  assert.equal(tech.live.longOnly, true);
+  assert.equal(tech.tz, 'America/New_York');
+});

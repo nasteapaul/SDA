@@ -18,7 +18,9 @@ export const ECB_DECISION_DAYS = [
 
 export const MARKETS = Object.freeze([
   { key: 'US500', name: 'US 500', history: 'oanda/SPX500_USD', tz: 'America/New_York', open: 570, close: 960, spread: 0.4 },
-  { key: 'USTECH', name: 'US Tech 100', history: 'oanda/NAS100_USD', tz: 'America/New_York', open: 570, close: 960, spread: 1.0 },
+  // Buys only (Paul's choice, 2026-10-22): long 30-minute breakouts were positive in 2015–2019,
+  // 2020–2022 and 2023–2026 on HistData (bin/tech-research.js), but not on Oanda 2005–2019.
+  { key: 'USTECH', name: 'US Tech 100', history: 'oanda/NAS100_USD', tz: 'America/New_York', open: 570, close: 960, spread: 1.0, live: { epic: 'IX.D.NASDAQ.CASH.IP', cfdEpics: ['IX.D.NASDAQ.IFS.IP', 'IX.D.NASDAQ.IFM.IP'], rangeMin: 30, targetR: null, longOnly: true } },
   { key: 'US2000', name: 'US Russell 2000', history: 'oanda/US2000_USD', tz: 'America/New_York', open: 570, close: 960, spread: 0.4 },
   { key: 'UK100', name: 'FTSE 100', history: 'oanda/UK100_GBP', tz: 'Europe/London', open: 480, close: 990, spread: 1.0 },
   { key: 'FR40', name: 'France 40', history: 'oanda/FR40_EUR', tz: 'Europe/Paris', open: 540, close: 1050, spread: 1.0 },
