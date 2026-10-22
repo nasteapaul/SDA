@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Telegram trade reports from the IG DEMO account: every evening (after 17:00 Romania time)
+// Telegram trade reports from the IG DEMO account: every evening (after 22:00 Romania time, the US Tech 100 close run)
 // the day's closed trades and the day's total, and on Friday a summary of the week.
 // Sent once a day (REPORT_STATE remembers it); REPORT_FORCE=1 sends the daily one now.
 // Usage: node --env-file=.env bin/report.js
@@ -19,8 +19,8 @@ const today = tradingDay(now, TZ);
 const { mod } = localClock(now, TZ);
 const weekday = !['Sat', 'Sun'].includes(new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' }).format(now));
 
-if (!force && (!weekday || mod < 17 * 60 || sent.daily === today)) {
-  console.log('Raport: nu e momentul (se trimite o dată, seara după ora 17 în zilele lucrătoare).');
+if (!force && (!weekday || mod < 22 * 60 || sent.daily === today)) {
+  console.log('Raport: nu e momentul (se trimite o dată, seara după ora 22 în zilele lucrătoare).');
   process.exit(0);
 }
 

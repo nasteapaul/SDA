@@ -17,7 +17,8 @@ const skipsDay = (m, day) => m.live?.skipDays?.includes(day) ?? false;
 // Opening range breakout on several IG markets, each in its own session (lib/markets.js,
 // field `live`). Per market and local day: the high/low of the first `rangeMin` minutes
 // after the open, then a 1-minute close beyond it enters, with the stop at the other side
-// of the range and an optional target in R, both placed at IG. After a trade closes, the
+// of the range and an optional target in R, both placed at IG (`longOnly` markets only buy).
+// After a trade closes, the
 // price must come back inside the range before the next breakout trades again (research:
 // more R than one trade a day on EUR/USD, about the same elsewhere), until MAX_LOSSES
 // losing trades on that market that day. Positions are closed once the session is over. Each trade risks
@@ -154,7 +155,7 @@ export class MultiBot {
       const hi = Math.max(...inRange.map((c) => c.high));
       const lo = Math.min(...inRange.map((c) => c.low));
       // A late start must not trade a breakout that already happened.
-      if (bars.some((c) => c.mod >= rangeEnd && (c.close > hi || c.close < lo))) {
+      if (bars.some((c) => c.mod >= rangeEnd && (c.close > hi || (c.close < lo && !live.longOnly)))) {
         return this.finish(st, m, `ruperea intervalului a avut loc înainte să pornesc.`);
       }
       st.range = { hi, lo };
@@ -184,6 +185,7 @@ export class MultiBot {
         st.armed = true; // back inside the range: the next breakout counts
         continue;
       }
+      if (side === 'SELL' && live.longOnly) continue; // buys only (US Tech 100)
       if (st.trades && !st.armed) continue;
       await this.enter(m, st, side, q);
       return;

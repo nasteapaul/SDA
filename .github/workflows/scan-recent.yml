@@ -1,0 +1,18 @@
+name: scan-recent
+# The live ORB on other IG markets, 2015–today 1-minute data from HistData.com
+# (trading-bot/bin/scan-recent.js); results are in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/scan-recent.js', '.github/workflows/scan-recent.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Download 1-minute data
+        run: node trading-bot/bin/histdata-download.js "$RUNNER_TEMP/data" EURUSD,GBPUSD,USDCHF,EURCHF,EURGBP,USDJPY,EURJPY,GBPJPY,USDCAD,AUDUSD,NZDUSD,EURSEK,EURNOK,USDSEK,XAUUSD,WTIUSD,BCOUSD,SPXUSD,NSXUSD,UDXUSD,UKXGBP,FRXEUR,GRXEUR,JPXJPY,AUXAUD,HKXHKD,ETXEUR 2015
+      - name: Scan
+        run: node trading-bot/bin/scan-recent.js "$RUNNER_TEMP/data"

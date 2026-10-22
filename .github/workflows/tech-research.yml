@@ -1,0 +1,18 @@
+name: tech-research
+# Opening-range variants on US Tech 100, 2015–today HistData 1-minute bars
+# (trading-bot/bin/tech-research.js); results are in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/tech-research.js', '.github/workflows/tech-research.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Download 1-minute data
+        run: node trading-bot/bin/histdata-download.js "$RUNNER_TEMP/data" NSXUSD 2015
+      - name: US Tech 100
+        run: node trading-bot/bin/tech-research.js "$RUNNER_TEMP/data" NSXUSD
