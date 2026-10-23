@@ -10,12 +10,11 @@
         "hi": 8763.9,
         "lo": 8745.2
       },
-      "open": {
-        "side": "BUY",
-        "level": 8769.4
-      },
+      "open": null,
       "trades": 1,
-      "traded": true
+      "traded": true,
+      "losses": 1,
+      "armed": false
     },
     "EURUSD": {
       "day": "2026-10-23",
