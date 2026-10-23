@@ -1,0 +1,24 @@
+name: news-dir-research
+# Does trading only in the direction of the pre-open move (what "set to open lower" headlines
+# report) help the live ORB? 2015–today HistData 1-minute bars (trading-bot/bin/news-dir-research.js).
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/news-dir-research.js', '.github/workflows/news-dir-research.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Download 1-minute data
+        run: |
+          for p in AUXAUD EURUSD GBPUSD NSXUSD; do node trading-bot/bin/histdata-download.js "$RUNNER_TEMP/data" $p 2015; done
+      - name: Results
+        run: |
+          node trading-bot/bin/news-dir-research.js AU200 "$RUNNER_TEMP/data" AUXAUD
+          node trading-bot/bin/news-dir-research.js EURUSD "$RUNNER_TEMP/data" EURUSD
+          node trading-bot/bin/news-dir-research.js GBPUSD "$RUNNER_TEMP/data" GBPUSD
+          node trading-bot/bin/news-dir-research.js USTECH "$RUNNER_TEMP/data" NSXUSD
+          BOTH=1 node trading-bot/bin/news-dir-research.js USTECH "$RUNNER_TEMP/data" NSXUSD
