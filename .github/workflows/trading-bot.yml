@@ -3,6 +3,8 @@
 #   at the London open and Australia 200 at the Sydney open. Each run trades the sessions
 #   opening in the next hours, closes positions whose session is over, then exits. Safe to
 #   start any number of times: up to 3 losing trades per market per day, kept in the state file.
+# trend: daily trend following on Bitcoin and Ether (lib/trendbot.js), once a day after
+#   00:00 UTC; positions are held for days or weeks with their stop at IG.
 # report: the day's trades and the week's summary on Telegram (also sent after the evening
 #   multi run on its own).
 # run / flatten: the older single-market DAX bot (no edge in the research), manual only.
@@ -15,16 +17,20 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'multi = multi-market bot, report = send today''s and this week''s trade report now, pnl = print every closed trade and the totals since October (log only), run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
+        description: 'multi = multi-market bot, trend = daily Bitcoin/Ether trend bot, report = send today''s and this week''s trade report now, pnl = print every closed trade and the totals since October (log only), run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
         default: multi
         type: choice
-        options: [multi, report, pnl, run, flatten, check]
+        options: [multi, trend, report, pnl, run, flatten, check]
       account:
         description: 'IG account id (default XR5HB, the demo CFD account)'
         required: false
         default: ''
       epics:
         description: 'check only: exact epics to print, comma separated'
+        required: false
+        default: ''
+      terms:
+        description: 'check only: market names to search, comma separated (no Telegram test)'
         required: false
         default: ''
 
@@ -83,6 +89,10 @@ jobs:
         # One state file per account: each has its own day start equity and trades.
         run: BOT_STATE="${MULTI_STATE%.json}${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/multibot.js
 
+      - name: Run crypto trend bot
+        if: env.HAS_IG == 'true' && env.JOB == 'trend'
+        run: BOT_STATE="state/trend-state${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/trendbot.js
+
       # After the evening multi run that closes US Tech 100 (16:05 New York): the day's trades on Telegram,
       # plus the week's summary on Friday. Sent once a day; job=report sends both now.
       - name: Trade report
@@ -103,6 +113,8 @@ jobs:
         if: env.HAS_IG == 'true' && env.JOB == 'check'
         env:
           CHECK_EPICS: ${{ github.event.inputs.epics }}
+          CHECK_TERMS: ${{ github.event.inputs.terms }}
+          CHECK_CANDLES: ${{ github.event.inputs.epics != '' && '1' || '' }}
         run: node trading-bot/bin/check.js
 
       - name: Close open positions

@@ -5,7 +5,7 @@
 import { IgClient } from '../lib/ig.js';
 import { TZ, closedTrades } from '../lib/report.js';
 import { tradingDay } from '../lib/state.js';
-import { liveMarkets } from '../lib/markets.js';
+import { botMarketNames } from '../lib/markets.js';
 
 const env = process.env;
 const since = Date.parse(`${env.PNL_SINCE || '2026-10-01'}T00:00:00Z`);
@@ -14,7 +14,7 @@ const session = await client.login();
 const account = (await client.accounts()).find((a) => a.id === client.accountId);
 const ccy = account?.currency ?? session.currencyIsoCode ?? '';
 const all = closedTrades(await client.transactions(since, Date.now() + 3600e3));
-const bot = liveMarkets().map((m) => m.name);
+const bot = botMarketNames();
 const isBot = (t) => bot.some((m) => t.name.startsWith(m));
 const sum = (ts) => ts.reduce((s, t) => s + t.pnl, 0).toFixed(2);
 console.log(`Cont ${client.accountId} (${ccy}), sold ${JSON.stringify(account?.balance ?? {})}`);

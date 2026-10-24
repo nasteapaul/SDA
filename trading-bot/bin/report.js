@@ -8,7 +8,7 @@ import { StateStore, tradingDay } from '../lib/state.js';
 import { localClock } from '../lib/session.js';
 import { TZ, closedTrades, dailyReport, weeklyReport, isFriday } from '../lib/report.js';
 import { sendTelegram } from '../lib/notify.js';
-import { liveMarkets } from '../lib/markets.js';
+import { botMarketNames } from '../lib/markets.js';
 
 const env = process.env;
 const now = Date.now();
@@ -43,7 +43,7 @@ try {
   const { client, session } = await login();
   const ccy = (await client.accounts()).find((a) => a.id === client.accountId)?.currency ?? session.currencyIsoCode ?? '';
   // Only the bot's markets: the account may also hold trades made by hand.
-  const markets = liveMarkets().map((m) => m.name);
+  const markets = botMarketNames();
   const trades = closedTrades(await client.transactions(now - 8 * 86400e3, now + 3600e3), markets);
   // On a weekend, a forced report covers the last weekday.
   let at = now;
