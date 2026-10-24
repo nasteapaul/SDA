@@ -1,0 +1,24 @@
+name: crypto-research
+# Trend and opening-range tests on Bitcoin / Ethereum, Binance hourly bars from 2018
+# (trading-bot/bin/crypto-research.js); results are in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/crypto-research.js', '.github/workflows/crypto-research.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Download hourly bars
+        run: |
+          mkdir -p "$RUNNER_TEMP/c" && cd "$RUNNER_TEMP/c"
+          for s in BTCUSDT ETHUSDT; do for y in $(seq 2018 2026); do for m in 01 02 03 04 05 06 07 08 09 10 11 12; do
+            f="$s-1h-$y-$m.zip"
+            curl -sf -o "$f" "https://data.binance.vision/data/spot/monthly/klines/$s/1h/$f" && unzip -oq "$f" && rm "$f" || true
+          done; done; done
+          ls | wc -l
+      - name: Results
+        run: node trading-bot/bin/crypto-research.js "$RUNNER_TEMP/c" BTCUSDT,ETHUSDT
