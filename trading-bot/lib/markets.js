@@ -38,6 +38,14 @@ export const MARKETS = Object.freeze([
   { key: 'USDCAD', name: 'USD/CAD', history: 'oanda/USD_CAD', tz: 'America/New_York', open: 480, close: 960, spread: 0.00013 },
 ]);
 
+// Daily trend following (lib/trendbot.js), demo only: the only strategy positive in all three
+// periods 2018–2019, 2020–2022 and 2023–2026 on Binance data (bin/crypto-research.js, IG-like
+// costs). Paul chose to try it on demo on 2026-10-24. Names as IG shows them in the history.
+export const TREND_MARKETS = Object.freeze([
+  { key: 'BTC', name: 'Bitcoin', epic: 'CS.D.BITCOIN.CFD.IP' },
+  { key: 'ETH', name: 'Ether', epic: 'CS.D.ETHUSD.CFD.IP' },
+]);
+
 // Costs for lib/daytrade.js: the session spread applies all day (we only trade in session),
 // plus half a spread of slippage on stops.
 export const costsFor = (m) => ({ sessionSpread: m.spread, offSpread: m.spread, slippage: m.spread / 2 });
@@ -45,3 +53,6 @@ export const costsFor = (m) => ({ sessionSpread: m.spread, offSpread: m.spread, 
 export const marketByKey = (key) => MARKETS.find((m) => m.key === key);
 
 export const liveMarkets = () => MARKETS.filter((m) => m.live);
+
+// Names of every market a bot trades, for the reports (trades made by hand are left out).
+export const botMarketNames = () => [...liveMarkets().map((m) => m.name), ...TREND_MARKETS.map((m) => m.name)];
