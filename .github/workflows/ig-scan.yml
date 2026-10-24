@@ -1,0 +1,15 @@
+name: ig-scan
+# Daily trend rule and buy-and-hold on ~80 IG markets, 2016–today, Yahoo daily bars
+# (trading-bot/bin/ig-scan-daily.js); results are in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/ig-scan-daily.js', '.github/workflows/ig-scan.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node trading-bot/bin/ig-scan-daily.js
