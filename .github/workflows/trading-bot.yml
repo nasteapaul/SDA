@@ -27,6 +27,10 @@ on:
         description: 'check only: exact epics to print, comma separated'
         required: false
         default: ''
+      terms:
+        description: 'check only: market names to search, comma separated (no Telegram test)'
+        required: false
+        default: ''
 
 permissions:
   contents: write   # daily-loss state on the trading-bot-data branch
@@ -103,6 +107,7 @@ jobs:
         if: env.HAS_IG == 'true' && env.JOB == 'check'
         env:
           CHECK_EPICS: ${{ github.event.inputs.epics }}
+          CHECK_TERMS: ${{ github.event.inputs.terms }}
         run: node trading-bot/bin/check.js
 
       - name: Close open positions

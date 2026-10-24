@@ -5,7 +5,8 @@
 import { IgClient } from '../lib/ig.js';
 
 const env = process.env;
-if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+// No Telegram test when only looking up markets.
+if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID && !env.CHECK_EPICS && !env.CHECK_TERMS) {
   // Shows which Telegram bot the trading messages go to (bot name only, never the token).
   try {
     const api = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
@@ -40,7 +41,8 @@ try {
   for (const a of await client.accounts()) {
     console.log(`  cont ${a.id}: ${a.name}, ${a.type}, ${a.currency}, sold ${a.balance?.balance}, disponibil ${a.balance?.available}`);
   }
-  const terms = env.CHECK_EPICS ? [] : process.argv.length > 2 ? process.argv.slice(2) : ['Germany 40', 'EUR/USD', 'GBP/USD', 'Australia 200'];
+  const terms = env.CHECK_TERMS ? env.CHECK_TERMS.split(',').map((x) => x.trim()).filter(Boolean)
+    : env.CHECK_EPICS ? [] : process.argv.length > 2 ? process.argv.slice(2) : ['Germany 40', 'EUR/USD', 'GBP/USD', 'Australia 200'];
   for (const term of terms) {
     console.log(`\nPiețe găsite pentru "${term}":`);
     for (const m of (await client.searchMarkets(term)).slice(0, 10)) {
@@ -67,7 +69,7 @@ try {
     console.log(`  monede ${JSON.stringify(i.currencies)}`);
     console.log(`  reguli ${JSON.stringify({ min: data.dealingRules?.minDealSize, stop: data.dealingRules?.minNormalStopOrLimitDistance })}`);
   }
-  if (env.CHECK_EPICS) process.exit(0);
+  if (env.CHECK_EPICS || env.CHECK_TERMS) process.exit(0);
   const epic = env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP';
   const m = await client.market(epic);
   console.log(`\nPiața din .env, ${epic}:`);
