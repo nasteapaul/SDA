@@ -1,5 +1,5 @@
 {
-  "_comment": "Press-release feeds (free RSS). kind \"ripple\": general, specialist and rumour headlines that the AI reads in batches for companies that gain from them. A feed that keeps failing is reported once on Telegram; remove or replace it here.",
+  "_comment": "Press-release feeds (free RSS). kind \"ripple\": general, specialist and rumour headlines that the AI reads in batches for companies that gain from them. \"everyMin\": read only every N minutes (Google News blocks frequent requests). A feed that keeps failing is reported once on Telegram, and again when it works; remove or replace it here.",
   "feeds": [
     {
       "name": "GlobeNewswire",
@@ -16,17 +16,20 @@
     {
       "name": "Zvonuri de preluare",
       "kind": "ripple",
-      "url": "https://news.google.com/rss/search?q=%22exploring+a+sale%22+OR+%22explores+sale%22+OR+%22takeover+interest%22+OR+%22weighing+a+sale%22+OR+%22in+talks+to+acquire%22+OR+%22approached%22+acquisition+sources+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+      "url": "https://news.google.com/rss/search?q=%22exploring+a+sale%22+OR+%22explores+sale%22+OR+%22takeover+interest%22+OR+%22weighing+a+sale%22+OR+%22in+talks+to+acquire%22+OR+%22approached%22+acquisition+sources+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+      "everyMin": 15
     },
     {
       "name": "Activiști și oferte",
       "kind": "ripple",
-      "url": "https://news.google.com/rss/search?q=activist+investor+stake+OR+%22unsolicited+offer%22+OR+%22buyout+offer%22+OR+%22go+private%22+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+      "url": "https://news.google.com/rss/search?q=activist+investor+stake+OR+%22unsolicited+offer%22+OR+%22buyout+offer%22+OR+%22go+private%22+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+      "everyMin": 15
     },
     {
       "name": "Lanț de aprovizionare",
       "kind": "ripple",
-      "url": "https://news.google.com/rss/search?q=shortage+OR+%22export+ban%22+OR+tariff+OR+sanctions+OR+%22supply+deal%22+OR+%22selects+supplier%22+stocks+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+      "url": "https://news.google.com/rss/search?q=shortage+OR+%22export+ban%22+OR+tariff+OR+sanctions+OR+%22supply+deal%22+OR+%22selects+supplier%22+stocks+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+      "everyMin": 15
     },
     {
       "name": "CNBC",
@@ -41,7 +44,8 @@
     {
       "name": "Yahoo Finance",
       "kind": "ripple",
-      "url": "https://news.google.com/rss/search?q=site%3Afinance.yahoo.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+      "url": "https://news.google.com/rss/search?q=site%3Afinance.yahoo.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+      "everyMin": 15
     },
     {
       "name": "Fierce Biotech",
@@ -51,7 +55,8 @@
     {
       "name": "Endpoints News",
       "kind": "ripple",
-      "url": "https://news.google.com/rss/search?q=site%3Aendpts.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+      "url": "https://news.google.com/rss/search?q=site%3Aendpts.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+      "everyMin": 15
     },
     {
       "name": "TechCrunch",
@@ -66,7 +71,8 @@
     {
       "name": "Mining.com",
       "kind": "ripple",
-      "url": "https://news.google.com/rss/search?q=site%3Amining.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
+      "url": "https://news.google.com/rss/search?q=site%3Amining.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen",
+      "everyMin": 15
     },
     {
       "name": "OilPrice",

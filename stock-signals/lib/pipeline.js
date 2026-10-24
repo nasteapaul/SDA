@@ -21,19 +21,27 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     ['SEC Form 4', () => insiderEvents(state, config, io, events, now)],
     ['SEC 13D', () => stakeEvents(state, config, io, events)],
     ['Reddit', () => buzzEvents(state, config, io, events, now)],
-    ...feeds.map((f) => [f.name, () => (f.kind === 'ripple' ? queueHeadlines(state, f, io, now) : newsEvents(state, f, io, events))]),
+    ...feeds.map((f) => [f.name, () => (f.kind === 'ripple' ? queueHeadlines(state, f, io, now) : newsEvents(state, f, io, events)), f.everyMin]),
   ];
+  state.fetched ??= {};
   let ok = 0;
-  for (const [name, fn] of sources) {
+  for (const [name, fn, everyMin] of sources) {
+    // Slow feeds (Google News searches) are read every `everyMin` minutes, not every run:
+    // Google blocks a runner that asks every 2 minutes.
+    if (everyMin && now - (state.fetched[name] ?? 0) < everyMin * 60e3) continue;
+    const warnAt = everyMin ? Math.max(2, Math.ceil(config.feedFailWarn * 2 / everyMin)) : config.feedFailWarn; // ~1 hour
     try {
       await fn();
       ok++;
+      if ((state.health[name] ?? 0) >= warnAt) await io.notify(`✅ Sursa „${name}” merge din nou.`);
       state.health[name] = 0;
+      state.fetched[name] = now;
     } catch (e) {
       state.health[name] = (state.health[name] ?? 0) + 1;
+      state.fetched[name] = now;
       log(`${name}: ${e.message}`);
-      if (state.health[name] === config.feedFailWarn) {
-        await io.notify(`⚠️ Sursa „${name}” nu mai răspunde de ${config.feedFailWarn} rulări la rând. Restul surselor merg în continuare.`);
+      if (state.health[name] === warnAt) {
+        await io.notify(`⚠️ Sursa „${name}” nu mai răspunde de ${state.health[name]} verificări la rând (cam o oră). Restul surselor merg în continuare.`);
       }
     }
   }
