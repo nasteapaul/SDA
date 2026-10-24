@@ -108,6 +108,7 @@ jobs:
         env:
           CHECK_EPICS: ${{ github.event.inputs.epics }}
           CHECK_TERMS: ${{ github.event.inputs.terms }}
+          CHECK_CANDLES: ${{ github.event.inputs.epics != '' && '1' || '' }}
         run: node trading-bot/bin/check.js
 
       - name: Close open positions

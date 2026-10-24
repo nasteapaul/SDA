@@ -68,6 +68,10 @@ try {
     console.log(`  contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}`);
     console.log(`  monede ${JSON.stringify(i.currencies)}`);
     console.log(`  reguli ${JSON.stringify({ min: data.dealingRules?.minDealSize, stop: data.dealingRules?.minNormalStopOrLimitDistance })}`);
+    if (env.CHECK_CANDLES) {
+      // The last daily candles, to see where IG starts its day (counts against the data allowance).
+      for (const c of await client.candles(e, 'DAY', 3)) console.log(`  zi ${new Date(c.time).toISOString()} o ${c.open} h ${c.high} l ${c.low} c ${c.close}`);
+    }
   }
   if (env.CHECK_EPICS || env.CHECK_TERMS) process.exit(0);
   const epic = env.BOT_EPIC ?? 'IX.D.DAX.DAILY.IP';
