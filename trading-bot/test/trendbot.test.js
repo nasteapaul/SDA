@@ -36,7 +36,7 @@ function fakeClient(history) {
     available: async () => 10000,
     candles: async () => c.history.map((h) => ({ ...h })),
     openPositions: async () => c.positions,
-    market: async () => ({ bid: c.price - 0.5, offer: c.price + 0.5, status: 'TRADEABLE', currency: 'USD', scaling: 1, pointValue: 1, toAccount: 0.8, contractSize: 1, minSize: 0.01, minStop: 1, minStopUnit: 'PERCENTAGE', marginPct: 100, expiry: '-' }),
+    market: async () => ({ bid: c.price - 0.5, offer: c.price + 0.5, status: 'TRADEABLE', currency: 'USD', scaling: 1, pointValue: 1, toAccount: 0.8, contractSize: 1, minSize: 0.0001, minStop: 1, minStopUnit: 'PERCENTAGE', marginPct: 100, expiry: '-' }),
     openMarket: async (o) => { c.orders.push(o); c.positions = [{ dealId: 'D', direction: o.direction, size: o.size, epic: o.epic }]; return { level: c.price + 0.5 }; },
     closePosition: async (p) => { c.closed.push(p); c.positions = []; },
   };

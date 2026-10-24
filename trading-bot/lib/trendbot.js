@@ -5,8 +5,11 @@
 //   - stop at 3 × ATR(20) from the entry, placed at IG and never moved;
 //   - exit when a day closes below the lowest low of the 20 days before it (buys) or above
 //     the highest high (sells).
-// Runs once a day on the last completed daily candle. Each trade risks `riskPct` % of the
+// Runs once a day on the last completed daily candle (IG's, from midnight UK time; crypto
+// trades at weekends too). Each trade risks `riskPct` % of the
 // account. Positions the bot did not open are left alone.
+
+import { tradingDay } from './state.js';
 
 const DAY = 86400e3;
 const ENTRY_DAYS = 50;
@@ -70,7 +73,8 @@ export class TrendBot {
     const days = (await this.client.candles(m.epic, 'DAY', ENTRY_DAYS + 10)).filter((c) => c.time + DAY <= now);
     const last = days.at(-1);
     if (!last) return this.log(`Eroare la ${m.name}: IG nu a trimis prețuri zilnice.`);
-    const day = new Date(last.time).toISOString().slice(0, 10);
+    // IG's daily candles start at midnight UK time.
+    const day = tradingDay(last.time + 3600e3, 'Europe/London');
     if (st.lastDay === day) return; // this day was already handled
     const positions = await this.client.openPositions(m.epic);
 
@@ -110,7 +114,9 @@ export class TrendBot {
     const stopDistance = Math.round(Math.max(STOP_ATR * atr * q.scaling, minStop) * 10) / 10;
     const perPoint = q.pointValue * q.toAccount;
     if (!(stopDistance > 0 && perPoint > 0)) throw new Error(`no point value for ${m.epic}`);
-    let size = Math.floor((risk / (stopDistance * perPoint)) * 1e4) / 1e4;
+    // As many decimals as the smallest allowed size has (e.g. 0.001 on Bitcoin).
+    const f = 10 ** Math.max(2, Math.ceil(-Math.log10(q.minSize || 0.01) - 1e-9));
+    let size = Math.floor((risk / (stopDistance * perPoint)) * f) / f;
     if (size < q.minSize) {
       if (q.minSize * stopDistance * perPoint > 2 * risk) {
         this.log(`Azi fără tranzacție pe ${m.name}: stopul e prea larg pentru riscul ales.`);
