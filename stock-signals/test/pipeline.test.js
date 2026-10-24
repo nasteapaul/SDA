@@ -68,6 +68,20 @@ test('a failing feed is reported once after repeated failures', async () => {
   assert.equal(io.sent.filter((m) => typeof m === 'string' && /Wire/.test(m)).length, 1);
 });
 
+test('a slow feed is read only every everyMin minutes and its recovery is reported', async () => {
+  const state = { ...loadState('/nonexistent'), warm: true };
+  let up = false, calls = 0;
+  const io = fakeIo(() => { calls++; if (!up) throw new Error('503'); return rss([]); });
+  const feeds = [{ name: 'Google', url: 'u', kind: 'ripple', everyMin: 15 }];
+  const t0 = Date.parse('2026-10-24T10:00:00Z');
+  for (let m = 0; m < 60; m += 2) await runOnce({ state, config: CONFIG, feeds, io, now: t0 + m * 60e3 });
+  assert.equal(calls, 4); // minutes 0, 16, 32, 48
+  assert.equal(io.sent.filter((m) => /nu mai răspunde/.test(m)).length, 1);
+  up = true;
+  await runOnce({ state, config: CONFIG, feeds, io, now: t0 + 64 * 60e3 });
+  assert.equal(io.sent.filter((m) => /merge din nou/.test(m)).length, 1);
+});
+
 test('journal is filled once a day and the Sunday report summarises it', async () => {
   const DAY = 86400e3;
   const t0 = Date.parse('2026-06-01T15:00:00Z');
