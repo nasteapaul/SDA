@@ -185,3 +185,14 @@ test('Reddit mention spikes become events; strong events feed the knock-on queue
   assert.ok(state.ripple.queue.some((q) => /Beta/.test(q.title)), 'strong event queued for knock-on ideas');
   assert.ok(!state.ripple.queue.some((q) => /Hype/.test(q.title)), 'Reddit buzz is not');
 });
+
+test('feeds that fail together are reported in one message', async () => {
+  const state = { ...loadState('/nonexistent'), warm: true };
+  const io = fakeIo(() => { throw new Error('503'); });
+  const feeds = [{ name: 'G1', url: 'u', kind: 'ripple', everyMin: 15 }, { name: 'G2', url: 'v', kind: 'ripple', everyMin: 15 }];
+  const t0 = Date.parse('2026-10-24T10:00:00Z');
+  for (let m = 0; m < 60; m += 2) await runOnce({ state, config: CONFIG, feeds, io, now: t0 + m * 60e3 });
+  const warnings = io.sent.filter((m) => /nu mai răspund/.test(m));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /„G1”, „G2” nu mai răspund de cam o oră/);
+});

@@ -35,6 +35,7 @@ const state = loadState(statePath);
 const loopMs = (Number(env.LOOP_MINUTES) || 0) * 60e3;
 const intervalMs = Math.max(30, Number(env.INTERVAL_SECONDS) || 120) * 1e3;
 const end = Date.now() + loopMs;
+const startHealth = { ...state.health };
 
 async function check() {
   const firstRun = !state.warm;
@@ -56,6 +57,14 @@ for (;;) {
   } catch (e) {
     if (!loopMs) throw e;
     console.log(`Verificare eșuată: ${e.message}`); // try again next round
+  }
+  // Google News blocks some GitHub servers. When every Google search has failed for about
+  // an hour on this server, end the loop early: the workflow then starts the next run,
+  // usually on another server.
+  const google = feeds.filter((f) => f.everyMin);
+  if (loopMs && google.length && google.every((f) => (state.health[f.name] ?? 0) - (startHealth[f.name] ?? 0) >= 4)) {
+    console.log('Google News nu răspunde pe acest server; repornesc pe altul.');
+    break;
   }
   const wait = intervalMs - (Date.now() - started);
   if (Date.now() + Math.max(wait, 0) >= end) break;
