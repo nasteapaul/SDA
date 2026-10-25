@@ -196,3 +196,28 @@ test('feeds that fail together are reported in one message', async () => {
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /„G1”, „G2” nu mai răspund de cam o oră/);
 });
+
+test('four weeks after an alert one message says how the stock did and whether the plan worked', async () => {
+  const DAY = 86400e3;
+  const t0 = Date.parse('2026-06-01T15:00:00Z');
+  // bar k: close 100 + k, high close + 1, low close - 1; the target 112 is touched on bar 11
+  const series = (f) => Array.from({ length: 40 }, (_, k) => ({ time: t0 - 1.5 * 3600e3 + k * DAY, close: f(k), high: f(k) + 1, low: f(k) - 1 }));
+  const sent = [];
+  let upTo = 0; // Yahoo only has the days that have passed
+  const io = { chart: async (s) => ({ bars: (s === 'SPY' ? series((k) => 400 + k * 0.4) : series((k) => 100 + k)).filter((b) => b.time < upTo) }), notify: async (m) => sent.push(m) };
+  const entry = { time: t0, company: 'Beta & Co', xtb: 'BETA.US', source: 'SEC 8-K', yahoo: 'BETA', benchmark: 'SPY', returns: {}, plan: { price: 100, stop: 90, target: 112 } };
+  const state = { ...loadState('/nonexistent'), journal: [entry] };
+  upTo = t0 + 10 * DAY;
+  await updateJournal(state, io, upTo);
+  assert.equal(sent.length, 0, 'not before 20 trading days');
+  upTo = t0 + 40 * DAY;
+  await updateJournal(state, io, upTo);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /Beta &amp; Co \(BETA\.US\)/);
+  assert.match(sent[0], /Preț la intrare 100 → după 4 săptămâni 120: <b>\+20,0%<\/b>/);
+  assert.match(sent[0], /S&amp;P 500\) în aceeași perioadă: \+2,0%/);
+  assert.match(sent[0], /Ținta de 112 a fost atinsă pe 12 iun\. \(\+12,0%\)/);
+  upTo = t0 + 41 * DAY;
+  await updateJournal(state, io, upTo);
+  assert.equal(sent.length, 1, 'sent only once');
+});
