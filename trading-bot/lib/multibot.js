@@ -1,6 +1,7 @@
 import { CandleBuilder } from './candles.js';
 import { StateStore, tradingDay } from './state.js';
 import { localClock } from './session.js';
+import { closedTrades } from './report.js';
 
 const MIN = 60e3;
 const ENTRY_HOURS = 3; // entries allowed for 3 hours after the session open
@@ -127,7 +128,7 @@ export class MultiBot {
     if (mod >= m.close || mod < m.open) {
       for (const p of positions) {
         await this.client.closePosition(p);
-        this.log(`Închis ${m.name} ${p.direction} ${p.size} (sesiunea s-a încheiat).`);
+        this.log(`Închis ${m.name} ${p.direction} ${p.size} (sesiunea s-a încheiat).${await this.result(m, st?.open?.time)}`);
       }
       return;
     }
@@ -202,6 +203,7 @@ export class MultiBot {
     const mid = (q.bid + q.offer) / 2;
     const lost = !Number.isFinite(mid) || (mid - st.open.level) * (st.open.side === 'BUY' ? 1 : -1) <= 0;
     if (lost) st.losses = (st.losses ?? 0) + 1;
+    this.log(`Închis ${m.name} ${st.open.side} la IG (${lost ? 'stop atins' : 'țintă sau închis manual'}).${await this.result(m, st.open.time)}`);
     st.open = null;
     st.armed = false;
     this.state.save(this.risk);
@@ -248,7 +250,7 @@ export class MultiBot {
       if (need > free) return this.finish(st, m, `marjă insuficientă (trebuie ≈ ${need.toFixed(0)}, disponibil ${free.toFixed(0)}).`);
     }
     // Saved before sending: after a crash the bot treats the order as placed, never sends it twice.
-    st.open = { side, level: entry };
+    st.open = { side, level: entry, time: this.now() };
     st.trades = (st.trades ?? 0) + 1;
     this.state.save(this.risk);
     let res;
@@ -264,6 +266,24 @@ export class MultiBot {
     st.open.level = res.level ?? entry;
     this.state.save(this.risk);
     this.log(`Deschis ${m.name} ${side} ${size} la ${res.level}, stop ${stopDistance}, țintă ${limitDistance ?? 'fără (închid la sfârșitul sesiunii)'}. Risc ≈ ${(size * stopDistance * perPoint).toFixed(2)}.`);
+  }
+
+  // ' Profit: +12.34 GBP.' from IG's history of closed deals (it can lag the close by a few
+  // seconds), or a pointer to the evening report when IG has not listed it yet.
+  async result(m, since = this.now() - 16 * 3600e3) {
+    try {
+      this.ccy ??= (await this.client.accounts()).find((a) => a.id === this.client.accountId)?.currency ?? '';
+      for (let i = 0; ; i++) {
+        const tx = await this.client.transactions(since - MIN, this.now() + MIN);
+        const t = closedTrades(tx, [m.name]).filter((x) => x.time >= since - MIN).at(-1);
+        if (t) return ` Profit: ${t.pnl > 0 ? '+' : ''}${t.pnl.toFixed(2)} ${this.ccy}.`;
+        if (i >= 2) break;
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    } catch {
+      // the close itself went through; only the amount is missing
+    }
+    return ' Profitul apare în raportul de seară.';
   }
 
   finish(st, m, reason) {
@@ -293,7 +313,12 @@ export class MultiBot {
       this.state.save(this.risk);
       this.log(`Pierderea zilei a atins ${limit}. Închid pozițiile și nu mai tranzacționez azi.`);
       const epics = new Set(Object.values(this.epics ?? {}));
-      for (const p of await this.client.openPositions()) if (epics.has(p.epic)) await this.client.closePosition(p);
+      for (const p of await this.client.openPositions()) {
+        if (!epics.has(p.epic)) continue;
+        await this.client.closePosition(p);
+        const m = this.markets.find((x) => this.epics[x.key] === p.epic);
+        this.log(`Închis ${m.name} ${p.direction} ${p.size} (limita zilnică).${await this.result(m, this.risk.markets[m.key]?.open?.time)}`);
+      }
     }
     return this.risk.halted;
   }
