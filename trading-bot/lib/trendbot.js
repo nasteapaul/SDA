@@ -75,7 +75,7 @@ export class TrendBot {
     if (!last) return this.log(`Eroare la ${m.name}: IG nu a trimis prețuri zilnice.`);
     // IG's daily candles start at midnight UK time.
     const day = tradingDay(last.time + 3600e3, 'Europe/London');
-    if (st.lastDay === day) return; // this day was already handled
+    if (st.lastDay === day) return console.log(`${m.name}: ziua ${day} a fost deja tratată.`);
     const positions = await this.client.openPositions(m.epic);
 
     let justClosed = false;
@@ -90,6 +90,9 @@ export class TrendBot {
     }
 
     const signal = justClosed ? null : trendSignal(days, st.pos?.side);
+    // Log only (not sent to Telegram): what the bot saw on the day it acts on.
+    const prev = days.slice(-ENTRY_DAYS - 1, -1).map((x) => x.close);
+    console.log(`${m.name}: zi ${day}, ${days.length} zile, închidere ${last.close}, interval 50 zile ${Math.min(...prev)}–${Math.max(...prev)}, poziție ${st.pos?.side ?? 'niciuna'}, semnal ${signal?.enter ?? (signal?.exit ? 'ieșire' : 'niciunul')}`);
     if (signal?.exit) {
       for (const p of positions) await this.client.closePosition(p);
       this.log(`Închis ${m.name} ${st.pos.side} (prețul a ieșit din trend: închidere dincolo de extrema ultimelor ${EXIT_DAYS} zile).`);

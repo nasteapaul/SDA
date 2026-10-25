@@ -3,8 +3,9 @@
 #   at the London open and Australia 200 at the Sydney open. Each run trades the sessions
 #   opening in the next hours, closes positions whose session is over, then exits. Safe to
 #   start any number of times: up to 3 losing trades per market per day, kept in the state file.
-# trend: daily trend following on Bitcoin and Ether (lib/trendbot.js), once a day after
-#   00:00 UTC; positions are held for days or weeks with their stop at IG.
+# trend: daily trend following on Bitcoin and Ether, once a day after 00:00 UTC, ON PAPER
+#   (lib/papertrend.js, Coinbase prices, no orders): the IG UK demo refuses crypto CFDs.
+#   The IG version (bin/trendbot.js) stays for an account that allows crypto.
 # report: the day's trades and the week's summary on Telegram (also sent after the evening
 #   multi run on its own).
 # run / flatten: the older single-market DAX bot (no edge in the research), manual only.
@@ -89,9 +90,9 @@ jobs:
         # One state file per account: each has its own day start equity and trades.
         run: BOT_STATE="${MULTI_STATE%.json}${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/multibot.js
 
-      - name: Run crypto trend bot
+      - name: Run crypto trend on paper
         if: env.HAS_IG == 'true' && env.JOB == 'trend'
-        run: BOT_STATE="state/trend-state${IG_ACCOUNT_ID:+-$IG_ACCOUNT_ID}.json" node trading-bot/bin/trendbot.js
+        run: BOT_STATE="state/trend-paper.json" node trading-bot/bin/papertrend.js
 
       # After the evening multi run that closes US Tech 100 (16:05 New York): the day's trades on Telegram,
       # plus the week's summary on Friday. Sent once a day; job=report sends both now.

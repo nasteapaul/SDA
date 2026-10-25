@@ -67,7 +67,7 @@ try {
     console.log(`\n${e}: ${i.name}, tip ${i.type}, expiry ${i.expiry}, preț ${data.snapshot?.bid}/${data.snapshot?.offer}, scalare ${data.snapshot?.scalingFactor}`);
     console.log(`  contract ${i.contractSize}, lot ${i.lotSize}, valoare pip ${i.valueOfOnePip}, pip = ${i.onePipMeans}, marjă ${i.marginFactor} ${i.marginFactorUnit}`);
     console.log(`  monede ${JSON.stringify(i.currencies)}`);
-    console.log(`  reguli ${JSON.stringify({ min: data.dealingRules?.minDealSize, stop: data.dealingRules?.minNormalStopOrLimitDistance })}`);
+    console.log(`  reguli ${JSON.stringify(data.dealingRules)}`);
     if (env.CHECK_CANDLES) {
       // The last daily candles, to see where IG starts its day (counts against the data allowance).
       for (const c of await client.candles(e, 'DAY', 3)) console.log(`  zi ${new Date(c.time).toISOString()} o ${c.open} h ${c.high} l ${c.low} c ${c.close}`);
