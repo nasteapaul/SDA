@@ -285,3 +285,21 @@ test('the US Tech 100 close run does not wait for the Sydney open', () => {
   bot.clock = Date.parse('2026-10-22T22:38:00Z'); // the Sydney start, 09:38 there
   assert.equal(bot.hasWork(), true);
 });
+
+test('the close message shows the profit from IG history', async () => {
+  const client = fakeClient();
+  const notes = [];
+  const bot = makeBot(client, OPEN + 60 * MIN, { log: (n) => notes.push(n) });
+  client.accountId = 'X';
+  client.accounts = async () => [{ id: 'X', currency: 'GBP' }];
+  client.transactions = async () => [
+    { transactionType: 'DEAL', dateUtc: '2026-10-13T07:00:00', instrumentName: 'GBP/USD Mini', profitAndLoss: '£-40.00' },
+    { transactionType: 'DEAL', dateUtc: new Date(bot.clock + 2 * MIN).toISOString().slice(0, 19), instrumentName: 'GBP/USD Mini', profitAndLoss: '£1,213.58' },
+  ];
+  await bot.start();
+  client.history = rangeCandles(OPEN + 60 * MIN);
+  await run(bot, client, 3, () => 125);
+  client.positions = []; // target hit
+  await run(bot, client, 1, () => 150);
+  assert.ok(notes.some((n) => /Închis GBP\/USD BUY la IG \(țintă.*Profit: \+1213\.58 GBP\./.test(n)), notes.join('\n'));
+});
