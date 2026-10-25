@@ -30,7 +30,7 @@ photocraft-cli serve [--port N]                        # headless JSON-lines ses
 ## MCP
 
 Headless: `photocraft-cli mcp --automation-read-root DIR --automation-write-root DIR`
-(`claude mcp add photocraft -- "$(command -v photocraft-cli)" mcp --automation-read-root ~/photocraft-work --automation-write-root ~/photocraft-work`).
+(to register it permanently — only when the user asks: `claude mcp add photocraft -- "$(command -v photocraft-cli)" mcp --automation-read-root ~/photocraft-work --automation-write-root ~/photocraft-work`).
 Live app: `photocraft --control 7878 --control-token-file <private> --automation-read-root DIR --automation-write-root DIR`,
 then `photocraft-cli mcp --bridge 127.0.0.1:7878 --control-token-file <private>`.
 Tools: `doc_open/new/save/export/inspect/render_preview/select/close`, `command_list`, `command_run`,
