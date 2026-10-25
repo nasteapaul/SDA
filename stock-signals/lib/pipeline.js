@@ -6,7 +6,7 @@ import { extractListings, usListing } from './tickers.js';
 import { chart, summarize } from './market.js';
 import { assess, ripple } from './ai.js';
 import { onXtb } from './xtb.js';
-import { record, prune, forwardReturns, pending } from './journal.js';
+import { record, prune, forwardReturns, pending, monthReport } from './journal.js';
 
 const DAY = 86400e3;
 
@@ -345,6 +345,11 @@ export async function updateJournal(state, io, now = Date.now()) {
     e.returns = forwardReturns(b, e.time);
     const bb = await bars(e.benchmark);
     if (bb) e.bench = forwardReturns(bb, e.time);
+    // Paul's ask (2026-10-25): one message per alert after 4 weeks with what the stock did.
+    if (!e.monthSent && io.notify) {
+      const text = monthReport(e, b, bb);
+      if (text) { await io.notify(text); e.monthSent = true; }
+    }
   }
 }
 

@@ -77,3 +77,37 @@ export function journalStats(journal) {
     };
   });
 }
+
+// Four weeks (20 trading days) after an alert: how the stock did from the realistic entry
+// (as in forwardReturns), whether the plan's stop or target was touched first, and the
+// market over the same days. Null until the 20 days have passed.
+export const REPORT_DAYS = 20;
+
+export function monthReport(e, bars, benchBars) {
+  const i = bars.findIndex((b) => b.time + 6 * 3600e3 > e.time);
+  if (i < 0 || !bars[i + REPORT_DAYS]) return null;
+  const entry = bars[i].close, last = bars[i + REPORT_DAYS].close;
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const pct = (x) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1).replace('.', ',')}%`;
+  const num = (x) => (x >= 100 ? x.toFixed(0) : x.toFixed(2)).replace('.', ',');
+  const date = (t) => new Date(t).toLocaleDateString('ro-RO', { day: 'numeric', month: 'short', timeZone: 'Europe/Bucharest' });
+  const lines = [
+    `📋 <b>Semnal de acum 4 săptămâni: ${esc(e.company)} (${esc(e.xtb)})</b>`,
+    `Alertă pe ${date(e.time)}, sursa: ${esc(e.source)}.`,
+    `Preț la intrare ${num(entry)} → după 4 săptămâni ${num(last)}: <b>${pct(last / entry - 1)}</b>.`,
+  ];
+  const bi = benchBars?.findIndex((b) => b.time + 6 * 3600e3 > e.time) ?? -1;
+  if (bi >= 0 && benchBars[bi + REPORT_DAYS]) {
+    lines.push(`Piața (${e.benchmark === 'SPY' ? 'S&amp;P 500' : 'Europa 600'}) în aceeași perioadă: ${pct(benchBars[bi + REPORT_DAYS].close / benchBars[bi].close - 1)}.`);
+  }
+  if (e.plan?.stop && e.plan?.target) {
+    // The day after the entry onwards; on a day that touched both, count the stop (cautious).
+    let hit = 'Nici stopul, nici ținta nu au fost atinse.';
+    for (let k = i + 1; k <= i + REPORT_DAYS; k++) {
+      if (bars[k].low <= e.plan.stop) { hit = `Stopul de ${num(e.plan.stop)} a fost atins pe ${date(bars[k].time)} (${pct(e.plan.stop / entry - 1)}).`; break; }
+      if (bars[k].high >= e.plan.target) { hit = `Ținta de ${num(e.plan.target)} a fost atinsă pe ${date(bars[k].time)} (${pct(e.plan.target / entry - 1)}).`; break; }
+    }
+    lines.push(`Planul: ${hit}`);
+  }
+  return lines.join('\n');
+}
