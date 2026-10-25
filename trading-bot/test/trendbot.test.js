@@ -104,3 +104,28 @@ test('refuses a spread-bet account', async () => {
   client.accountType = 'SPREADBET';
   await assert.rejects(makeBot(client, T0 + 56 * DAY).bot.run(), /CFD accounts only/);
 });
+
+test('retries with fewer decimals when IG rejects the size increment', async () => {
+  const client = fakeClient(days(55, [105]));
+  const open = client.openMarket;
+  const sizes = [];
+  client.openMarket = async (o) => {
+    sizes.push(o.size);
+    if (String(o.size).split('.')[1]?.length > 2) throw new Error('Order rejected: SIZE_INCREMENT');
+    return open(o);
+  };
+  const { bot, state } = makeBot(client, T0 + 56 * DAY + 3600e3);
+  await bot.run();
+  assert.deepEqual(sizes, [20.8333, 20.833, 20.83]);
+  assert.equal(state.load().markets.BTC.pos.side, 'BUY');
+});
+
+test('forgets the trade when IG rejects it for another reason, and tries again next run', async () => {
+  const client = fakeClient(days(55, [105]));
+  client.openMarket = async () => { throw new Error('Order rejected: MARKET_CLOSED'); };
+  const { bot, logs, state } = makeBot(client, T0 + 56 * DAY + 3600e3);
+  await bot.run();
+  assert.match(logs.join('\n'), /MARKET_CLOSED \(mărime 20.8333\)/);
+  assert.equal(state.load().markets.BTC.pos, null);
+  assert.equal(state.load().markets.BTC.lastDay, undefined);
+});

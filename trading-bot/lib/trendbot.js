@@ -136,14 +136,25 @@ export class TrendBot {
     st.pos = { side, day, level: entry };
     this.state.save(this.data);
     let res;
-    try {
-      res = await this.client.openMarket({ epic: m.epic, expiry: q.expiry, direction: side, size, currency: q.currency, stopDistance });
-    } catch (e) {
-      if (e.code !== 'UNKNOWN_ORDER_STATE') {
-        st.pos = null;
-        this.state.save(this.data);
+    // IG's size step is not in the market data (Ether rejected 4 decimals with SIZE_INCREMENT):
+    // a rejected order opens nothing, so try again with one decimal fewer, never below the minimum.
+    for (let d = Math.round(Math.log10(f)); ; d--) {
+      try {
+        res = await this.client.openMarket({ epic: m.epic, expiry: q.expiry, direction: side, size, currency: q.currency, stopDistance });
+        break;
+      } catch (e) {
+        const smaller = Math.floor(size * 10 ** (d - 1)) / 10 ** (d - 1);
+        if (/SIZE_INCREMENT/.test(e.message) && d > 0 && smaller >= q.minSize && smaller > 0) {
+          size = smaller;
+          continue;
+        }
+        if (e.code !== 'UNKNOWN_ORDER_STATE') {
+          st.pos = null;
+          this.state.save(this.data);
+        }
+        e.message += ` (mărime ${size})`;
+        throw e;
       }
-      throw e;
     }
     st.pos.level = res.level ?? entry;
     this.log(`Deschis ${m.name} ${side} ${size} la ${res.level ?? entry}, stop la ${stopDistance} puncte (3 × mișcarea medie zilnică). Risc ≈ ${(size * stopDistance * perPoint).toFixed(2)}.`);
