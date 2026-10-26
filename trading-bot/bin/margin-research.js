@@ -73,7 +73,7 @@ function marketTrades(key) {
 const trades = Object.keys(SPECS).flatMap(marketTrades).sort((a, b) => a.time - b.time);
 
 // One account through one period. opts: start (EUR), margin and minSize on/off.
-function account(from, to, { start, margin, minSize }) {
+function account(from, to, { start, margin, minSize, noDayStop }) {
   let bal = start, peak = start, dd = 0, day = '', dayStart = start, dayPnl = 0;
   const open = []; // { exitTime, pnl, margin }
   const n = { taken: 0, noMargin: 0, tooSmall: 0, raised: 0, dayStop: 0, maxUse: 0, highUse: 0 };
@@ -92,7 +92,7 @@ function account(from, to, { start, margin, minSize }) {
     settle(t.time);
     const today = new Date(t.time).toISOString().slice(0, 10);
     if (today !== day) { day = today; dayStart = bal; dayPnl = 0; }
-    if (dayPnl <= -0.03 * dayStart) { n.dayStop++; continue; }
+    if (!noDayStop && dayPnl <= -0.03 * dayStart) { n.dayStop++; continue; }
     const spec = SPECS[t.key];
     const perUnit = spec.contract * EUR[spec.ccy]; // EUR per 1.0 price move per contract
     const plannedRisk = 0.01 * dayStart;
@@ -118,6 +118,7 @@ function account(from, to, { start, margin, minSize }) {
 const ron = (eur) => Math.round(eur * RON_PER_EUR).toLocaleString('ro-RO');
 const SCEN = [
   ['Ca în calculele de până acum (fără marjă)', { start: 10000 / RON_PER_EUR, margin: false, minSize: false }],
+  ['Fără marjă și fără limita de 3% pe zi', { start: 10000 / RON_PER_EUR, margin: false, minSize: false, noDayStop: true }],
   ['10.000 lei, cu marjă și mărimi minime IG', { start: 10000 / RON_PER_EUR, margin: true, minSize: true }],
   ['10.000 lei, doar marja', { start: 10000 / RON_PER_EUR, margin: true, minSize: false }],
   ['50.000 lei, cu marjă și mărimi minime IG', { start: 50000 / RON_PER_EUR, margin: true, minSize: true }],
@@ -125,6 +126,8 @@ const SCEN = [
 console.log(`Tranzacții după reguli (toate piețele): ${trades.length}`);
 for (const k of Object.keys(SPECS)) console.log(`  ${k}: ${trades.filter((t) => t.key === k).length}`);
 for (const [a, b] of PERIODS) {
+  const inP = trades.filter((t) => t.day >= a && t.day < b);
+  console.log(`\nSuma R ${a}: ${Object.keys(SPECS).map((k) => `${k} ${inP.filter((t) => t.key === k).reduce((s, t) => s + t.r, 0).toFixed(0)}R`).join(', ')}; cel mai rău ${Math.min(...inP.map((t) => t.r)).toFixed(1)}R`);
   console.log(`\n=== ${a}–${b === '2100' ? 'azi' : +b - 1} (fiecare perioadă pornește de la suma inițială) ===`);
   for (const [label, o] of SCEN) {
     const r = account(a, b, o);
