@@ -127,7 +127,10 @@ console.log(`Tranzacții după reguli (toate piețele): ${trades.length}`);
 for (const k of Object.keys(SPECS)) console.log(`  ${k}: ${trades.filter((t) => t.key === k).length}`);
 for (const [a, b] of PERIODS) {
   const inP = trades.filter((t) => t.day >= a && t.day < b);
-  console.log(`\nSuma R ${a}: ${Object.keys(SPECS).map((k) => `${k} ${inP.filter((t) => t.key === k).reduce((s, t) => s + t.r, 0).toFixed(0)}R`).join(', ')}; cel mai rău ${Math.min(...inP.map((t) => t.r)).toFixed(1)}R`);
+  console.log(`\nSuma R ${a}: ${Object.keys(SPECS).map((k) => `${k} ${inP.filter((t) => t.key === k).reduce((s, t) => s + t.r, 0).toFixed(0)}R`).join(', ')}; cel mai rău ${Math.min(...inP.map((t) => t.r)).toFixed(1)}R, abatere ${Math.sqrt(inP.reduce((s, t) => s + t.r * t.r, 0) / inP.length).toFixed(2)}R`);
+  let eq = 0, pk = 0, ddR = 0;
+  for (const t of inP) { eq += t.r; pk = Math.max(pk, eq); ddR = Math.max(ddR, pk - eq); }
+  console.log(`Toate piețele adunate în R: ${eq.toFixed(0)}R, cea mai mare scădere ${ddR.toFixed(0)}R`);
   console.log(`\n=== ${a}–${b === '2100' ? 'azi' : +b - 1} (fiecare perioadă pornește de la suma inițială) ===`);
   for (const [label, o] of SCEN) {
     const r = account(a, b, o);
