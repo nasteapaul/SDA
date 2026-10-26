@@ -58,12 +58,12 @@ for (;;) {
     if (!loopMs) throw e;
     console.log(`Verificare eșuată: ${e.message}`); // try again next round
   }
-  // Google News blocks some GitHub servers. When every Google search has failed for about
-  // an hour on this server, end the loop early: the workflow then starts the next run,
-  // usually on another server.
-  const google = feeds.filter((f) => f.everyMin);
-  if (loopMs && google.length && google.every((f) => (state.health[f.name] ?? 0) - (startHealth[f.name] ?? 0) >= 4)) {
-    console.log('Google News nu răspunde pe acest server; repornesc pe altul.');
+  // Some sites (Google News, PR Newswire) block the GitHub server they see too often. When a
+  // source has failed for about an hour on this server, end the loop early: the workflow
+  // then starts the next run, usually on another server.
+  const blocked = feeds.find((f) => (state.health[f.name] ?? 0) - (startHealth[f.name] ?? 0) >= (f.everyMin ? 60 / f.everyMin : 3600e3 / intervalMs));
+  if (loopMs && blocked) {
+    console.log(`${blocked.name} nu răspunde pe acest server; repornesc pe altul.`);
     break;
   }
   const wait = intervalMs - (Date.now() - started);

@@ -7,7 +7,8 @@
     },
     {
       "name": "PR Newswire",
-      "url": "https://www.prnewswire.com/rss/news-releases-list.rss"
+      "url": "https://www.prnewswire.com/rss/news-releases-list.rss",
+      "everyMin": 4
     },
     {
       "name": "Business Wire",

@@ -14,5 +14,5 @@ export const CONFIG = {
   maxForm4: 150,          // Form 4 files fetched per run
   secPages: 2,            // pages of 100 filings read from each SEC feed per run
   repeatAfterDays: 3,     // don't alert the same stock again sooner than this
-  feedFailWarn: 30,       // consecutive failed checks (~1 hour) before a feed is reported
+  feedFailWarn: 60,       // consecutive failed checks (~2 hours, i.e. also after a move to another server) before a feed is reported
 };
