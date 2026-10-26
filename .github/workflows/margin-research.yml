@@ -1,0 +1,19 @@
+name: margin-research
+# The live ORB on one small account with IG's margin and smallest deal sizes, 2015–today
+# HistData 1-minute bars (trading-bot/bin/margin-research.js); results are in the job log.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['trading-bot/bin/margin-research.js', '.github/workflows/margin-research.yml']
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Download 1-minute data
+        run: |
+          for p in AUXAUD EURUSD GBPUSD NSXUSD; do node trading-bot/bin/histdata-download.js "$RUNNER_TEMP/data" $p 2015; done
+      - name: Results
+        run: node trading-bot/bin/margin-research.js "$RUNNER_TEMP/data"
