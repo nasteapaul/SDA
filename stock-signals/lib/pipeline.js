@@ -30,7 +30,7 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
     // Slow feeds (Google News searches) are read every `everyMin` minutes, not every run:
     // Google blocks a runner that asks every 2 minutes.
     if (everyMin && now - (state.fetched[name] ?? 0) < everyMin * 60e3) continue;
-    const warnAt = everyMin ? Math.max(2, Math.ceil(config.feedFailWarn * 2 / everyMin)) : config.feedFailWarn; // ~1 hour
+    const warnAt = everyMin ? Math.max(2, Math.ceil(config.feedFailWarn * 2 / everyMin)) : config.feedFailWarn; // ~2 hours
     try {
       await fn();
       ok++;
@@ -47,8 +47,8 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
   // One message for all the feeds that failed or came back in this run (the Google News
   // searches usually fail together).
   const list = (names) => names.map((n) => `„${n}”`).join(', ');
-  if (down.length === 1) await io.notify(`⚠️ Sursa ${list(down)} nu mai răspunde de cam o oră. Restul surselor merg în continuare.`);
-  if (down.length > 1) await io.notify(`⚠️ Sursele ${list(down)} nu mai răspund de cam o oră. Restul surselor merg în continuare.`);
+  if (down.length === 1) await io.notify(`⚠️ Sursa ${list(down)} nu mai răspunde de cam două ore. Restul surselor merg în continuare.`);
+  if (down.length > 1) await io.notify(`⚠️ Sursele ${list(down)} nu mai răspund de cam două ore. Restul surselor merg în continuare.`);
   if (back.length === 1) await io.notify(`✅ Sursa ${list(back)} merge din nou.`);
   if (back.length > 1) await io.notify(`✅ Sursele ${list(back)} merg din nou.`);
 

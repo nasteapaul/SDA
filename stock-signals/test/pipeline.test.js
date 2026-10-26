@@ -74,11 +74,11 @@ test('a slow feed is read only every everyMin minutes and its recovery is report
   const io = fakeIo(() => { calls++; if (!up) throw new Error('503'); return rss([]); });
   const feeds = [{ name: 'Google', url: 'u', kind: 'ripple', everyMin: 15 }];
   const t0 = Date.parse('2026-10-24T10:00:00Z');
-  for (let m = 0; m < 60; m += 2) await runOnce({ state, config: CONFIG, feeds, io, now: t0 + m * 60e3 });
-  assert.equal(calls, 4); // minutes 0, 16, 32, 48
+  for (let m = 0; m < 120; m += 2) await runOnce({ state, config: CONFIG, feeds, io, now: t0 + m * 60e3 });
+  assert.equal(calls, 8); // every 16 minutes over 2 hours
   assert.equal(io.sent.filter((m) => /nu mai răspunde/.test(m)).length, 1);
   up = true;
-  await runOnce({ state, config: CONFIG, feeds, io, now: t0 + 64 * 60e3 });
+  await runOnce({ state, config: CONFIG, feeds, io, now: t0 + 128 * 60e3 });
   assert.equal(io.sent.filter((m) => /merge din nou/.test(m)).length, 1);
 });
 
@@ -191,10 +191,10 @@ test('feeds that fail together are reported in one message', async () => {
   const io = fakeIo(() => { throw new Error('503'); });
   const feeds = [{ name: 'G1', url: 'u', kind: 'ripple', everyMin: 15 }, { name: 'G2', url: 'v', kind: 'ripple', everyMin: 15 }];
   const t0 = Date.parse('2026-10-24T10:00:00Z');
-  for (let m = 0; m < 60; m += 2) await runOnce({ state, config: CONFIG, feeds, io, now: t0 + m * 60e3 });
+  for (let m = 0; m < 120; m += 2) await runOnce({ state, config: CONFIG, feeds, io, now: t0 + m * 60e3 });
   const warnings = io.sent.filter((m) => /nu mai răspund/.test(m));
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /„G1”, „G2” nu mai răspund de cam o oră/);
+  assert.match(warnings[0], /„G1”, „G2” nu mai răspund de cam două ore/);
 });
 
 test('four weeks after an alert one message says how the stock did and whether the plan worked', async () => {
