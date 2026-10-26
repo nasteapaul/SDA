@@ -18,10 +18,10 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: 'multi = multi-market bot, trend = daily Bitcoin/Ether trend bot, report = send today''s and this week''s trade report now, pnl = print every closed trade and the totals since October (log only), run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
+        description: 'multi = multi-market bot, trend = daily Bitcoin/Ether trend bot, report = send today''s and this week''s trade report now, pnl = print every closed trade and the totals since October (log only), replay = raw trade and order history since 12 Oct (log only), run / flatten = old DAX bot, check = test the IG connection and send a Telegram test message'
         default: multi
         type: choice
-        options: [multi, trend, report, pnl, run, flatten, check]
+        options: [multi, trend, report, pnl, replay, run, flatten, check]
       account:
         description: 'IG account id (default XR5HB, the demo CFD account)'
         required: false
@@ -105,6 +105,10 @@ jobs:
       - name: Profit and loss so far
         if: env.HAS_IG == 'true' && env.JOB == 'pnl'
         run: node trading-bot/bin/pnl.js
+
+      - name: Raw trade history
+        if: env.HAS_IG == 'true' && env.JOB == 'replay'
+        run: node trading-bot/bin/replay.js
 
       - name: Run DAX bot
         if: env.HAS_IG == 'true' && env.JOB == 'run'
