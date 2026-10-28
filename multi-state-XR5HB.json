@@ -1,7 +1,7 @@
 {
   "day": "2026-10-28",
   "dayStartEquity": 32137.65,
-  "halted": false,
+  "halted": true,
   "markets": {
     "AU200": {
       "day": "2026-10-28",
@@ -22,27 +22,37 @@
     },
     "EURUSD": {
       "day": "2026-10-28",
-      "done": false
-    },
-    "GBPUSD": {
-      "day": "2026-10-28",
-      "done": false
-    },
-    "USTECH": {
-      "day": "2026-10-27",
       "done": false,
       "range": {
-        "hi": 29525.699999999997,
-        "lo": 29363.199999999997
+        "hi": 1.11283,
+        "lo": 1.11204
       },
       "armed": true,
       "open": {
         "side": "BUY",
-        "level": 29532.9,
-        "time": 1793112910615
+        "level": 1.11299,
+        "time": 1793180703165
       },
+      "trades": 2,
+      "traded": true,
+      "losses": 1
+    },
+    "GBPUSD": {
+      "day": "2026-10-28",
+      "done": false,
+      "range": {
+        "hi": 1.329555,
+        "lo": 1.328455
+      },
+      "armed": true,
+      "open": null,
       "trades": 1,
-      "traded": true
+      "traded": true,
+      "losses": 1
+    },
+    "USTECH": {
+      "day": "2026-10-28",
+      "done": false
     }
   }
 }
