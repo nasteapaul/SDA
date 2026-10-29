@@ -21,14 +21,26 @@
     },
     "EURUSD": {
       "day": "2026-10-29",
-      "done": false
+      "done": true
     },
     "GBPUSD": {
       "day": "2026-10-29",
-      "done": false
+      "done": false,
+      "range": {
+        "hi": 1.333035,
+        "lo": 1.331255
+      },
+      "armed": true,
+      "open": {
+        "side": "SELL",
+        "level": 1.33113,
+        "time": 1793262911186
+      },
+      "trades": 1,
+      "traded": true
     },
     "USTECH": {
-      "day": "2026-10-28",
+      "day": "2026-10-29",
       "done": false
     }
   }
