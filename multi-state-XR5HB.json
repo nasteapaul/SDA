@@ -21,27 +21,40 @@
     },
     "EURUSD": {
       "day": "2026-10-30",
-      "done": false
-    },
-    "GBPUSD": {
-      "day": "2026-10-30",
-      "done": false
-    },
-    "USTECH": {
-      "day": "2026-10-29",
       "done": false,
       "range": {
-        "hi": 29470.1,
-        "lo": 29249
+        "hi": 1.1201400000000001,
+        "lo": 1.1189749999999998
       },
       "armed": true,
       "open": {
         "side": "BUY",
-        "level": 29498.8,
-        "time": 1793287870291
+        "level": 1.12014,
+        "time": 1793355601621
+      },
+      "trades": 2,
+      "traded": true,
+      "losses": 1
+    },
+    "GBPUSD": {
+      "day": "2026-10-30",
+      "done": false,
+      "range": {
+        "hi": 1.341545,
+        "lo": 1.3404349999999998
+      },
+      "armed": true,
+      "open": {
+        "side": "BUY",
+        "level": 1.34158,
+        "time": 1793349247991
       },
       "trades": 1,
       "traded": true
+    },
+    "USTECH": {
+      "day": "2026-10-30",
+      "done": false
     }
   }
 }
