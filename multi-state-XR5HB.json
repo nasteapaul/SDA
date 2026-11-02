@@ -21,14 +21,38 @@
     },
     "EURUSD": {
       "day": "2026-11-02",
-      "done": false
+      "done": false,
+      "range": {
+        "hi": 1.12038,
+        "lo": 1.11931
+      },
+      "open": {
+        "side": "BUY",
+        "level": 1.12049,
+        "time": 1793608324515
+      },
+      "trades": 1,
+      "traded": true
     },
     "GBPUSD": {
       "day": "2026-11-02",
-      "done": false
+      "done": false,
+      "range": {
+        "hi": 1.3420649999999998,
+        "lo": 1.3411650000000002
+      },
+      "open": {
+        "side": "SELL",
+        "level": 1.3409,
+        "time": 1793615225085
+      },
+      "trades": 2,
+      "traded": true,
+      "losses": 1,
+      "armed": true
     },
     "USTECH": {
-      "day": "2026-11-01",
+      "day": "2026-11-02",
       "done": false
     }
   }
