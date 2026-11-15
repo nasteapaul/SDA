@@ -13,6 +13,9 @@ export const CONFIG = {
   maxSecDocs: 30,         // 8-K documents fetched per run
   maxForm4: 150,          // Form 4 files fetched per run
   secPages: 2,            // pages of 100 filings read from each SEC feed per run
+  earningsReaction: 0.1,  // two-day move above the market after an earnings report that triggers an alert
+  earningsMinDollarVolume: 2e7, // only large, liquid stocks, like the ones the rule was tested on
+  maxEarningsChecks: 20,  // price lookups per run for stocks that reported two days ago
   repeatAfterDays: 3,     // don't alert the same stock again sooner than this
   feedFailWarn: 60,       // consecutive failed checks (~2 hours, i.e. also after a move to another server) before a feed is reported
 };

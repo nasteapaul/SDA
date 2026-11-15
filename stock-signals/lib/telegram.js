@@ -20,6 +20,14 @@ export function formatPlan(m) {
   const num = (x) => x.toFixed(m.price >= 1 ? 2 : 4);
   const p = m.plan;
   if (!p) return `💵 Preț acum: <b>${num(m.price)} ${cur}</b> (prea puține date ca să calculez nivelurile).`;
+  if (p.holdOnly) {
+    return [
+      `💵 Preț acum: <b>${num(m.price)} ${cur}</b>`,
+      `✅ Cumpără până la: <b>${num(p.buyUpTo)}</b>`,
+      '⏳ Ține 4 săptămâni, apoi vinde (așa a fost testată regula, fără țintă de preț).',
+      `🛑 Stop-loss de siguranță: <b>${num(p.stop)}</b> (${pct(p.stop / m.price - 1)})`,
+    ].join('\n');
+  }
   return [
     `💵 Preț acum: <b>${num(m.price)} ${cur}</b>`,
     `✅ Cumpără până la: <b>${num(p.buyUpTo)}</b>`,
