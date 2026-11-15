@@ -7,6 +7,7 @@ import { chart, summarize } from './market.js';
 import { assess, ripple } from './ai.js';
 import { onXtb } from './xtb.js';
 import { record, prune, forwardReturns, pending, monthReport } from './journal.js';
+import { filingDay, reaction } from './earnings.js';
 
 const DAY = 86400e3;
 
@@ -17,7 +18,8 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
   prune(state, now);
   const events = [];
   const sources = [
-    ['SEC 8-K', () => secEvents(state, config, io, events)],
+    ['SEC 8-K', () => secEvents(state, config, io, events, now)],
+    ['Rezultate financiare', () => earningsEvents(state, config, io, events, now)],
     ['SEC Form 4', () => insiderEvents(state, config, io, events, now)],
     ['SEC 13D', () => stakeEvents(state, config, io, events)],
     ['Reddit', () => buzzEvents(state, config, io, events, now)],
@@ -65,7 +67,8 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
   for (const ev of events) {
     if (ev.score < config.candidateScore || !ev.listing) continue;
     const key = ev.listing.xtb;
-    if (state.lastAlert[key] && now - state.lastAlert[key] < config.repeatAfterDays * DAY) continue;
+    // An earnings follow-through is a different signal from the report's own alert a day earlier.
+    if (!ev.earnings && state.lastAlert[key] && now - state.lastAlert[key] < config.repeatAfterDays * DAY) continue;
     if (candidates.some((c) => c.listing.xtb === key)) continue;
     candidates.push(ev);
   }
@@ -76,11 +79,14 @@ export async function runOnce({ state, config, feeds, io, now = Date.now() }) {
   for (const ev of candidates) {
     try {
       ev.market = summarize(await io.chart(ev.listing.yahoo));
-      if (ev.market.dollarVolume < config.minDollarVolume || ev.market.priceUsd < config.minPriceUsd) {
+      if (ev.market.dollarVolume < (ev.earnings ? config.earningsMinDollarVolume : config.minDollarVolume) || ev.market.priceUsd < config.minPriceUsd) {
         log(`Sar peste ${ev.listing.xtb}: prea mică sau prea puțin lichidă.`);
         continue;
       }
       if (ev.market.volumeRatio >= 3) { ev.score += 1; ev.reasons.push('volum de peste 3× media'); }
+      // The tested rule simply holds 4 weeks: no target, and only a wide safety stop.
+      const p = ev.market.plan;
+      if (ev.earnings && p) ev.market.plan = { ...p, stop: ev.market.price - 4 * p.atr, target: undefined, stretched: false, holdOnly: true };
     } catch {
       ev.market = null; // no price context; still worth sending if the event is strong
     }
@@ -147,7 +153,7 @@ const isNew = (state, id, now = Date.now()) => {
   return true;
 };
 
-async function secEvents(state, config, io, events) {
+async function secEvents(state, config, io, events, now) {
   const fresh = [];
   for (let p = 0; p < config.secPages; p++) {
     const entries = parseFeed(await io.sec(currentFeedUrl('8-K', p * 100))).map(parseCurrentEntry).filter(Boolean);
@@ -160,6 +166,10 @@ async function secEvents(state, config, io, events) {
   for (const f of fresh) {
     if (!isNew(state, `8k:${f.acc}`)) continue;
     const ticker = tickers.get(f.cik);
+    // Every earnings report is watched for two days (see earningsEvents).
+    if (ticker && f.items.includes('2.02')) {
+      (state.earnings ??= []).push({ ticker, company: f.company, day: filingDay(f.time ?? now), link: f.link, at: now });
+    }
     const { score } = scoreText('', f.items);
     // Only filings that report a deal, results or other news are worth opening.
     const interesting = f.items.some((i) => ['1.01', '2.01', '2.02', '7.01', '8.01'].includes(i));
@@ -220,6 +230,39 @@ async function insiderEvents(state, config, io, events, now) {
       text: `Cumpărări pe piață ale insiderilor: ${names}. Total ${s.total} $.`,
       link: last.link, listing: usListing(last.ticker), score: s.score, reasons: s.reasons,
     });
+  }
+}
+
+// Stocks that jumped on their earnings report: checked once the day after the filing day
+// has closed (lib/earnings.js). A few per run, so Yahoo is not flooded in earnings season.
+async function earningsEvents(state, config, io, events, now) {
+  const queue = (state.earnings ??= []);
+  let spy, checks = 0;
+  for (const e of [...queue]) {
+    const drop = () => queue.splice(queue.indexOf(e), 1);
+    if (now - e.at > 8 * DAY) { drop(); continue; }
+    // US markets close at 20:00 or 21:00 UTC; nothing to check before the day after the filing day.
+    if (now < Date.parse(`${e.day}T21:15:00Z`) + DAY || now < (e.next ?? 0) || checks >= config.maxEarningsChecks) continue;
+    checks++;
+    try {
+      const listing = usListing(e.ticker);
+      spy ??= (await io.chart('SPY')).bars;
+      const r = reaction((await io.chart(listing.yahoo)).bars, spy, e.day, now);
+      if (!r) { e.next = now + 3 * 3600e3; continue; } // weekend or holiday: the second day is not over
+      drop();
+      if (r.excess < config.earningsReaction) continue;
+      const pct = (x) => `${(x * 100).toFixed(0)}%`;
+      events.push({
+        source: 'Rezultate financiare', company: e.company, earnings: true, link: e.link, listing,
+        title: `${e.company} a urcat cu ${pct(r.move)} în două zile după rezultatele financiare (${pct(r.excess)} peste piață)`,
+        text: `Rezultate financiare raportate pe ${e.day}; acțiunea a urcat cu ${pct(r.move)} în două zile.`,
+        why: `Firma a raportat rezultate financiare și acțiunea a urcat cu ${pct(r.excess)} peste piață în două zile. În testul pe 2010–2026, acțiunile care au sărit așa au continuat în medie să urce în următoarele 4 săptămâni (cam 1,7% peste piață), dar 4 din 10 au scăzut.`,
+        score: config.alertScore, reasons: [`reacție de ${pct(r.excess)} peste piață la rezultate`],
+      });
+    } catch (err) {
+      e.next = now + 3600e3;
+      io.log?.(`Rezultate ${e.ticker}: ${err.message}`);
+    }
   }
 }
 
